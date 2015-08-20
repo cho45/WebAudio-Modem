@@ -196,65 +196,63 @@ FSK.prototype = {
 	_detectCoherent : function (source) {
 		var self = this;
 
-		var toneMark  = self.context.sampleRate / (2 * Math.PI * self.markFreq);
-		var toneSpace = self.context.sampleRate / (2 * Math.PI * self.spaceFreq);
+		var centerFreq = Math.min(self.markFreq, self.spaceFreq) + Math.abs(self.markFreq - self.spaceFreq) / 2;
+		var toneCenter =  self.context.sampleRate / (2 * Math.PI * centerFreq);
 
 		var preFilter = self.retainAudioNode(self.context.createBiquadFilter());
 		preFilter.type = 2; // band pass
-		preFilter.frequency.value = Math.min(self.markFreq, self.spaceFreq) + Math.abs(self.markFreq - self.spaceFreq);
+		preFilter.frequency.value = centerFreq;
 		preFilter.Q.value = 1;
 		source.connect(preFilter);
 
 		var n = 0;
-		var iq = self.retainAudioNode(self.context.createScriptProcessor(4096, 1, 4));
+		var iq = self.retainAudioNode(self.context.createScriptProcessor(4096, 1, 2));
 		iq.onaudioprocess = function (e) {
 			var data = e.inputBuffer.getChannelData(0);
-			var outputMarkI  = e.outputBuffer.getChannelData(0);
-			var outputMarkQ  = e.outputBuffer.getChannelData(1);
-			var outputSpaceI = e.outputBuffer.getChannelData(2);
-			var outputSpaceQ = e.outputBuffer.getChannelData(3);
+			var outputI  = e.outputBuffer.getChannelData(0);
+			var outputQ  = e.outputBuffer.getChannelData(1);
 			for (var i = 0, len = e.inputBuffer.length; i < len; i++) {
-				outputMarkI[i]  = (Math.sin(n / toneMark)  > 0 ? 1 : -1) * data[i];
-				outputMarkQ[i]  = (Math.cos(n / toneMark)  > 0 ? 1 : -1) * data[i];
-				outputSpaceI[i] = (Math.sin(n / toneSpace) > 0 ? 1 : -1) * data[i];
-				outputSpaceQ[i] = (Math.cos(n / toneSpace) > 0 ? 1 : -1) * data[i];
+				outputI[i]  = Math.cos(n / toneCenter) * data[i];
+				outputQ[i]  = Math.sin(n / toneCenter) * data[i];
 				n++;
 			}
 		};
 		preFilter.connect(iq);
 
-		var splitter = self.retainAudioNode(self.context.createChannelSplitter(4));
+		var splitter = self.retainAudioNode(self.context.createChannelSplitter(2));
 		iq.connect(splitter);
-		var merger   = self.retainAudioNode(self.context.createChannelMerger(4));
+		var merger   = self.retainAudioNode(self.context.createChannelMerger(2));
 
-		for (var i = 0; i < 4; i++) {
+		for (var i = 0; i < 2; i++) {
 			var filter = self.retainAudioNode(self.context.createBiquadFilter());
 			filter.type = 0; // low pass
-			filter.frequency.value = self.baudrate / 2;
-			filter.Q.value = 0;
+			filter.frequency.value = self.baudrate;
+			filter.Q.value = 1;
 			splitter.connect(filter, i, 0);
 			filter.connect(merger, 0, i);
 		}
 
-		var detection = self.retainAudioNode(self.context.createScriptProcessor(4096, 4, 1));
+		var d = 0;
+		var detection = self.retainAudioNode(self.context.createScriptProcessor(4096, 2, 1));
 		detection.onaudioprocess = function (e) {
-			var inputMarkI  = e.inputBuffer.getChannelData(0);
-			var inputMarkQ  = e.inputBuffer.getChannelData(1);
-			var inputSpaceI = e.inputBuffer.getChannelData(2);
-			var inputSpaceQ = e.inputBuffer.getChannelData(3);
+			var inputI  = e.inputBuffer.getChannelData(0);
+			var inputQ  = e.inputBuffer.getChannelData(1);
 
 			var outputMerged = e.outputBuffer.getChannelData(0);
 			for (var i = 0, len = e.inputBuffer.length; i < len; i++) {
-				var mark  = inputMarkI[i]  * inputMarkI[i]  + inputMarkQ[i]  * inputMarkQ[i];
-				var space = inputSpaceI[i] * inputSpaceI[i] + inputSpaceQ[i] * inputSpaceQ[i];
-				outputMerged[i] = mark - space;
+				var amp  = inputI[i]  * inputI[i]  + inputQ[i]  * inputQ[i];
+				// -1 〜 1
+				var pha = Math.atan2(inputQ[i], inputI[i]) / Math.PI * 2;
+				var dif = (d - pha + 2) % 2;
+				outputMerged[i] = (dif - 1) * amp;
+				d = pha;
 			}
 		};
 		merger.connect(detection);
 
 		var lpf = self.retainAudioNode(self.context.createBiquadFilter());
 		lpf.type = 0; // low pass
-		lpf.frequency.value = self.baudrate / 2;
+		lpf.frequency.value = self.baudrate;
 		lpf.Q.value = 0;
 
 		detection.connect(lpf);
