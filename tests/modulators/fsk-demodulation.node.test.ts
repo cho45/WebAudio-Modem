@@ -304,6 +304,49 @@ describe('FSK Core Demodulation', () => {
       expect(result[0]).toBe(originalData[0]);
     });
   });
+
+  describe('Pattern Coverage Tests', () => {
+    test('various byte patterns work correctly', () => {
+      const testCases = [
+        { data: 0x48, desc: 'Known working case' },
+        { data: 0x55, desc: 'Same as preamble - should work with SFD' },
+        { data: 0x7E, desc: 'Same as SFD - should work as user data' },
+        { data: 0xAA, desc: 'Inverted 0x55' },
+        { data: 0x00, desc: 'All zeros' },
+        { data: 0xFF, desc: 'All ones' },
+        { data: 0x33, desc: 'Mixed pattern' },
+        { data: 0xF0, desc: 'High nibble set' },
+        { data: 0x0F, desc: 'Low nibble set' }
+      ];
+      
+      for (const testCase of testCases) {
+        const testData = new Uint8Array([testCase.data]);
+        const signal = fskCore.modulateData(testData);
+        const result = fskCore.demodulateData(signal);
+        
+        expect(result.length).toBe(1); // Should detect exactly one byte
+        expect(result[0]).toBe(testCase.data); // Should match input exactly
+      }
+    });
+
+    test('multiple consecutive identical bytes', () => {
+      // Test that consecutive identical bytes don't cause false "padding" detection
+      const testCases = [
+        new Uint8Array([0xFF, 0xFF, 0xFF]), // Three consecutive 0xFF
+        new Uint8Array([0x00, 0x00, 0x00]), // Three consecutive 0x00
+        new Uint8Array([0x55, 0x55, 0x55]), // Three consecutive preamble pattern
+        new Uint8Array([0x7E, 0x7E, 0x7E])  // Three consecutive SFD pattern
+      ];
+
+      for (const testData of testCases) {
+        const signal = fskCore.modulateData(testData);
+        const result = fskCore.demodulateData(signal);
+        
+        expect(result.length).toBe(testData.length);
+        expect(Array.from(result)).toEqual(Array.from(testData));
+      }
+    });
+  });
 });
 
 // Helper functions
