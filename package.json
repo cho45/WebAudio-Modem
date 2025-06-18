@@ -11,7 +11,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "CI=1 vitest",
-    "test:node": "vitest --config vitest.node.config.ts",
+    "test:node": "CI=1 vitest --config vitest.node.config.ts",
     "test:browser": "vitest --config vitest.browser.config.ts",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix"
