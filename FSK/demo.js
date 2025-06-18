@@ -1,17 +1,3 @@
-navigator.getMedia = (
-	navigator.getUserMedia ||
-	navigator.webkitGetUserMedia ||
-	navigator.mozGetUserMedia ||
-	navigator.msGetUserMedia
-);
-
-window.AudioContext = (
-	window.AudioContext ||
-	window.webkitAudioContext ||
-	window.mozAudioContext ||
-	window.msAudioContext
-);
-
 
 var drawBuffers = {
 	bits : new RingBuffer(new Int8Array(Math.pow(2, 11))),

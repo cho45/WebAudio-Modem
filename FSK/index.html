@@ -42,5 +42,15 @@
 		</div>
 
 		<script type="text/javascript" src="demo.js"></script>
+		<script type="text/javascript">
+(async function() {
+  if (window.AudioWorkletNode) {
+    const ctx = FSK.context || new AudioContext();
+    await ctx.audioWorklet.addModule('./decoder-processor.js');
+    await ctx.audioWorklet.addModule('./iq-processor.js');
+    await ctx.audioWorklet.addModule('./detection-processor.js');
+  }
+})();
+</script>
 	</body>
 </html>
