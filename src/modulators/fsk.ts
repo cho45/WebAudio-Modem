@@ -24,6 +24,7 @@ export interface FSKConfig extends BaseModulatorConfig {
   
   // Synchronization parameters
   preamblePattern: number[];    // Preamble pattern for correlation sync
+  sfdPattern: number[];         // Start Frame Delimiter pattern
   syncThreshold: number;        // Correlation threshold for sync detection
 }
 
@@ -42,6 +43,7 @@ export const DEFAULT_FSK_CONFIG: Partial<FSKConfig> = {
   adaptiveThreshold: true,
   agcEnabled: true,
   preamblePattern: [0x55, 0x55], // Alternating bit pattern for sync
+  sfdPattern: [0x7E],           // Start Frame Delimiter (01111110) - unique pattern
   syncThreshold: 0.8
 };
 
@@ -224,28 +226,46 @@ class AdaptiveThreshold {
 }
 
 /**
- * Correlation-based frame synchronization
+ * Correlation-based frame synchronization with SFD detection
  */
 class CorrelationSync {
-  private preambleTemplate: Float32Array;
+  private syncTemplate: Float32Array;
   private config: FSKConfig;
   
   constructor(config: FSKConfig) {
     this.config = config;
-    this.preambleTemplate = this.generatePreambleTemplate();
+    this.syncTemplate = this.generateSyncTemplate();
   }
   
-  private generatePreambleTemplate(): Float32Array {
-    // Generate FSK-modulated preamble pattern for correlation
+  private generateSyncTemplate(): Float32Array {
+    // Generate FSK-modulated preamble + SFD pattern for correlation
     const bitsPerByte = 8 + this.config.startBits + this.config.stopBits;
     const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
-    const totalSamples = this.config.preamblePattern.length * bitsPerByte * samplesPerBit;
+    const totalBytes = this.config.preamblePattern.length + this.config.sfdPattern.length;
+    const totalSamples = totalBytes * bitsPerByte * samplesPerBit;
     
     const template = new Float32Array(totalSamples);
     let sampleIndex = 0;
     let phase = 0;
     
+    // Generate preamble
     for (const byte of this.config.preamblePattern) {
+      const frameBits = this.encodeByteWithFraming(byte);
+      
+      for (const bit of frameBits) {
+        const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
+        const omega = 2 * Math.PI * frequency / this.config.sampleRate;
+        
+        for (let i = 0; i < samplesPerBit; i++) {
+          template[sampleIndex++] = Math.sin(phase);
+          phase += omega;
+          if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+        }
+      }
+    }
+    
+    // Generate SFD
+    for (const byte of this.config.sfdPattern) {
       const frameBits = this.encodeByteWithFraming(byte);
       
       for (const bit of frameBits) {
@@ -298,7 +318,7 @@ class CorrelationSync {
   }
   
   detectFrames(signal: Float32Array): FrameLocation[] {
-    const correlations = this.crossCorrelate(signal, this.preambleTemplate);
+    const correlations = this.crossCorrelate(signal, this.syncTemplate);
     return this.findPeaks(correlations);
   }
   
@@ -326,7 +346,7 @@ class CorrelationSync {
   
   private findPeaks(correlations: Float32Array): FrameLocation[] {
     const peaks: FrameLocation[] = [];
-    const minDistance = this.preambleTemplate.length; // Minimum distance between peaks
+    const minDistance = this.syncTemplate.length; // Minimum distance between peaks
     
     // Debug: Find the maximum correlation value
     let maxCorr = 0;
@@ -354,14 +374,14 @@ class CorrelationSync {
         }
         
         if (validPeak) {
-          // Calculate preamble length in samples
+          // Calculate sync pattern length (preamble + SFD) in samples
           const bitsPerByte = 8 + this.config.startBits + this.config.stopBits + 
                              (this.config.parity !== 'none' ? 1 : 0);
           const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
-          const preambleSamples = this.config.preamblePattern.length * bitsPerByte * samplesPerBit;
+          const syncPatternSamples = (this.config.preamblePattern.length + this.config.sfdPattern.length) * bitsPerByte * samplesPerBit;
           
           peaks.push({
-            startIndex: i + preambleSamples, // Start after complete preamble
+            startIndex: i + syncPatternSamples, // Start after complete preamble + SFD
             confidence: correlations[i],
             length: 0 // Will be determined during frame decoding
           });
@@ -517,6 +537,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     
     // Add preamble
     for (const byte of this.config.preamblePattern) {
+      const frameBits = this.encodeByteWithFraming(byte);
+      bits.push(...frameBits);
+    }
+    
+    // Add SFD (Start Frame Delimiter)
+    for (const byte of this.config.sfdPattern) {
       const frameBits = this.encodeByteWithFraming(byte);
       bits.push(...frameBits);
     }
