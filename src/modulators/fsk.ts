@@ -226,88 +226,132 @@ class AdaptiveThreshold {
 }
 
 /**
- * Correlation-based frame synchronization with SFD detection
+ * Bit-level correlation-based frame synchronization with SFD validation
  */
 class CorrelationSync {
-  private syncTemplate: Float32Array;
+  private preambleSfdTemplate: Float32Array;
   private config: FSKConfig;
+  private iqDemodulator: IQDemodulator;
+  private iqFilters: { i: IIRFilter; q: IIRFilter };
+  private phaseDetector: PhaseDetector;
   
   constructor(config: FSKConfig) {
     this.config = config;
-    this.syncTemplate = this.generateSyncTemplate();
+    
+    // Initialize same DSP chain as main demodulator
+    const centerFreq = (config.markFrequency + config.spaceFrequency) / 2;
+    this.iqDemodulator = new IQDemodulator(centerFreq, config.sampleRate);
+    this.iqFilters = {
+      i: FilterFactory.createIIRLowpass(config.baudRate, config.sampleRate),
+      q: FilterFactory.createIIRLowpass(config.baudRate, config.sampleRate)
+    };
+    this.phaseDetector = new PhaseDetector();
+    
+    this.preambleSfdTemplate = this.generateBitTemplate();
   }
   
-  private generateSyncTemplate(): Float32Array {
-    // Generate FSK-modulated preamble + SFD pattern for correlation
-    const bitsPerByte = 8 + this.config.startBits + this.config.stopBits;
+  private generateBitTemplate(): Float32Array {
+    // Generate complete preamble + SFD pattern with proper framing
     const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
-    const totalBytes = this.config.preamblePattern.length + this.config.sfdPattern.length;
-    const totalSamples = totalBytes * bitsPerByte * samplesPerBit;
     
-    const template = new Float32Array(totalSamples);
-    let sampleIndex = 0;
-    let phase = 0;
+    // Combine preamble and SFD bytes
+    const templateBytes = [...this.config.preamblePattern, ...this.config.sfdPattern];
     
-    // Generate preamble
-    for (const byte of this.config.preamblePattern) {
-      const frameBits = this.encodeByteWithFraming(byte);
-      
-      for (const bit of frameBits) {
-        const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
-        const omega = 2 * Math.PI * frequency / this.config.sampleRate;
-        
-        for (let i = 0; i < samplesPerBit; i++) {
-          template[sampleIndex++] = Math.sin(phase);
-          phase += omega;
-          if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
-        }
-      }
-    }
+    // 1. Generate raw FSK signal
+    const rawFSKSignal = this.generateFSKSignalFromBytes(templateBytes, samplesPerBit);
     
-    // Generate SFD
-    for (const byte of this.config.sfdPattern) {
-      const frameBits = this.encodeByteWithFraming(byte);
-      
-      for (const bit of frameBits) {
-        const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
-        const omega = 2 * Math.PI * frequency / this.config.sampleRate;
-        
-        for (let i = 0; i < samplesPerBit; i++) {
-          template[sampleIndex++] = Math.sin(phase);
-          phase += omega;
-          if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
-        }
-      }
-    }
+    // 2. Process through same DSP chain as main demodulator
+    // I/Q demodulation
+    const iqData = this.iqDemodulator.process(rawFSKSignal);
     
-    return template;
+    // I/Q filtering
+    iqData.i = this.iqFilters.i.processBuffer(iqData.i);
+    iqData.q = this.iqFilters.q.processBuffer(iqData.q);
+    
+    // Phase detection -> returns phase difference data
+    const phaseTemplate = this.phaseDetector.process(iqData);
+    
+    return phaseTemplate;
   }
   
-  private encodeByteWithFraming(byte: number): number[] {
-    const bits: number[] = [];
+  
+  private generateFSKSignalFromBytes(bytes: number[], samplesPerBit: number): Float32Array {
+    const bitsPerByte = 8 + this.config.startBits + this.config.stopBits + 
+                       (this.config.parity !== 'none' ? 1 : 0);
+    const totalSamples = bytes.length * bitsPerByte * samplesPerBit;
+    const output = new Float32Array(totalSamples);
+    
+    let phase = 0;
+    let sampleIndex = 0;
+    
+    for (const byte of bytes) {
+      const result = this.encodeByteForTemplate(byte, output, sampleIndex, samplesPerBit, phase);
+      sampleIndex = result.sampleIndex;
+      phase = result.phase;
+    }
+    
+    return output;
+  }
+  
+  private encodeByteForTemplate(byte: number, output: Float32Array, startIndex: number, samplesPerBit: number, startPhase: number): { sampleIndex: number; phase: number } {
+    let phase = startPhase;
+    let sampleIndex = startIndex;
     
     // Start bits (space frequency = 0)
     for (let i = 0; i < this.config.startBits; i++) {
-      bits.push(0);
+      const omega = 2 * Math.PI * this.config.spaceFrequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
     }
     
-    // Data bits (LSB first)
-    for (let i = 0; i < 8; i++) {
-      bits.push((byte >> i) & 1);
+    // Data bits (MSB first)
+    for (let i = 7; i >= 0; i--) {
+      const bit = (byte >> i) & 1;
+      const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
+      const omega = 2 * Math.PI * frequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
     }
     
     // Parity bit (if enabled)
     if (this.config.parity !== 'none') {
-      bits.push(this.calculateParity(byte));
+      const parity = this.calculateParityLocal(byte);
+      const frequency = parity ? this.config.markFrequency : this.config.spaceFrequency;
+      const omega = 2 * Math.PI * frequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
     }
     
     // Stop bits (mark frequency = 1)
     for (let i = 0; i < this.config.stopBits; i++) {
-      bits.push(1);
+      const omega = 2 * Math.PI * this.config.markFrequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
     }
     
-    return bits;
+    return { sampleIndex, phase };
   }
+  
+  private calculateParityLocal(byte: number): number {
+    let parity = 0;
+    for (let i = 0; i < 8; i++) {
+      parity ^= (byte >> i) & 1;
+    }
+    return this.config.parity === 'even' ? parity : 1 - parity;
+  }
+  
   
   private calculateParity(byte: number): number {
     let parity = 0;
@@ -317,9 +361,44 @@ class CorrelationSync {
     return this.config.parity === 'even' ? parity : 1 - parity;
   }
   
-  detectFrames(signal: Float32Array): FrameLocation[] {
-    const correlations = this.crossCorrelate(signal, this.syncTemplate);
-    return this.findPeaks(correlations);
+  detectFrames(phaseData: Float32Array): FrameLocation[] {
+    // Correlate phase data with phase template
+    const correlations = this.crossCorrelate(phaseData, this.preambleSfdTemplate);
+    const threshold = 0.6; // Relaxed threshold for phase correlation
+    
+    
+    const frameLocations: FrameLocation[] = [];
+    const minDistance = this.preambleSfdTemplate.length / 2; // Minimum distance between detections
+    
+    
+    for (let i = 0; i < correlations.length; i++) {
+      if (correlations[i] > threshold) {
+        // Check minimum distance from previous detections
+        let validPeak = true;
+        for (const existing of frameLocations) {
+          if (Math.abs(i - existing.startIndex + this.preambleSfdTemplate.length) < minDistance) {
+            validPeak = false;
+            break;
+          }
+        }
+        
+        if (validPeak) {
+          // Frame starts after complete preamble+SFD pattern
+          // Add small offset to compensate for correlation timing
+          const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
+          const frameStartIndex = i + this.preambleSfdTemplate.length + Math.floor(samplesPerBit * 0.5);
+          
+          
+          frameLocations.push({
+            startIndex: frameStartIndex,
+            confidence: correlations[i],
+            length: 0
+          });
+        }
+      }
+    }
+    
+    return frameLocations;
   }
   
   private crossCorrelate(signal: Float32Array, template: Float32Array): Float32Array {
@@ -344,53 +423,6 @@ class CorrelationSync {
     return result;
   }
   
-  private findPeaks(correlations: Float32Array): FrameLocation[] {
-    const peaks: FrameLocation[] = [];
-    const minDistance = this.syncTemplate.length; // Minimum distance between peaks
-    
-    // Debug: Find the maximum correlation value
-    let maxCorr = 0;
-    for (let i = 0; i < correlations.length; i++) {
-      if (correlations[i] > maxCorr) {
-        maxCorr = correlations[i];
-      }
-    }
-    
-    // Debug: Max correlation tracking (commented out for production)
-    // if (maxCorr > 0.3) console.log(`[CorrelationSync] Max correlation: ${maxCorr.toFixed(3)}, threshold: ${this.config.syncThreshold}`);
-    
-    for (let i = 1; i < correlations.length - 1; i++) {
-      if (correlations[i] > this.config.syncThreshold &&
-          correlations[i] > correlations[i - 1] &&
-          correlations[i] > correlations[i + 1]) {
-        
-        // Check distance from previous peaks
-        let validPeak = true;
-        for (const peak of peaks) {
-          if (Math.abs(i - peak.startIndex) < minDistance) {
-            validPeak = false;
-            break;
-          }
-        }
-        
-        if (validPeak) {
-          // Calculate sync pattern length (preamble + SFD) in samples
-          const bitsPerByte = 8 + this.config.startBits + this.config.stopBits + 
-                             (this.config.parity !== 'none' ? 1 : 0);
-          const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
-          const syncPatternSamples = (this.config.preamblePattern.length + this.config.sfdPattern.length) * bitsPerByte * samplesPerBit;
-          
-          peaks.push({
-            startIndex: i + syncPatternSamples, // Start after complete preamble + SFD
-            confidence: correlations[i],
-            length: 0 // Will be determined during frame decoding
-          });
-        }
-      }
-    }
-    
-    return peaks;
-  }
 }
 
 /**
@@ -470,11 +502,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       throw new Error('FSK modulator not configured');
     }
     
-    // 1. Encode bytes with framing and preamble
-    const framedBits = this.encodeWithPreambleAndFraming(data);
     
-    // 2. Generate FSK-modulated signal
-    return this.generateFSKSignal(framedBits);
+    // Generate FSK signal directly from bytes (includes preamble, SFD, and data)
+    return this.generateFSKSignal(data);
   }
   
   demodulateData(samples: Float32Array): Uint8Array {
@@ -494,36 +524,36 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         processedSamples = this.preFilter.processBuffer(processedSamples);
       }
       
-      // 3. Correlation-based synchronization (on original signal)
-      if (!this.correlationSync) {
-        throw new Error('Correlation sync not initialized');
-      }
-      const frameLocations = this.correlationSync.detectFrames(processedSamples);
-      
-      // 4. I/Q demodulation
+      // 3. I/Q demodulation
       if (!this.iqDemodulator) {
         throw new Error('I/Q demodulator not initialized');
       }
       const iqData = this.iqDemodulator.process(processedSamples);
       
-      // 5. I/Q filtering
+      // 4. I/Q filtering
       if (this.iqFilters) {
         iqData.i = this.iqFilters.i.processBuffer(iqData.i);
         iqData.q = this.iqFilters.q.processBuffer(iqData.q);
       }
       
-      // 6. Phase detection
+      // 5. Phase detection
       if (!this.phaseDetector) {
         throw new Error('Phase detector not initialized');
       }
       let phaseData = this.phaseDetector.process(iqData);
       
-      // 7. Post-filtering
+      // 6. Post-filtering
       if (this.postFilter) {
         phaseData = this.postFilter.processBuffer(phaseData);
       }
       
-      // 8. Bit decision and frame decoding (using phase data for decoding, but frame locations from original signal)
+      // 7. Correlation-based synchronization (on phase data)
+      if (!this.correlationSync) {
+        throw new Error('Correlation sync not initialized');
+      }
+      const frameLocations = this.correlationSync.detectFrames(phaseData);
+      
+      // 8. Bit decision and frame decoding using phase data
       return this.decodeFrames(phaseData, frameLocations);
       
     } catch (error) {
@@ -532,55 +562,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
   }
   
-  private encodeWithPreambleAndFraming(data: Uint8Array): number[] {
-    const bits: number[] = [];
-    
-    // Add preamble
-    for (const byte of this.config.preamblePattern) {
-      const frameBits = this.encodeByteWithFraming(byte);
-      bits.push(...frameBits);
-    }
-    
-    // Add SFD (Start Frame Delimiter)
-    for (const byte of this.config.sfdPattern) {
-      const frameBits = this.encodeByteWithFraming(byte);
-      bits.push(...frameBits);
-    }
-    
-    // Add data with framing
-    for (const byte of data) {
-      const frameBits = this.encodeByteWithFraming(byte);
-      bits.push(...frameBits);
-    }
-    
-    return bits;
-  }
   
-  private encodeByteWithFraming(byte: number): number[] {
-    const bits: number[] = [];
-    
-    // Start bits
-    for (let i = 0; i < this.config.startBits; i++) {
-      bits.push(0); // Space frequency
-    }
-    
-    // Data bits (LSB first)
-    for (let i = 0; i < 8; i++) {
-      bits.push((byte >> i) & 1);
-    }
-    
-    // Parity bit
-    if (this.config.parity !== 'none') {
-      bits.push(this.calculateParity(byte));
-    }
-    
-    // Stop bits
-    for (let i = 0; i < this.config.stopBits; i++) {
-      bits.push(1); // Mark frequency
-    }
-    
-    return bits;
-  }
   
   private calculateParity(byte: number): number {
     let parity = 0;
@@ -590,43 +572,111 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     return this.config.parity === 'even' ? parity : 1 - parity;
   }
   
-  private generateFSKSignal(bits: number[]): Float32Array {
+  private generateFSKSignal(dataBytes: Uint8Array): Float32Array {
+    return this.generateFSKSignalInternal(this.config.preamblePattern, this.config.sfdPattern, dataBytes);
+  }
+  
+  private generateFSKSignalInternal(preambleBytes: number[], sfdBytes: number[], dataBytes: Uint8Array): Float32Array {
     const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
+    const bitsPerByte = 8 + this.config.startBits + this.config.stopBits + 
+                       (this.config.parity !== 'none' ? 1 : 0);
     
-    // Add padding to ensure frame decoding has enough samples
-    const paddingSamples = samplesPerBit * 2; // Extra 2 bits worth of padding
-    const totalSamples = bits.length * samplesPerBit + paddingSamples;
+    // Calculate total samples needed
+    const totalBytes = preambleBytes.length + sfdBytes.length + dataBytes.length;
+    const paddingSamples = totalBytes > 0 ? samplesPerBit * 2 : 0; // Extra padding
+    const totalSamples = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
     const output = new Float32Array(totalSamples);
     
     let phase = 0;
     let sampleIndex = 0;
     
-    for (const bit of bits) {
-      const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
-      const omega = 2 * Math.PI * frequency / this.config.sampleRate;
-      
-      // Generate samples for this bit (phase-continuous)
-      for (let i = 0; i < samplesPerBit; i++) {
+    // Process preamble
+    for (const byte of preambleBytes) {
+      const result = this.encodeByteDirect(byte, output, sampleIndex, samplesPerBit, phase);
+      sampleIndex = result.sampleIndex;
+      phase = result.phase;
+    }
+    
+    // Process SFD
+    for (const byte of sfdBytes) {
+      const result = this.encodeByteDirect(byte, output, sampleIndex, samplesPerBit, phase);
+      sampleIndex = result.sampleIndex;
+      phase = result.phase;
+    }
+    
+    // Process data
+    for (const byte of dataBytes) {
+      const result = this.encodeByteDirect(byte, output, sampleIndex, samplesPerBit, phase);
+      sampleIndex = result.sampleIndex;
+      phase = result.phase;
+    }
+    
+    // Add padding (mark frequency)
+    if (paddingSamples > 0) {
+      const markOmega = 2 * Math.PI * this.config.markFrequency / this.config.sampleRate;
+      for (let i = 0; i < paddingSamples; i++) {
         output[sampleIndex++] = Math.sin(phase);
-        phase += omega;
+        phase += markOmega;
         if (phase > 2 * Math.PI) {
           phase -= 2 * Math.PI;
         }
       }
     }
     
-    // Add padding (silence or mark frequency)
-    const markOmega = 2 * Math.PI * this.config.markFrequency / this.config.sampleRate;
-    for (let i = 0; i < paddingSamples; i++) {
-      output[sampleIndex++] = Math.sin(phase);
-      phase += markOmega;
-      if (phase > 2 * Math.PI) {
-        phase -= 2 * Math.PI;
+    return output;
+  }
+  
+  private encodeByteDirect(byte: number, output: Float32Array, startIndex: number, samplesPerBit: number, startPhase: number): { sampleIndex: number; phase: number } {
+    let phase = startPhase;
+    let sampleIndex = startIndex;
+    
+    // Start bits (space frequency = 0)
+    for (let i = 0; i < this.config.startBits; i++) {
+      const omega = 2 * Math.PI * this.config.spaceFrequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
       }
     }
     
-    return output;
+    // Data bits (MSB first)
+    for (let i = 7; i >= 0; i--) {
+      const bit = (byte >> i) & 1;
+      const frequency = bit ? this.config.markFrequency : this.config.spaceFrequency;
+      const omega = 2 * Math.PI * frequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
+    }
+    
+    // Parity bit (if enabled)
+    if (this.config.parity !== 'none') {
+      const parity = this.calculateParity(byte);
+      const frequency = parity ? this.config.markFrequency : this.config.spaceFrequency;
+      const omega = 2 * Math.PI * frequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
+    }
+    
+    // Stop bits (mark frequency = 1)
+    for (let i = 0; i < this.config.stopBits; i++) {
+      const omega = 2 * Math.PI * this.config.markFrequency / this.config.sampleRate;
+      for (let j = 0; j < samplesPerBit; j++) {
+        output[sampleIndex++] = Math.sin(phase);
+        phase += omega;
+        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+      }
+    }
+    
+    return { sampleIndex, phase };
   }
+  
   
   private decodeFrames(phaseData: Float32Array, frameLocations: FrameLocation[]): Uint8Array {
     const decodedBytes: number[] = [];
@@ -635,14 +685,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
                        (this.config.parity !== 'none' ? 1 : 0);
     const frameLength = bitsPerByte * samplesPerBit;
     
-    // Debug: Frame decoding info (disabled)
-    // console.log(`[DecodeFrames] Phase data length: ${phaseData.length}, Found ${frameLocations.length} frame locations`);
     
     for (const frameLocation of frameLocations) {
       let currentFrameStart = frameLocation.startIndex;
-      
       // Decode consecutive frames after preamble until we run out of data or hit errors
       while (currentFrameStart + frameLength <= phaseData.length) {
+        
         // Extract frame data
         const frameData = phaseData.slice(currentFrameStart, currentFrameStart + frameLength);
         
@@ -651,6 +699,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         
         // Decode frame
         const byte = this.decodeFrame(bits);
+        
         if (byte !== null) {
           decodedBytes.push(byte);
           // Move to next frame
@@ -670,17 +719,18 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     const bits: number[] = [];
     
     for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
-      const start = bitIndex * samplesPerBit;
-      const end = start + samplesPerBit;
+      // Sample at the center of the bit period for better stability
+      const centerSample = Math.floor((bitIndex + 0.5) * samplesPerBit);
       
-      // Simple majority vote within bit period
-      let sum = 0;
-      for (let i = start; i < end && i < frameData.length; i++) {
-        sum += frameData[i];
+      if (centerSample < frameData.length) {
+        // Single sample decision at optimal point
+        const value = frameData[centerSample];
+        
+        
+        // For FSK: higher frequency (space=1850Hz) → bit 0, lower frequency (mark=1650Hz) → bit 1
+        // Empirically determined: negative phase diff → bit 0, positive phase diff → bit 1
+        bits.push(value < 0 ? 0 : 1);
       }
-      
-      const average = sum / (end - start);
-      bits.push(average > 0 ? 1 : 0);
     }
     
     return bits;
@@ -689,43 +739,63 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private decodeFrame(bits: number[]): number | null {
     let bitIndex = 0;
     
+    
     // Check start bits
     for (let i = 0; i < this.config.startBits; i++) {
-      if (bitIndex >= bits.length || bits[bitIndex++] !== 0) {
-        return null; // Framing error
-      }
-    }
-    
-    // Extract data bits (LSB first)
-    let byte = 0;
-    for (let i = 0; i < 8; i++) {
       if (bitIndex >= bits.length) {
+        console.log(`[DecodeFrame] Not enough bits for start bit ${i}`);
         return null;
       }
-      if (bits[bitIndex++]) {
+      if (bits[bitIndex] !== 0) {
+        console.log(`[DecodeFrame] Start bit ${i} error: expected 0, got ${bits[bitIndex]} at index ${bitIndex}`);
+        return null; // Framing error
+      }
+      bitIndex++;
+    }
+    
+    // Extract data bits (MSB first)
+    let byte = 0;
+    for (let i = 7; i >= 0; i--) {
+      if (bitIndex >= bits.length) {
+        console.log(`[DecodeFrame] Not enough bits for data bit ${i}`);
+        return null;
+      }
+      if (bits[bitIndex]) {
         byte |= (1 << i);
       }
+      bitIndex++;
     }
+    
+    console.log(`[DecodeFrame] Extracted byte: 0x${byte.toString(16)} (${byte.toString(2).padStart(8, '0')})`);
     
     // Check parity bit
     if (this.config.parity !== 'none') {
       if (bitIndex >= bits.length) {
+        console.log(`[DecodeFrame] Not enough bits for parity`);
         return null;
       }
       const receivedParity = bits[bitIndex++];
       const calculatedParity = this.calculateParity(byte);
       if (receivedParity !== calculatedParity) {
+        console.log(`[DecodeFrame] Parity error: received ${receivedParity}, calculated ${calculatedParity}`);
         return null; // Parity error
       }
     }
     
     // Check stop bits
     for (let i = 0; i < this.config.stopBits; i++) {
-      if (bitIndex >= bits.length || bits[bitIndex++] !== 1) {
+      if (bitIndex >= bits.length) {
+        console.log(`[DecodeFrame] Not enough bits for stop bit ${i}`);
+        return null;
+      }
+      if (bits[bitIndex] !== 1) {
+        console.log(`[DecodeFrame] Stop bit ${i} error: expected 1, got ${bits[bitIndex]} at index ${bitIndex}`);
         return null; // Framing error
       }
+      bitIndex++;
     }
     
+    console.log(`[DecodeFrame] Frame decoded successfully: 0x${byte.toString(16)}`);
     return byte;
   }
   

@@ -376,8 +376,8 @@ function generateFSKSignal(
       }
     }
     
-    // Data bits (LSB first)
-    for (let i = 0; i < 8; i++) {
+    // Data bits (MSB first)
+    for (let i = 7; i >= 0; i--) {
       const bit = (byte >> i) & 1;
       const frequency = bit ? markFreq : spaceFreq;
       const omega = 2 * Math.PI * frequency / sampleRate;
