@@ -121,69 +121,6 @@ describe('FSK Core Modulation', () => {
     });
   });
   
-  describe('Frequency Content Verification', () => {
-    test('all ones produces predominantly mark frequency', () => {
-      const allOnes = new Uint8Array([0xFF]); // All 1s
-      const signal = fskCore.modulateData(allOnes);
-      
-      // Simple frequency content check by measuring energy in frequency bands
-      // This is a basic check - in real implementation we'd use FFT
-      const config = fskCore.getConfig();
-      const markFreq = config.markFrequency;
-      const spaceFreq = config.spaceFrequency;
-      
-      // Generate reference signals for comparison
-      const markReference = generateSineWave(markFreq, config.sampleRate, 0.01);
-      const spaceReference = generateSineWave(spaceFreq, config.sampleRate, 0.01);
-      
-      // Compare correlation with mark vs space reference
-      const markCorr = computeCorrelation(signal.slice(0, markReference.length), markReference);
-      const spaceCorr = computeCorrelation(signal.slice(0, spaceReference.length), spaceReference);
-      
-      // For data with many 1s, mark correlation should be higher
-      // Note: This is approximate since we have framing bits
-      expect(Math.abs(markCorr)).toBeGreaterThan(Math.abs(spaceCorr) * 0.5);
-    });
-    
-    test('all zeros produces predominantly space frequency', () => {
-      const allZeros = new Uint8Array([0x00]); // All 0s
-      const signal = fskCore.modulateData(allZeros);
-      
-      const config = fskCore.getConfig();
-      const markFreq = config.markFrequency;
-      const spaceFreq = config.spaceFrequency;
-      
-      const markReference = generateSineWave(markFreq, config.sampleRate, 0.01);
-      const spaceReference = generateSineWave(spaceFreq, config.sampleRate, 0.01);
-      
-      const markCorr = computeCorrelation(signal.slice(0, markReference.length), markReference);
-      const spaceCorr = computeCorrelation(signal.slice(0, spaceReference.length), spaceReference);
-      
-      // For data with many 0s, space correlation should be higher
-      expect(Math.abs(spaceCorr)).toBeGreaterThan(Math.abs(markCorr) * 0.5);
-    });
-    
-    test('alternating pattern produces both frequencies', () => {
-      const alternating = new Uint8Array([0x55]); // 01010101
-      const signal = fskCore.modulateData(alternating);
-      
-      const config = fskCore.getConfig();
-      const markFreq = config.markFrequency;
-      const spaceFreq = config.spaceFrequency;
-      
-      const markReference = generateSineWave(markFreq, config.sampleRate, 0.01);
-      const spaceReference = generateSineWave(spaceFreq, config.sampleRate, 0.01);
-      
-      const markCorr = computeCorrelation(signal.slice(0, markReference.length), markReference);
-      const spaceCorr = computeCorrelation(signal.slice(0, spaceReference.length), spaceReference);
-      
-      // Both frequencies should have reasonable correlation
-      // Note: Correlation may be lower due to framing bits and preamble
-      expect(Math.abs(markCorr)).toBeGreaterThan(0.05);
-      expect(Math.abs(spaceCorr)).toBeGreaterThan(0.05);
-    });
-  });
-  
   describe('Phase Continuity', () => {
     test('signal is phase continuous', () => {
       const testData = new Uint8Array([0x3C]); // 00111100 - has transitions

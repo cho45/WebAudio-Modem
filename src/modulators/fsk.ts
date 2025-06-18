@@ -685,11 +685,26 @@ export class FSKCore extends BaseModulator<FSKConfig> {
                        (this.config.parity !== 'none' ? 1 : 0);
     const frameLength = bitsPerByte * samplesPerBit;
     
+    // Calculate reasonable maximum frames based on signal length
+    // Account for preamble+SFD overhead and padding
+    const preambleSfdLength = (this.config.preamblePattern.length + this.config.sfdPattern.length) * bitsPerByte * samplesPerBit;
+    const dataLength = phaseData.length - preambleSfdLength;
+    const maxFrames = Math.ceil(dataLength / frameLength) + 2; // Small margin for noise tolerance
     
-    for (const frameLocation of frameLocations) {
+    // Use only the first (highest confidence) correlation peak for FSK
+    // Multiple peaks are usually false detections from data patterns
+    const bestFrameLocation = frameLocations.length > 0 ? frameLocations[0] : null;
+    if (!bestFrameLocation) {
+      return new Uint8Array(0);
+    }
+    
+    {
+      const frameLocation = bestFrameLocation;
       let currentFrameStart = frameLocation.startIndex;
-      // Decode consecutive frames after preamble until we run out of data or hit errors
-      while (currentFrameStart + frameLength <= phaseData.length) {
+      let frameCount = 0;
+      
+      // Decode consecutive frames with reasonable limits
+      while (currentFrameStart + frameLength <= phaseData.length && frameCount < maxFrames) {
         
         // Extract frame data
         const frameData = phaseData.slice(currentFrameStart, currentFrameStart + frameLength);
@@ -704,8 +719,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
           decodedBytes.push(byte);
           // Move to next frame
           currentFrameStart += frameLength;
+          frameCount++;
         } else {
-          // Frame decode failed - stop processing this sequence
+          // Frame decode failed (start/stop bit error, parity error) - stop processing
           break;
         }
       }
@@ -766,7 +782,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       bitIndex++;
     }
     
-    console.log(`[DecodeFrame] Extracted byte: 0x${byte.toString(16)} (${byte.toString(2).padStart(8, '0')})`);
     
     // Check parity bit
     if (this.config.parity !== 'none') {
@@ -795,7 +810,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       bitIndex++;
     }
     
-    console.log(`[DecodeFrame] Frame decoded successfully: 0x${byte.toString(16)}`);
     return byte;
   }
   
