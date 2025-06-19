@@ -17,7 +17,7 @@ interface PendingModulation {
   modulator: ChunkedModulator;
 }
 
-class FSKProcessor extends AudioWorkletProcessor {
+export class FSKProcessor extends AudioWorkletProcessor {
   private fskCore: FSKCore;
   private inputBuffer: RingBuffer;
   private outputBuffer: RingBuffer;
