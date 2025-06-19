@@ -228,12 +228,10 @@ AModem.prototype = {
 							self.logger('Sending chunk: ', chunk, d.length, chunk * self.chunksize, data.length, ( (chunk + 1) * self.chunksize / data.length * 100).toFixed(2), '%');
 							d.push(self.crc8(d));
 							self.channel2.modulate([ self.SOH, chunk & 0xff, ~chunk & 0xff ].concat(d), { play : self.channel1.preFilter });
-							if (src) src.connect(self.context.destination);
-							state = 'data';
+							ontate = 'data';
 						} else {
 							self.logger('End of data. Send EOT');
 							self.channel2.modulate([ self.EOT ]);
-							if (src) src.connect(self.context.destination);
 							state = 'eot';
 						}
 					} else

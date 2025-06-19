@@ -61,15 +61,14 @@ FSK.prototype = {
 
 		function sendByte (byte) {
 			sendBit(0, self.startBit);
-			for (var b = 0; b < self.byteUnit; b++) {
-				//  least significant bit first
-				if (byte & (1<<b)) {
-					sendBit(1, 1);
-				} else {
-					sendBit(0, 1);
-				}
+			var bits = [];
+			for (var b = self.byteUnit - 1; b >= 0; b--) {
+				var bit = (byte & (1<<b)) ? 1 : 0;
+				bits.push(bit);
+				sendBit(bit, 1);
 			}
 			sendBit(1, self.stopBit);
+			console.log('[SEND][FSK] sendByte', byte.toString(2).padStart(self.byteUnit, '0'), 'bits:', bits.join(''));
 		}
 
 		sendBit(1, wait);
@@ -82,7 +81,9 @@ FSK.prototype = {
 		// 追加: 出力ノードに接続
 		source.connect(self.output);
 		source.start(0);
-		console.log('FSK modulated', sent.length, 'bits:', sent);
+		console.log('FSK modulated', sent.length, 'bits:', sent, bytes.map(function (b) {
+			return b.toString(2).padStart(self.byteUnit, '0');
+		}));
 		return source;
 	},
 
@@ -106,7 +107,13 @@ FSK.prototype = {
 			}
 		}));
 		decoder.port.onmessage = (event) => {
-			if (event.data.type === 'byte') callback(event.data.value);
+			if (event.data.type === 'bit') {
+				// console.log('[RECEIVE][FSK] bit', event.data.bitIndex, event.data.value, 'byte:', event.data.byte.toString(2).padStart(self.byteUnit, '0'));
+			}
+			if (event.data.type === 'byte') {
+				// console.log('[RECEIVE][FSK] byte', event.data.value.toString(2).padStart(self.byteUnit, '0'));
+				callback(event.data.value);
+			}
 		};
 		detection.connect(decoder);
 		var outputGain = self.retainAudioNode(self.context.createGain());

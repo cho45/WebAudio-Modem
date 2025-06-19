@@ -25,13 +25,17 @@ class DecoderProcessor extends AudioWorkletProcessor {
         if (this.current.data === -1) this.current.space++;
         if (this.unit * this.startBit <= this.current.total) {
           if (this.current.mark < this.current.space) {
-			console.log(this.current.state + " -> data");	
+            // 状態遷移のみ最小限ログ
+            // console.log(this.current.state + " -> data");
+            const firstBit = this.current.mark > this.current.space ? 1 : 0;
+            this.current.byte = (this.current.byte << 1) | firstBit;
+            this.current.bit = 1;
             this.current.mark = 0;
             this.current.space = 0;
             this.current.total = 0;
             this.current.state = "data";
           } else {
-			console.log(this.current.state + " -> waiting");	
+            // console.log(this.current.state + " -> waiting");
             this.current.byte = 0;
             this.current.state = "waiting";
             this.current.total = 0;
@@ -45,11 +49,12 @@ class DecoderProcessor extends AudioWorkletProcessor {
           const bit = this.current.mark > this.current.space ? 1 : 0;
           this.current.mark = 0;
           this.current.space = 0;
-          this.current.byte = this.current.byte | (bit << this.current.bit++);
+          this.current.byte = (this.current.byte << 1) | bit;
+          this.current.bit++;
           this.current.total = 0;
           if (this.current.bit >= this.byteUnit) {
             this.current.bit = 0;
-			console.log(this.current.state + " -> stop");	
+            // console.log(this.current.state + " -> stop");
             this.current.state = "stop";
           }
         }
@@ -59,7 +64,8 @@ class DecoderProcessor extends AudioWorkletProcessor {
         if (this.current.data === -1) this.current.space++;
         if (this.unit * this.stopBit <= this.current.total) {
           this.port.postMessage({ type: "byte", value: this.current.byte });
-			console.log(this.current.state + " -> waiting", this.current.byte.toString(2));	
+          // バイト確定時のみ最小限ログ
+          // console.log('[BYTE]', this.current.byte.toString(2).padStart(this.byteUnit, '0'));
           this.current.mark = 0;
           this.current.space = 0;
           this.current.byte = 0;
