@@ -3,9 +3,9 @@
  */
 
 import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
-import { XModemTransport } from '../../../src/packets/xmodem/transport';
-import { XModemPacket } from '../../../src/packets/xmodem/packet';
-import { ControlType } from '../../../src/packets/xmodem/types';
+import { XModemTransport } from '../../../src/transports/xmodem/xmodem';
+import { XModemPacket } from '../../../src/transports/xmodem/packet';
+import { ControlType } from '../../../src/transports/xmodem/types';
 
 describe('XModem Transport', () => {
   let transport: XModemTransport;

@@ -1,6 +1,6 @@
 // FSK SFD (Start Frame Delimiter) tests - Node.js compatible
 import { describe, test, expect, beforeEach } from 'vitest';
-import { FSKCore, FSKConfig, DEFAULT_FSK_CONFIG } from '../../src/modulators/fsk';
+import { FSKCore, FSKConfig, DEFAULT_FSK_CONFIG } from '../../src/modems/fsk';
 
 describe('FSK SFD (Start Frame Delimiter) Tests', () => {
   let fskCore: FSKCore;

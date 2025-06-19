@@ -3,8 +3,8 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { XModemPacket } from '../../../src/packets/xmodem/packet';
-import { ControlType } from '../../../src/packets/xmodem/types';
+import { XModemPacket } from '../../../src/transports/xmodem/packet';
+import { ControlType } from '../../../src/transports/xmodem/types';
 
 describe('XModem Packet', () => {
   

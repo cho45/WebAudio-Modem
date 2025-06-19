@@ -1,6 +1,6 @@
 // FSK Core modulation tests - Node.js compatible
 import { describe, test, expect, beforeEach } from 'vitest';
-import { FSKCore, FSKConfig, DEFAULT_FSK_CONFIG } from '../../src/modulators/fsk';
+import { FSKCore, FSKConfig, DEFAULT_FSK_CONFIG } from '../../src/modems/fsk';
 
 describe('FSK Core Modulation', () => {
   let fskCore: FSKCore;
