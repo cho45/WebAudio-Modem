@@ -115,6 +115,19 @@ export interface TransportStatistics {
   readonly averageRoundTripTime: number; // milliseconds
 }
 
+/**
+ * Internal mutable statistics (for implementation use)
+ */
+export interface MutableTransportStatistics {
+  packetsSent: number;
+  packetsReceived: number;
+  packetsRetransmitted: number;
+  packetsDropped: number;
+  bytesTransferred: number;
+  errorRate: number;
+  averageRoundTripTime: number;
+}
+
 
 // Base event class
 export class Event {
@@ -275,7 +288,7 @@ export abstract class BaseTransport
   
   abstract readonly transportName: string;
   
-  protected statistics: TransportStatistics = {
+  protected statistics: MutableTransportStatistics = {
     packetsSent: 0,
     packetsReceived: 0,
     packetsRetransmitted: 0,

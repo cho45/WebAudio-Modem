@@ -5,7 +5,7 @@
  * data fragmentation, and error recovery.
  */
 
-import { BaseTransport, ITransport } from '../../core';
+import { BaseTransport, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlPacket, ControlType } from './types';
 
@@ -229,7 +229,7 @@ export class XModemTransport extends BaseTransport {
     const result = XModemPacket.parse(data);
     
     if (result.error) {
-      this.emit('error', new Error(`Packet parse error: ${result.error}`));
+      this.emit('error', new Event(`Packet parse error: ${result.error}`));
       return;
     }
 
@@ -373,7 +373,7 @@ export class XModemTransport extends BaseTransport {
         break;
         
       default:
-        this.emit('control', { type: packet.control });
+        this.emit('control', new Event({ type: packet.control }));
     }
   }
 
@@ -447,7 +447,7 @@ export class XModemTransport extends BaseTransport {
       
       // Call reject immediately - the caller should handle it
       reject(error);
-      this.emit('error', error);
+      this.emit('error', new Event(error));
     }
   }
 
