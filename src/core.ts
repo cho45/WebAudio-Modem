@@ -46,20 +46,73 @@ export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorC
   emit(_eventName: string, _event?: Event): void;
 }
 
-export interface IProtocol {
-  readonly name: string;
+/**
+ * High-level transport interface for application layer
+ * 
+ * Provides reliable data transmission with automatic:
+ * - Error detection and correction
+ * - Loss detection and retransmission  
+ * - Flow control
+ * - Data fragmentation and reassembly
+ * 
+ * Different transport protocols (XModem, HDLC, etc.) are completely interchangeable
+ * through this interface, transparent to the application.
+ */
+export interface ITransport {
+  readonly transportName: string;
   
-  // Frame encoding/decoding
-  encodeFrame(_data: Uint8Array): Uint8Array;
-  decodeFrame(_frame: Uint8Array): Uint8Array | null;
+  /**
+   * Send data reliably to the remote endpoint
+   * Handles fragmentation, sequencing, retransmission automatically
+   * 
+   * @param data Data to send
+   * @returns Promise that resolves when data is acknowledged by remote
+   */
+  sendData(data: Uint8Array): Promise<void>;
   
-  // Error control
-  addErrorControl(_data: Uint8Array): Uint8Array;
-  checkErrorControl(_data: Uint8Array): boolean;
+  /**
+   * Receive data from the remote endpoint
+   * Handles reassembly, duplicate detection, acknowledgment automatically
+   * 
+   * @returns Promise that resolves with received data
+   */
+  receiveData(): Promise<Uint8Array>;
   
-  // Configuration
-  configure(_config: unknown): void;
-  getConfig(): unknown;
+  /**
+   * Send control command (protocol-specific)
+   * 
+   * @param command Protocol-specific control command
+   * @returns Promise that resolves when command is sent
+   */
+  sendControl(command: string): Promise<void>;
+  
+  /**
+   * Check if protocol is ready for communication
+   */
+  isReady(): boolean;
+  
+  /**
+   * Get current transport statistics
+   */
+  getStatistics(): TransportStatistics;
+  
+  /**
+   * Reset transport state (clear buffers, reset sequence numbers)
+   */
+  reset(): void;
+}
+
+/**
+ * Transport statistics for monitoring and diagnostics
+ */
+export interface TransportStatistics {
+  readonly packetsSent: number;
+  readonly packetsReceived: number;
+  readonly packetsRetransmitted: number;
+  readonly packetsDropped: number;
+  readonly bytesTransferred: number;
+  readonly errorRate: number;           // 0.0 - 1.0
+  readonly averageRoundTripTime: number; // milliseconds
 }
 
 
@@ -210,24 +263,55 @@ export abstract class WebAudioModulator<TConfig extends BaseModulatorConfig>
   }
 }
 
-// Base protocol class
-export abstract class BaseProtocol extends EventEmitter implements IProtocol {
-  abstract readonly name: string;
+/**
+ * Base class for transport protocols with common functionality
+ * 
+ * Provides event handling and basic statistics tracking
+ * while enforcing the ITransport interface
+ */
+export abstract class BaseTransport 
+  extends EventEmitter 
+  implements ITransport {
   
-  protected config: unknown = {};
+  abstract readonly transportName: string;
   
-  abstract encodeFrame(_data: Uint8Array): Uint8Array;
-  abstract decodeFrame(_frame: Uint8Array): Uint8Array | null;
-  abstract addErrorControl(_data: Uint8Array): Uint8Array;
-  abstract checkErrorControl(_data: Uint8Array): boolean;
+  protected statistics: TransportStatistics = {
+    packetsSent: 0,
+    packetsReceived: 0,
+    packetsRetransmitted: 0,
+    packetsDropped: 0,
+    bytesTransferred: 0,
+    errorRate: 0,
+    averageRoundTripTime: 0
+  };
   
-  configure(config: unknown): void {
-    this.config = { ...this.config as Record<string, unknown>, ...config as Record<string, unknown> };
-    this.emit('configured', new Event(this.config));
+  // Abstract methods that must be implemented by concrete protocols
+  abstract sendData(data: Uint8Array): Promise<void>;
+  abstract receiveData(): Promise<Uint8Array>;
+  abstract sendControl(command: string): Promise<void>;
+  abstract isReady(): boolean;
+  
+  /**
+   * Get current statistics
+   */
+  getStatistics(): TransportStatistics {
+    return { ...this.statistics };
   }
   
-  getConfig(): unknown {
-    return { ...this.config as Record<string, unknown> };
+  /**
+   * Reset transport state and statistics
+   */
+  reset(): void {
+    this.statistics = {
+      packetsSent: 0,
+      packetsReceived: 0,
+      packetsRetransmitted: 0,
+      packetsDropped: 0,
+      bytesTransferred: 0,
+      errorRate: 0,
+      averageRoundTripTime: 0
+    };
+    this.emit('reset');
   }
 }
 
