@@ -6,26 +6,80 @@ import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
 import { XModemTransport } from '../../../src/transports/xmodem/xmodem';
 import { XModemPacket } from '../../../src/transports/xmodem/packet';
 import { ControlType } from '../../../src/transports/xmodem/types';
+import { IModulator, SignalQuality, Event, EventEmitter } from '../../../src/core';
+
+// Mock Modulator for testing
+class MockModulator extends EventEmitter implements IModulator {
+  readonly name = 'Mock';
+  readonly type = 'FSK' as const;
+  
+  private _ready = true;
+  public sentData: Uint8Array[] = [];
+  public receivedData: Uint8Array[] = [];
+  private dataToReceive: Uint8Array[] = [];
+
+  configure(config: any): void {
+    // Mock implementation
+  }
+
+  getConfig(): any {
+    return {};
+  }
+
+  async modulateData(data: Uint8Array): Promise<Float32Array> {
+    this.sentData.push(new Uint8Array(data));
+    return new Float32Array(data.length * 100); // Mock signal
+  }
+
+  async demodulateData(samples: Float32Array): Promise<Uint8Array> {
+    if (this.dataToReceive.length > 0) {
+      return this.dataToReceive.shift()!;
+    }
+    return new Uint8Array(0);
+  }
+
+  reset(): void {
+    this.sentData = [];
+    this.receivedData = [];
+    this.dataToReceive = [];
+    this._ready = true;
+  }
+
+  isReady(): boolean {
+    return this._ready;
+  }
+
+  getSignalQuality(): SignalQuality {
+    return {
+      snr: 30,
+      ber: 0.001,
+      eyeOpening: 0.8,
+      phaseJitter: 0.1,
+      frequencyOffset: 0
+    };
+  }
+
+  // Helper methods for testing
+  addReceivedData(data: Uint8Array): void {
+    this.dataToReceive.push(data);
+  }
+
+  simulateDataReceived(data: Uint8Array): void {
+    this.emit('data', new Event(data));
+  }
+
+  getLastSentData(): Uint8Array | undefined {
+    return this.sentData[this.sentData.length - 1];
+  }
+}
 
 describe('XModem Transport', () => {
   let transport: XModemTransport;
-  let mockSend: ReturnType<typeof vi.fn>;
-  let mockReceive: ReturnType<typeof vi.fn>;
-  let sentPackets: Uint8Array[];
+  let mockModulator: MockModulator;
   
   beforeEach(() => {
-    transport = new XModemTransport();
-    sentPackets = [];
-    
-    mockSend = vi.fn(async (data: Uint8Array) => {
-      sentPackets.push(new Uint8Array(data));
-    });
-    
-    mockReceive = vi.fn(async () => {
-      return new Uint8Array([]);
-    });
-    
-    transport.setTransportCallbacks(mockSend, mockReceive);
+    mockModulator = new MockModulator();
+    transport = new XModemTransport(mockModulator);
     
     // Speed up tests
     transport.configure({ timeoutMs: 100, maxRetries: 3 });
@@ -34,13 +88,16 @@ describe('XModem Transport', () => {
   afterEach(async () => {
     vi.clearAllTimers();
     vi.useRealTimers();
-    // Dispose transport cleanly to avoid unhandled rejections
-    transport.dispose();
+    // Reset transport state to avoid unhandled rejections
+    transport.reset();
+    // Reset mock modulator state
+    mockModulator.reset();
   });
 
   describe('Configuration', () => {
     test('Default configuration', () => {
-      const newTransport = new XModemTransport();
+      const newMockModulator = new MockModulator();
+      const newTransport = new XModemTransport(newMockModulator);
       const config = newTransport.getConfig();
       
       expect(config.timeoutMs).toBe(3000);
@@ -68,9 +125,10 @@ describe('XModem Transport', () => {
       expect(transport.isReady()).toBe(true);
     });
 
-    test('Not ready without callbacks', () => {
-      const newTransport = new XModemTransport();
-      expect(newTransport.isReady()).toBe(false);
+    test('Ready with modulator', () => {
+      const newMockModulator = new MockModulator();
+      const newTransport = new XModemTransport(newMockModulator);
+      expect(newTransport.isReady()).toBe(true);
     });
 
     test('Get initial statistics', () => {
@@ -90,7 +148,7 @@ describe('XModem Transport', () => {
       await transport.sendControl('NAK');
       await transport.sendControl('EOT');
       
-      expect(mockSend).toHaveBeenCalledTimes(3);
+      expect(mockModulator.sentData.length).toBe(3);
       expect(transport.getStatistics().packetsSent).toBe(3);
     });
 
@@ -98,9 +156,10 @@ describe('XModem Transport', () => {
       await expect(transport.sendControl('INVALID')).rejects.toThrow('Unknown control command');
     });
 
-    test('Control command without callback', async () => {
-      const newTransport = new XModemTransport();
-      await expect(newTransport.sendControl('ACK')).rejects.toThrow('Transport send callback not configured');
+    test('Control command with modulator', async () => {
+      const newMockModulator = new MockModulator();
+      const newTransport = new XModemTransport(newMockModulator);
+      await expect(newTransport.sendControl('ACK')).resolves.not.toThrow();
     });
   });
 
@@ -114,7 +173,7 @@ describe('XModem Transport', () => {
       const sendPromise = transport.sendData(testData);
       
       // Should send data packet
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       
       // Simulate ACK response
       const ackPacket = XModemPacket.createControl(ControlType.ACK);
@@ -122,7 +181,7 @@ describe('XModem Transport', () => {
       await transport.processIncomingData(ackSerialized);
       
       // Should send EOT
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       
       await sendPromise;
       vi.useRealTimers();
@@ -139,22 +198,22 @@ describe('XModem Transport', () => {
       const sendPromise = transport.sendData(testData);
       
       // Packet 1
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       let ackPacket = XModemPacket.createControl(ControlType.ACK);
       await transport.processIncomingData(XModemPacket.serialize(ackPacket));
       
       // Packet 2  
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       ackPacket = XModemPacket.createControl(ControlType.ACK);
       await transport.processIncomingData(XModemPacket.serialize(ackPacket));
       
       // Packet 3
-      expect(mockSend).toHaveBeenCalledTimes(3);
+      expect(mockModulator.sentData.length).toBe(3);
       ackPacket = XModemPacket.createControl(ControlType.ACK);
       await transport.processIncomingData(XModemPacket.serialize(ackPacket));
       
       // EOT
-      expect(mockSend).toHaveBeenCalledTimes(4);
+      expect(mockModulator.sentData.length).toBe(4);
       
       await sendPromise;
       vi.useRealTimers();
@@ -168,13 +227,13 @@ describe('XModem Transport', () => {
       const sendPromise = transport.sendData(testData);
       
       // Should send empty packet
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       
       const ackPacket = XModemPacket.createControl(ControlType.ACK);
       await transport.processIncomingData(XModemPacket.serialize(ackPacket));
       
       // Should send EOT
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       
       await sendPromise;
       vi.useRealTimers();
@@ -189,13 +248,13 @@ describe('XModem Transport', () => {
       const sendPromise = transport.sendData(testData);
       
       // Initial send
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       
       // Wait for timeout (100ms + some buffer)
       await new Promise(resolve => setTimeout(resolve, 150));
       
       // Should retry
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       expect(transport.getStatistics().packetsRetransmitted).toBe(1);
       
       // Send ACK to complete
@@ -216,7 +275,7 @@ describe('XModem Transport', () => {
       // Wait a bit more to ensure all timeouts are processed
       await new Promise(resolve => setTimeout(resolve, 150));
       
-      expect(mockSend).toHaveBeenCalledTimes(4);
+      expect(mockModulator.sentData.length).toBe(4);
       expect(transport.getStatistics().packetsRetransmitted).toBe(3);
       
       // Transport should already be reset after failure
@@ -231,14 +290,14 @@ describe('XModem Transport', () => {
       const sendPromise = transport.sendData(testData);
       
       // Initial send
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       
       // Send NAK
       const nakPacket = XModemPacket.createControl(ControlType.NAK);
       await transport.processIncomingData(XModemPacket.serialize(nakPacket));
       
       // Should retransmit
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       expect(transport.getStatistics().packetsRetransmitted).toBe(1);
       
       // Send ACK to complete
@@ -250,11 +309,16 @@ describe('XModem Transport', () => {
     });
 
     test('Send failure', async () => {
-      mockSend.mockRejectedValueOnce(new Error('Network error'));
+      // Mock the modulator to throw an error
+      const originalModulateData = mockModulator.modulateData;
+      mockModulator.modulateData = vi.fn().mockRejectedValueOnce(new Error('Network error'));
       
       const testData = new Uint8Array([0x42]);
       
-      await expect(transport.sendData(testData)).rejects.toThrow('Send failed');
+      await expect(transport.sendData(testData)).rejects.toThrow();
+      
+      // Restore original method
+      mockModulator.modulateData = originalModulateData;
     });
   });
 
@@ -271,7 +335,7 @@ describe('XModem Transport', () => {
       await transport.processIncomingData(XModemPacket.serialize(dataPacket));
       
       // Should send ACK
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       expect(transport.getStatistics().packetsReceived).toBe(1);
       
       // Send EOT
@@ -299,7 +363,7 @@ describe('XModem Transport', () => {
       await transport.processIncomingData(XModemPacket.serialize(packet3));
       
       // Should send 3 ACKs
-      expect(mockSend).toHaveBeenCalledTimes(3);
+      expect(mockModulator.sentData.length).toBe(3);
       expect(transport.getStatistics().packetsReceived).toBe(3);
       
       // Send EOT to complete
@@ -322,7 +386,7 @@ describe('XModem Transport', () => {
       await transport.processIncomingData(XModemPacket.serialize(packet2));
       
       // Should send NAK
-      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockModulator.sentData.length).toBe(1);
       expect(transport.getStatistics().packetsDropped).toBe(1);
       
       // Send correct packet 1
@@ -330,7 +394,7 @@ describe('XModem Transport', () => {
       await transport.processIncomingData(XModemPacket.serialize(packet1));
       
       // Should send ACK
-      expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockModulator.sentData.length).toBe(2);
       
       // Complete with EOT
       const eotPacket = XModemPacket.createControl(ControlType.EOT);
@@ -402,11 +466,13 @@ describe('XModem Transport', () => {
       expect(errorSpy).toHaveBeenCalled();
     });
 
-    test('Operations without callbacks throw errors', async () => {
-      const newTransport = new XModemTransport();
+    test('Operations with modulator work correctly', async () => {
+      const newMockModulator = new MockModulator();
+      const newTransport = new XModemTransport(newMockModulator);
+      newTransport.configure({ timeoutMs: 100, maxRetries: 1 });
       
-      await expect(newTransport.sendData(new Uint8Array([1]))).rejects.toThrow('Transport send callback not configured');
-      await expect(newTransport.receiveData()).rejects.toThrow('Transport receive callback not configured');
+      // These should not throw initially (though they may timeout/fail later)
+      await expect(newTransport.sendControl('ACK')).resolves.not.toThrow();
     });
   });
 

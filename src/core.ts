@@ -23,9 +23,9 @@ export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorC
   configure(_config: TConfig): void;
   getConfig(): TConfig;
   
-  // Modulation/Demodulation (pure data processing)
-  modulateData(_data: Uint8Array): Float32Array;
-  demodulateData(_samples: Float32Array): Uint8Array;
+  // Modulation/Demodulation (async data processing)
+  modulateData(_data: Uint8Array): Promise<Float32Array>;
+  demodulateData(_samples: Float32Array): Promise<Uint8Array>;
   
   // Audio integration (browser-specific)
   modulate?(_data: Uint8Array): Promise<AudioBuffer>;
@@ -115,7 +115,7 @@ export interface TransportStatistics {
   readonly averageRoundTripTime: number; // milliseconds
 }
 
-/**
+/*
  * Internal mutable statistics (for implementation use)
  */
 export interface MutableTransportStatistics {
@@ -171,7 +171,7 @@ export abstract class EventEmitter {
   }
 }
 
-// Base modulator class with common functionality (platform-agnostic)
+// Base modulator class with common functionality
 export abstract class BaseModulator<TConfig extends BaseModulatorConfig> 
   extends EventEmitter 
   implements IModulator<TConfig> {
@@ -193,8 +193,8 @@ export abstract class BaseModulator<TConfig extends BaseModulatorConfig>
   }
   
   // Core DSP methods (must be implemented)
-  abstract modulateData(_data: Uint8Array): Float32Array;
-  abstract demodulateData(_samples: Float32Array): Uint8Array;
+  abstract modulateData(_data: Uint8Array): Promise<Float32Array>;
+  abstract demodulateData(_samples: Float32Array): Promise<Uint8Array>;
   
   reset(): void {
     this.ready = false;
@@ -216,66 +216,6 @@ export abstract class BaseModulator<TConfig extends BaseModulatorConfig>
   }
 }
 
-// Browser-specific modulator with AudioWorklet integration
-export abstract class WebAudioModulator<TConfig extends BaseModulatorConfig> 
-  extends BaseModulator<TConfig> {
-  
-  protected audioContext: AudioContext;
-  protected workletNode?: AudioWorkletNode;
-  
-  constructor(audioContext: AudioContext) {
-    super();
-    this.audioContext = audioContext;
-  }
-  
-  async initialize(): Promise<void> {
-    if (this.ready) {
-      return;
-    }
-    
-    try {
-      await this.setupAudioWorklet();
-      this.ready = true;
-      this.emit('ready');
-    } catch (error) {
-      this.emit('error', new Event(error));
-      throw error;
-    }
-  }
-  
-  dispose(): void {
-    this.workletNode?.disconnect();
-    this.workletNode = undefined;
-    super.reset();
-    this.removeAllListeners();
-  }
-  
-  reset(): void {
-    super.reset();
-    this.workletNode?.disconnect();
-    this.workletNode = undefined;
-  }
-  
-  async modulate(data: Uint8Array): Promise<AudioBuffer> {
-    const samples = this.modulateData(data);
-    const audioBuffer = this.createAudioBuffer(samples.length);
-    const channelData = audioBuffer.getChannelData(0);
-    channelData.set(samples);
-    return audioBuffer;
-  }
-  
-  async demodulate(audioBuffer: AudioBuffer): Promise<Uint8Array> {
-    const samples = audioBuffer.getChannelData(0);
-    return this.demodulateData(samples);
-  }
-  
-  protected abstract setupAudioWorklet(): Promise<void>;
-  
-  protected createAudioBuffer(length: number, channels = 1): AudioBuffer {
-    return this.audioContext.createBuffer(channels, length, this.audioContext.sampleRate);
-  }
-}
-
 /**
  * Base class for transport protocols with common functionality
  * 
@@ -288,6 +228,7 @@ export abstract class BaseTransport
   
   abstract readonly transportName: string;
   
+  protected modulator: IModulator;
   protected statistics: MutableTransportStatistics = {
     packetsSent: 0,
     packetsReceived: 0,
@@ -297,6 +238,11 @@ export abstract class BaseTransport
     errorRate: 0,
     averageRoundTripTime: 0
   };
+
+  constructor(modulator: IModulator) {
+    super();
+    this.modulator = modulator;
+  }
   
   // Abstract methods that must be implemented by concrete protocols
   abstract sendData(data: Uint8Array): Promise<void>;

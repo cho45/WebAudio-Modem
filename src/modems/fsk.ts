@@ -358,6 +358,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     phaseJitter: 0,
     frequencyOffset: 0
   };
+
   
   configure(config: FSKConfig): void {
     this.config = { ...DEFAULT_FSK_CONFIG, ...config } as FSKConfig;
@@ -407,7 +408,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
   }
   
-  modulateData(data: Uint8Array): Float32Array {
+  async modulateData(data: Uint8Array): Promise<Float32Array> {
     if (!this.ready || !this.config) {
       throw new Error('FSK modulator not configured');
     }
@@ -417,7 +418,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     return this.generateFSKSignal(data);
   }
   
-  demodulateData(samples: Float32Array): Uint8Array {
+  async demodulateData(samples: Float32Array): Promise<Uint8Array> {
     if (!this.ready || !this.config) {
       throw new Error('FSK demodulator not configured');
     }

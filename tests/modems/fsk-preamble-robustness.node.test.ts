@@ -11,9 +11,9 @@ describe('FSK Preamble Robustness Tests', () => {
   });
   
   describe('Partial Preamble Loss', () => {
-    test('handles 25% preamble truncation from beginning', () => {
+    test('handles 25% preamble truncation from beginning', async () => {
       const userData = new Uint8Array([0x48]); // Test data
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       // Calculate preamble + SFD length
       const config = fskCore.getConfig();
@@ -25,7 +25,7 @@ describe('FSK Preamble Robustness Tests', () => {
       const truncationLength = Math.floor(syncLength * 0.25);
       const truncatedSignal = fullSignal.slice(truncationLength);
       
-      const result = fskCore.demodulateData(truncatedSignal);
+      const result = await fskCore.demodulateData(truncatedSignal);
       
       // Should still be able to decode with partial preamble loss
       console.log(`25% truncation: signal ${fullSignal.length} -> ${truncatedSignal.length}, result length: ${result.length}`);
@@ -38,9 +38,9 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles 50% preamble truncation from beginning', () => {
+    test('handles 50% preamble truncation from beginning', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -51,7 +51,7 @@ describe('FSK Preamble Robustness Tests', () => {
       const truncationLength = Math.floor(syncLength * 0.5);
       const truncatedSignal = fullSignal.slice(truncationLength);
       
-      const result = fskCore.demodulateData(truncatedSignal);
+      const result = await fskCore.demodulateData(truncatedSignal);
       
       console.log(`50% truncation: signal ${fullSignal.length} -> ${truncatedSignal.length}, result length: ${result.length}`);
       
@@ -62,9 +62,9 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles 75% preamble truncation from beginning', () => {
+    test('handles 75% preamble truncation from beginning', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -75,7 +75,7 @@ describe('FSK Preamble Robustness Tests', () => {
       const truncationLength = Math.floor(syncLength * 0.75);
       const truncatedSignal = fullSignal.slice(truncationLength);
       
-      const result = fskCore.demodulateData(truncatedSignal);
+      const result = await fskCore.demodulateData(truncatedSignal);
       
       console.log(`75% truncation: signal ${fullSignal.length} -> ${truncatedSignal.length}, result length: ${result.length}`);
       
@@ -83,9 +83,9 @@ describe('FSK Preamble Robustness Tests', () => {
       expect(result.length).toBe(0);
     });
     
-    test('minimum viable preamble length determination', () => {
+    test('minimum viable preamble length determination', async () => {
       const userData = new Uint8Array([0x55, 0x48, 0x65]); // Challenging data with preamble-like byte
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -98,7 +98,7 @@ describe('FSK Preamble Robustness Tests', () => {
       for (const percentage of truncationPercentages) {
         const truncationLength = Math.floor(syncLength * percentage / 100);
         const truncatedSignal = fullSignal.slice(truncationLength);
-        const result = fskCore.demodulateData(truncatedSignal);
+        const result = await fskCore.demodulateData(truncatedSignal);
         
         const success = result.length === userData.length && 
                        Array.from(result).every((val, idx) => val === userData[idx]);
@@ -122,9 +122,9 @@ describe('FSK Preamble Robustness Tests', () => {
   });
   
   describe('Timing Offset Scenarios', () => {
-    test('handles signal starting mid-preamble', () => {
+    test('handles signal starting mid-preamble', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const samplesPerBit = Math.floor(config.sampleRate / config.baudRate);
@@ -133,7 +133,7 @@ describe('FSK Preamble Robustness Tests', () => {
       const offsetSamples = Math.floor(samplesPerBit * 4); // Half of first byte (8 bits)
       const offsetSignal = fullSignal.slice(offsetSamples);
       
-      const result = fskCore.demodulateData(offsetSignal);
+      const result = await fskCore.demodulateData(offsetSignal);
       
       console.log(`Mid-preamble start: offset ${offsetSamples} samples, result length: ${result.length}`);
       
@@ -143,9 +143,9 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles signal starting at SFD boundary', () => {
+    test('handles signal starting at SFD boundary', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -155,7 +155,7 @@ describe('FSK Preamble Robustness Tests', () => {
       const preambleLength = config.preamblePattern.length * bitsPerByte * samplesPerBit;
       const sfdStartSignal = fullSignal.slice(preambleLength);
       
-      const result = fskCore.demodulateData(sfdStartSignal);
+      const result = await fskCore.demodulateData(sfdStartSignal);
       
       console.log(`SFD start: skipped ${preambleLength} samples, result length: ${result.length}`);
       
@@ -169,9 +169,9 @@ describe('FSK Preamble Robustness Tests', () => {
   });
   
   describe('Noise in Preamble', () => {
-    test('handles noisy preamble with clean data', () => {
+    test('handles noisy preamble with clean data', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -184,7 +184,7 @@ describe('FSK Preamble Robustness Tests', () => {
         noisySignal[i] += (Math.random() - 0.5) * 0.3; // 30% noise amplitude
       }
       
-      const result = fskCore.demodulateData(noisySignal);
+      const result = await fskCore.demodulateData(noisySignal);
       
       console.log(`Noisy preamble: result length: ${result.length}`);
       
@@ -194,9 +194,9 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles corrupted preamble pattern', () => {
+    test('handles corrupted preamble pattern', async () => {
       const userData = new Uint8Array([0x48]);
-      const fullSignal = fskCore.modulateData(userData);
+      const fullSignal = await fskCore.modulateData(userData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -209,7 +209,7 @@ describe('FSK Preamble Robustness Tests', () => {
         corruptedSignal[i] = -corruptedSignal[i]; // Invert first half of first preamble byte
       }
       
-      const result = fskCore.demodulateData(corruptedSignal);
+      const result = await fskCore.demodulateData(corruptedSignal);
       
       console.log(`Corrupted preamble: result length: ${result.length}`);
       
@@ -221,19 +221,19 @@ describe('FSK Preamble Robustness Tests', () => {
   });
   
   describe('Multiple Frame Scenarios', () => {
-    test('handles back-to-back frames with no gap', () => {
+    test('handles back-to-back frames with no gap', async () => {
       const userData1 = new Uint8Array([0x48]);
       const userData2 = new Uint8Array([0x65]);
       
-      const signal1 = fskCore.modulateData(userData1);
-      const signal2 = fskCore.modulateData(userData2);
+      const signal1 = await fskCore.modulateData(userData1);
+      const signal2 = await fskCore.modulateData(userData2);
       
       // Concatenate signals with no gap
       const combinedSignal = new Float32Array(signal1.length + signal2.length);
       combinedSignal.set(signal1, 0);
       combinedSignal.set(signal2, signal1.length);
       
-      const result = fskCore.demodulateData(combinedSignal);
+      const result = await fskCore.demodulateData(combinedSignal);
       
       console.log(`Back-to-back frames: result length: ${result.length}`);
       console.log(`Result: [${Array.from(result).map(x => '0x' + x.toString(16)).join(', ')}]`);
@@ -247,12 +247,12 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles frame with truncated previous frame ending', () => {
+    test('handles frame with truncated previous frame ending', async () => {
       const userData1 = new Uint8Array([0x48]);
       const userData2 = new Uint8Array([0x65]);
       
-      const signal1 = fskCore.modulateData(userData1);
-      const signal2 = fskCore.modulateData(userData2);
+      const signal1 = await fskCore.modulateData(userData1);
+      const signal2 = await fskCore.modulateData(userData2);
       
       // Truncate end of first signal and concatenate with second
       const truncatedSignal1 = signal1.slice(0, signal1.length - 500); // Remove some samples
@@ -260,7 +260,7 @@ describe('FSK Preamble Robustness Tests', () => {
       combinedSignal.set(truncatedSignal1, 0);
       combinedSignal.set(signal2, truncatedSignal1.length);
       
-      const result = fskCore.demodulateData(combinedSignal);
+      const result = await fskCore.demodulateData(combinedSignal);
       
       console.log(`Truncated + full frame: result length: ${result.length}`);
       

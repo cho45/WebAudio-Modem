@@ -11,41 +11,41 @@ describe('FSK Core Demodulation', () => {
   });
   
   describe('Basic Demodulation Functionality', () => {
-    test('demodulate empty signal returns empty data', () => {
+    test('demodulate empty signal returns empty data', async () => {
       const emptySignal = new Float32Array(0);
-      const result = fskCore.demodulateData(emptySignal);
+      const result = await fskCore.demodulateData(emptySignal);
       
       expect(result).toBeInstanceOf(Uint8Array);
       expect(result.length).toBe(0);
     });
     
-    test('demodulate very short signal returns empty data', () => {
+    test('demodulate very short signal returns empty data', async () => {
       // Signal too short to contain even preamble
       const shortSignal = new Float32Array(100);
-      const result = fskCore.demodulateData(shortSignal);
+      const result = await fskCore.demodulateData(shortSignal);
       
       expect(result).toBeInstanceOf(Uint8Array);
       expect(result.length).toBe(0);
     });
     
-    test('demodulation handles unconfigured modulator gracefully', () => {
+    test('demodulation handles unconfigured modulator gracefully', async () => {
       const unconfiguredCore = new FSKCore();
       const testSignal = new Float32Array([0.1, 0.2, 0.3]);
       
-      expect(() => unconfiguredCore.demodulateData(testSignal)).toThrow('not configured');
+      await expect(unconfiguredCore.demodulateData(testSignal)).rejects.toThrow('not configured');
     });
   });
   
   describe('Roundtrip Modulation-Demodulation', () => {
-    test('perfect roundtrip with single byte', () => {
+    test('perfect roundtrip with single byte', async () => {
       const originalData = new Uint8Array([0x48]); // 'H'
       
       // Modulate
-      const modulatedSignal = fskCore.modulateData(originalData);
+      const modulatedSignal = await fskCore.modulateData(originalData);
       expect(modulatedSignal.length).toBeGreaterThan(0);
       
       // Demodulate
-      const demodulatedData = fskCore.demodulateData(modulatedSignal);
+      const demodulatedData = await fskCore.demodulateData(modulatedSignal);
       
       // Check result
       expect(demodulatedData).toBeInstanceOf(Uint8Array);
@@ -62,11 +62,11 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('roundtrip with multiple bytes', () => {
+    test('roundtrip with multiple bytes', async () => {
       const originalData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
       
-      const modulatedSignal = fskCore.modulateData(originalData);
-      const demodulatedData = fskCore.demodulateData(modulatedSignal);
+      const modulatedSignal = await fskCore.modulateData(originalData);
+      const demodulatedData = await fskCore.demodulateData(modulatedSignal);
       
       expect(demodulatedData.length).toBeGreaterThanOrEqual(originalData.length);
       
@@ -78,11 +78,11 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('roundtrip with all zeros', () => {
+    test('roundtrip with all zeros', async () => {
       const originalData = new Uint8Array([0x00, 0x00, 0x00]);
       
-      const modulatedSignal = fskCore.modulateData(originalData);
-      const demodulatedData = fskCore.demodulateData(modulatedSignal);
+      const modulatedSignal = await fskCore.modulateData(originalData);
+      const demodulatedData = await fskCore.demodulateData(modulatedSignal);
       
       const dataStart = findDataStart(demodulatedData, originalData);
       expect(dataStart).toBeGreaterThanOrEqual(0);
@@ -92,11 +92,11 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('roundtrip with all ones', () => {
+    test('roundtrip with all ones', async () => {
       const originalData = new Uint8Array([0xFF, 0xFF, 0xFF]);
       
-      const modulatedSignal = fskCore.modulateData(originalData);
-      const demodulatedData = fskCore.demodulateData(modulatedSignal);
+      const modulatedSignal = await fskCore.modulateData(originalData);
+      const demodulatedData = await fskCore.demodulateData(modulatedSignal);
       
       const dataStart = findDataStart(demodulatedData, originalData);
       expect(dataStart).toBeGreaterThanOrEqual(0);
@@ -106,11 +106,11 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('roundtrip with alternating pattern', () => {
+    test('roundtrip with alternating pattern', async () => {
       const originalData = new Uint8Array([0x55, 0xAA, 0x55]); // 01010101, 10101010, 01010101
       
-      const modulatedSignal = fskCore.modulateData(originalData);
-      const demodulatedData = fskCore.demodulateData(modulatedSignal);
+      const modulatedSignal = await fskCore.modulateData(originalData);
+      const demodulatedData = await fskCore.demodulateData(modulatedSignal);
       
       const dataStart = findDataStart(demodulatedData, originalData);
       expect(dataStart).toBeGreaterThanOrEqual(0);
@@ -122,13 +122,13 @@ describe('FSK Core Demodulation', () => {
   });
   
   describe('Noise Resistance', () => {
-    test('roundtrip with low-level noise (30dB SNR)', () => {
+    test('roundtrip with low-level noise (30dB SNR)', async () => {
       const originalData = new Uint8Array([0x48, 0x65, 0x6C]); // "Hel"
       
-      const cleanSignal = fskCore.modulateData(originalData);
+      const cleanSignal = await fskCore.modulateData(originalData);
       const noisySignal = addNoise(cleanSignal, 30); // 30dB SNR
       
-      const demodulatedData = fskCore.demodulateData(noisySignal);
+      const demodulatedData = await fskCore.demodulateData(noisySignal);
       
       // Should still recover the data with high SNR
       const dataStart = findDataStart(demodulatedData, originalData);
@@ -139,13 +139,13 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('roundtrip with moderate noise (20dB SNR)', () => {
+    test('roundtrip with moderate noise (20dB SNR)', async () => {
       const originalData = new Uint8Array([0x48]); // Single byte for reliability
       
-      const cleanSignal = fskCore.modulateData(originalData);
+      const cleanSignal = await fskCore.modulateData(originalData);
       const noisySignal = addNoise(cleanSignal, 20); // 20dB SNR
       
-      const demodulatedData = fskCore.demodulateData(noisySignal);
+      const demodulatedData = await fskCore.demodulateData(noisySignal);
       
       // May not be perfect, but should attempt recovery
       expect(demodulatedData.length).toBeGreaterThanOrEqual(0);
@@ -157,10 +157,10 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('handles signal with DC offset', () => {
+    test('handles signal with DC offset', async () => {
       const originalData = new Uint8Array([0x48]);
       
-      let cleanSignal = fskCore.modulateData(originalData);
+      let cleanSignal = await fskCore.modulateData(originalData);
       
       // Add DC offset
       const dcOffset = 0.2;
@@ -169,7 +169,7 @@ describe('FSK Core Demodulation', () => {
         offsetSignal[i] = cleanSignal[i] + dcOffset;
       }
       
-      const demodulatedData = fskCore.demodulateData(offsetSignal);
+      const demodulatedData = await fskCore.demodulateData(offsetSignal);
       
       // AGC should handle DC offset
       const dataStart = findDataStart(demodulatedData, originalData);
@@ -180,10 +180,10 @@ describe('FSK Core Demodulation', () => {
   });
   
   describe('Edge Cases and Error Handling', () => {
-    test('handles amplitude variations', () => {
+    test('handles amplitude variations', async () => {
       const originalData = new Uint8Array([0x55]);
       
-      let signal = fskCore.modulateData(originalData);
+      let signal = await fskCore.modulateData(originalData);
       
       // Scale signal amplitude
       const scaledSignal = new Float32Array(signal.length);
@@ -192,7 +192,7 @@ describe('FSK Core Demodulation', () => {
         scaledSignal[i] = signal[i] * scaleFactor;
       }
       
-      const demodulatedData = fskCore.demodulateData(scaledSignal);
+      const demodulatedData = await fskCore.demodulateData(scaledSignal);
       
       // AGC should compensate for amplitude changes
       const dataStart = findDataStart(demodulatedData, originalData);
@@ -201,7 +201,7 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('handles missing preamble gracefully', () => {
+    test('handles missing preamble gracefully', async () => {
       // Generate signal without proper preamble
       const config = fskCore.getConfig();
       const testFreq = config.markFrequency;
@@ -214,19 +214,19 @@ describe('FSK Core Demodulation', () => {
         invalidSignal[i] = Math.sin(omega * i);
       }
       
-      const result = fskCore.demodulateData(invalidSignal);
+      const result = await fskCore.demodulateData(invalidSignal);
       
       // Should return empty or fail gracefully
       expect(result).toBeInstanceOf(Uint8Array);
       // Result may be empty or contain spurious data, both are acceptable
     });
     
-    test('reset clears demodulator state', () => {
+    test('reset clears demodulator state', async () => {
       const testData = new Uint8Array([0x48]);
       
       // Process some data
-      const signal = fskCore.modulateData(testData);
-      fskCore.demodulateData(signal);
+      const signal = await fskCore.modulateData(testData);
+      await fskCore.demodulateData(signal);
       
       // Reset
       fskCore.reset();
@@ -236,15 +236,15 @@ describe('FSK Core Demodulation', () => {
       
       // Reconfigure and test
       fskCore.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
-      const signal2 = fskCore.modulateData(testData);
-      const result = fskCore.demodulateData(signal2);
+      const signal2 = await fskCore.modulateData(testData);
+      const result = await fskCore.demodulateData(signal2);
       
       expect(result.length).toBeGreaterThanOrEqual(0);
     });
   });
   
   describe('Different Configuration Parameters', () => {
-    test('works with different baud rates', () => {
+    test('works with different baud rates', async () => {
       const baudRates = [300, 1200];
       const originalData = new Uint8Array([0x48]);
       
@@ -256,8 +256,8 @@ describe('FSK Core Demodulation', () => {
         
         fskCore.configure(config);
         
-        const signal = fskCore.modulateData(originalData);
-        const result = fskCore.demodulateData(signal);
+        const signal = await fskCore.modulateData(originalData);
+        const result = await fskCore.demodulateData(signal);
         
         const dataStart = findDataStart(result, originalData);
         expect(dataStart).toBeGreaterThanOrEqual(0);
@@ -265,7 +265,7 @@ describe('FSK Core Demodulation', () => {
       }
     });
     
-    test('works with different frequency pairs', () => {
+    test('works with different frequency pairs', async () => {
       const freqPairs = [
         { mark: 1650, space: 1850 },
         { mark: 2125, space: 2295 }
@@ -281,8 +281,8 @@ describe('FSK Core Demodulation', () => {
         
         fskCore.configure(config);
         
-        const signal = fskCore.modulateData(originalData);
-        const result = fskCore.demodulateData(signal);
+        const signal = await fskCore.modulateData(originalData);
+        const result = await fskCore.demodulateData(signal);
         
         const dataStart = findDataStart(result, originalData);
         expect(dataStart).toBeGreaterThanOrEqual(0);
@@ -292,10 +292,10 @@ describe('FSK Core Demodulation', () => {
   });
   
   describe('Preamble Detection', () => {
-    test('correctly identifies preamble pattern', () => {
+    test('correctly identifies preamble pattern', async () => {
       const originalData = new Uint8Array([0x48]);
-      const signal = fskCore.modulateData(originalData);
-      const result = fskCore.demodulateData(signal);
+      const signal = await fskCore.modulateData(originalData);
+      const result = await fskCore.demodulateData(signal);
       
       // Preamble is used for synchronization only, result should contain data
       expect(result.length).toBeGreaterThanOrEqual(1);
@@ -306,7 +306,7 @@ describe('FSK Core Demodulation', () => {
   });
 
   describe('Pattern Coverage Tests', () => {
-    test('various byte patterns work correctly', () => {
+    test('various byte patterns work correctly', async () => {
       const testCases = [
         { data: 0x48, desc: 'Known working case' },
         { data: 0x55, desc: 'Same as preamble - should work with SFD' },
@@ -321,15 +321,15 @@ describe('FSK Core Demodulation', () => {
       
       for (const testCase of testCases) {
         const testData = new Uint8Array([testCase.data]);
-        const signal = fskCore.modulateData(testData);
-        const result = fskCore.demodulateData(signal);
+        const signal = await fskCore.modulateData(testData);
+        const result = await fskCore.demodulateData(signal);
         
         expect(result.length).toBe(1); // Should detect exactly one byte
         expect(result[0]).toBe(testCase.data); // Should match input exactly
       }
     });
 
-    test('multiple consecutive identical bytes', () => {
+    test('multiple consecutive identical bytes', async () => {
       // Test that consecutive identical bytes don't cause false "padding" detection
       const testCases = [
         new Uint8Array([0xFF, 0xFF, 0xFF]), // Three consecutive 0xFF
@@ -339,8 +339,8 @@ describe('FSK Core Demodulation', () => {
       ];
 
       for (const testData of testCases) {
-        const signal = fskCore.modulateData(testData);
-        const result = fskCore.demodulateData(signal);
+        const signal = await fskCore.modulateData(testData);
+        const result = await fskCore.demodulateData(signal);
         
         expect(result.length).toBe(testData.length);
         expect(Array.from(result)).toEqual(Array.from(testData));

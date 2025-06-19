@@ -56,9 +56,9 @@ describe('FSK Core Modulation', () => {
   });
   
   describe('Basic Modulation Functionality', () => {
-    test('modulate empty data produces preamble only', () => {
+    test('modulate empty data produces preamble only', async () => {
       const emptyData = new Uint8Array([]);
-      const signal = fskCore.modulateData(emptyData);
+      const signal = await fskCore.modulateData(emptyData);
       
       // Should contain preamble (2 bytes: 0x55, 0x55)
       expect(signal.length).toBeGreaterThan(0);
@@ -72,9 +72,9 @@ describe('FSK Core Modulation', () => {
       expect(signal.length).toBeGreaterThanOrEqual(expectedMinLength);
     });
     
-    test('modulate single byte produces correct signal length', () => {
+    test('modulate single byte produces correct signal length', async () => {
       const singleByte = new Uint8Array([0x48]); // 'H'
-      const signal = fskCore.modulateData(singleByte);
+      const signal = await fskCore.modulateData(singleByte);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -88,14 +88,14 @@ describe('FSK Core Modulation', () => {
       expect(signal.length).toBe(expectedLength);
     });
     
-    test('modulate multiple bytes scales correctly', () => {
+    test('modulate multiple bytes scales correctly', async () => {
       const testData1 = new Uint8Array([0x48]);
       const testData2 = new Uint8Array([0x48, 0x65]);
       const testData3 = new Uint8Array([0x48, 0x65, 0x6C]);
       
-      const signal1 = fskCore.modulateData(testData1);
-      const signal2 = fskCore.modulateData(testData2);
-      const signal3 = fskCore.modulateData(testData3);
+      const signal1 = await fskCore.modulateData(testData1);
+      const signal2 = await fskCore.modulateData(testData2);
+      const signal3 = await fskCore.modulateData(testData3);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -107,9 +107,9 @@ describe('FSK Core Modulation', () => {
       expect(signal3.length - signal2.length).toBe(samplesPerByte);
     });
     
-    test('signal amplitude is reasonable', () => {
+    test('signal amplitude is reasonable', async () => {
       const testData = new Uint8Array([0x55]); // Alternating pattern
-      const signal = fskCore.modulateData(testData);
+      const signal = await fskCore.modulateData(testData);
       
       const maxAmplitude = Math.max(...Array.from(signal));
       const minAmplitude = Math.min(...Array.from(signal));
@@ -122,9 +122,9 @@ describe('FSK Core Modulation', () => {
   });
   
   describe('Phase Continuity', () => {
-    test('signal is phase continuous', () => {
+    test('signal is phase continuous', async () => {
       const testData = new Uint8Array([0x3C]); // 00111100 - has transitions
-      const signal = fskCore.modulateData(testData);
+      const signal = await fskCore.modulateData(testData);
       
       // Check for sudden amplitude jumps that would indicate phase discontinuity
       const maxJump = findMaximumJump(signal);
@@ -133,12 +133,12 @@ describe('FSK Core Modulation', () => {
       expect(maxJump).toBeLessThan(0.5); // Reasonable threshold
     });
     
-    test('different bit patterns produce different but continuous signals', () => {
+    test('different bit patterns produce different but continuous signals', async () => {
       const pattern1 = new Uint8Array([0x0F]); // 00001111
       const pattern2 = new Uint8Array([0xF0]); // 11110000
       
-      const signal1 = fskCore.modulateData(pattern1);
-      const signal2 = fskCore.modulateData(pattern2);
+      const signal1 = await fskCore.modulateData(pattern1);
+      const signal2 = await fskCore.modulateData(pattern2);
       
       // Signals should be different
       expect(signal1.length).toBe(signal2.length);
@@ -161,9 +161,9 @@ describe('FSK Core Modulation', () => {
   });
   
   describe('Framing and Preamble', () => {
-    test('preamble pattern is included in signal', () => {
+    test('preamble pattern is included in signal', async () => {
       const testData = new Uint8Array([0x00]); // Simple data
-      const signal = fskCore.modulateData(testData);
+      const signal = await fskCore.modulateData(testData);
       
       const config = fskCore.getConfig();
       
@@ -185,10 +185,10 @@ describe('FSK Core Modulation', () => {
       expect(Math.abs(correlation)).toBeGreaterThan(0.3); // Should have reasonable correlation
     });
     
-    test('start and stop bits are properly framed', () => {
+    test('start and stop bits are properly framed', async () => {
       // This test verifies the frame structure indirectly through signal length
       const testData = new Uint8Array([0x00]);
-      const signal = fskCore.modulateData(testData);
+      const signal = await fskCore.modulateData(testData);
       
       const config = fskCore.getConfig();
       const bitsPerByte = 8 + config.startBits + config.stopBits;
@@ -204,18 +204,18 @@ describe('FSK Core Modulation', () => {
   });
   
   describe('Error Conditions', () => {
-    test('unconfigured modulator throws error', () => {
+    test('unconfigured modulator throws error', async () => {
       const unconfiguredCore = new FSKCore();
       const testData = new Uint8Array([0x48]);
       
-      expect(() => unconfiguredCore.modulateData(testData)).toThrow('not configured');
+      await expect(unconfiguredCore.modulateData(testData)).rejects.toThrow('not configured');
     });
     
-    test('large data blocks are handled correctly', () => {
+    test('large data blocks are handled correctly', async () => {
       const largeData = new Uint8Array(100).fill(0x55);
       
-      expect(() => {
-        const signal = fskCore.modulateData(largeData);
+      await expect(async () => {
+        const signal = await fskCore.modulateData(largeData);
         expect(signal.length).toBeGreaterThan(0);
       }).not.toThrow();
     });

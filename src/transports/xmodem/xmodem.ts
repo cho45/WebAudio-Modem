@@ -5,7 +5,7 @@
  * data fragmentation, and error recovery.
  */
 
-import { BaseTransport, Event } from '../../core';
+import { BaseTransport, Event, IModulator } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlPacket, ControlType } from './types';
 
@@ -64,9 +64,17 @@ export class XModemTransport extends BaseTransport {
   private receiveResolve?: (value: Uint8Array) => void;
   private receiveReject?: (reason?: Error) => void;
 
-  // Transport layer callbacks (must be set by user)
-  private onSendPacket?: (data: Uint8Array) => Promise<void>;
-  private onReceivePacket?: () => Promise<Uint8Array>;
+  constructor(modulator: IModulator) {
+    super(modulator);
+    this.setupModulatorEvents();
+  }
+
+  private setupModulatorEvents(): void {
+    // Listen for incoming data from modulator
+    this.modulator.on('data', (event: Event) => {
+      this.handleIncomingPacket(event.data as Uint8Array);
+    });
+  }
 
   /**
    * Configure transport parameters
@@ -83,14 +91,21 @@ export class XModemTransport extends BaseTransport {
   }
 
   /**
-   * Set transport layer callbacks
+   * Handle incoming packet from modulator
    */
-  setTransportCallbacks(
-    onSend: (data: Uint8Array) => Promise<void>,
-    onReceive: () => Promise<Uint8Array>
-  ): void {
-    this.onSendPacket = onSend;
-    this.onReceivePacket = onReceive;
+  private async handleIncomingPacket(data: Uint8Array): Promise<void> {
+    try {
+      const packet = XModemPacket.parse(data);
+      
+      if (packet.type === 'data') {
+        await this.handleDataPacket(packet as DataPacket);
+      } else if (packet.type === 'control') {
+        await this.handleControlPacket(packet as ControlPacket);
+      }
+    } catch (error) {
+      // Invalid packet, ignore or send NAK
+      console.warn('Invalid packet received:', error);
+    }
   }
 
   /**
@@ -99,10 +114,6 @@ export class XModemTransport extends BaseTransport {
   async sendData(data: Uint8Array): Promise<void> {
     if (this.state !== XModemState.IDLE) {
       throw new Error(`Cannot send: transport busy (${this.state})`);
-    }
-
-    if (!this.onSendPacket) {
-      throw new Error('Transport send callback not configured');
     }
 
     return new Promise<void>((resolve, reject) => {
@@ -125,10 +136,6 @@ export class XModemTransport extends BaseTransport {
       throw new Error(`Cannot receive: transport busy (${this.state})`);
     }
 
-    if (!this.onReceivePacket) {
-      throw new Error('Transport receive callback not configured');
-    }
-
     return new Promise<Uint8Array>((resolve, reject) => {
       this.receiveResolve = resolve;
       this.receiveReject = reject;
@@ -141,10 +148,6 @@ export class XModemTransport extends BaseTransport {
    * Send control command
    */
   async sendControl(command: string): Promise<void> {
-    if (!this.onSendPacket) {
-      throw new Error('Transport send callback not configured');
-    }
-
     let controlType: ControlType;
     switch (command.toUpperCase()) {
       case 'ACK': controlType = ControlType.ACK; break;
@@ -158,7 +161,7 @@ export class XModemTransport extends BaseTransport {
 
     const packet = XModemPacket.createControl(controlType);
     const serialized = XModemPacket.serialize(packet);
-    await this.onSendPacket(serialized);
+    await this.modulator.modulateData(serialized);
     
     this.statistics.packetsSent++;
   }
@@ -167,9 +170,7 @@ export class XModemTransport extends BaseTransport {
    * Check if transport is ready
    */
   isReady(): boolean {
-    return this.state === XModemState.IDLE && 
-           this.onSendPacket !== undefined && 
-           this.onReceivePacket !== undefined;
+    return this.state === XModemState.IDLE && this.modulator.isReady();
   }
 
   /**
@@ -297,7 +298,7 @@ export class XModemTransport extends BaseTransport {
     }
     
     try {
-      await this.onSendPacket!(serialized);
+      await this.modulator.modulateData(serialized);
       this.statistics.packetsSent++;
       
       // Clear any existing timeout first
