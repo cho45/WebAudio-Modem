@@ -1,21 +1,38 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
+import { fileURLToPath, URL } from 'node:url'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 export default defineConfig({
   test: {
     globals: true,
     browser: {
       enabled: true,
-      name: 'chrome',
-      headless: true
+      provider: 'playwright',
+      headless: true,
+      instances: [
+        {
+          browser: "chromium",
+        }
+      ]
     },
-    include: ['tests/**/*.browser.test.ts'],
-    setupFiles: ['tests/setup.browser.ts']
+    include: [
+      'tests/webaudio/*browser*.test.ts',
+    ],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**'
+    ]
   },
   
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
     }
+  },
+  
+  worker: {
+    format: 'es'
   }
 })

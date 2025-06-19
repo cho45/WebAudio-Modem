@@ -11,7 +11,12 @@ export default defineConfig({
       reporter: ['text', 'html'],
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.d.ts']
-    }
+    },
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'tests/webaudio/*browser*.test.ts'
+    ]
   },
   
   resolve: {

@@ -92,3 +92,4 @@ pids/
 
 # Vitest
 coverage/
+**/__screenshots__/

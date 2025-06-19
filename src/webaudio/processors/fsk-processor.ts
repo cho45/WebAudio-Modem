@@ -2,6 +2,8 @@
  * FSK AudioWorklet Processor - Simplified using separated components
  */
 
+/// <reference path="./types.d.ts" />
+
 import { FSKCore } from '../../modems/fsk.js';
 import { ChunkedModulator } from '../chunked-modulator.js';
 import { RingBuffer } from '../../utils.js';
