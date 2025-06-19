@@ -103,12 +103,13 @@ src/
 ├── utils/crc16.ts                   # CRC-16-CCITT implementation
 └── utils.ts                         # RingBuffer and utilities
 
-tests/                               # 204 tests total
+tests/                               # 241 Node.js tests + 12 browser tests
 ├── core.node.test.ts               # Event system tests (21 tests)
 ├── modems/                         # FSK modem tests (70 tests)
 ├── transports/xmodem/              # XModem protocol tests (51 tests)
 ├── dsp/                            # Signal processing tests (35 tests)
-└── utils/                          # Utility tests (27 tests)
+├── utils/                          # Utility tests (27 tests)
+└── webaudio/                       # WebAudio integration tests (12 browser tests)
 ```
 
 ## Technical Standards
@@ -124,6 +125,29 @@ tests/                               # 204 tests total
 - **Comprehensive coverage**: Test edge cases and boundary conditions
 - **Root cause analysis**: Fix problems at source, never work around them
 - **Real-world validation**: Test with actual audio signals when possible
+- **Environment separation**: Node.js tests for pure logic, browser tests for Web API integration
+
+### Browser Testing Strategy
+Browser tests (`npm run test:browser`) are specifically designed to test **WebAudio API integration**:
+
+**Purpose**: Test WebAudio-specific functionality that cannot be tested in Node.js
+- AudioContext creation and lifecycle management
+- AudioWorklet processor loading and message communication
+- WebAudioModulatorNode integration with browser APIs
+- XModemTransport integration with WebAudio components
+- Graceful error handling in browser environments
+
+**What NOT to test in browser**: 
+- FSKCore modulation/demodulation (covered in Node.js tests)
+- XModemPacket creation/parsing (covered in Node.js tests)  
+- Signal processing algorithms (covered in Node.js tests)
+- Mathematical correctness (covered in Node.js tests)
+
+**Browser Test Environment**:
+- Uses vitest with Playwright in headless Chromium
+- Real AudioContext and AudioWorklet APIs available
+- AudioWorklet processor loading succeeds via vite dev server
+- 12 focused integration tests ensuring Web API compatibility
 
 ### Signal Processing Standards
 - **Phase continuity**: FSK modulation must maintain phase coherence
