@@ -35,8 +35,8 @@ export class FSKProcessor extends AudioWorkletProcessor {
     const defaultConfig = {
       sampleRate: 48000,
       baudRate: 300,
-      markFreq: 1200,
-      spaceFreq: 2200
+      markFrequency: 1200,
+      spaceFrequency: 2200
     };
     this.fskCore = new FSKCore(defaultConfig);
     this.fskCore.configure(defaultConfig); // Configure to set ready flag
@@ -110,9 +110,10 @@ export class FSKProcessor extends AudioWorkletProcessor {
       // Debug: Log audio level info periodically
       if (this.sampleCount % 48000 === 0) { // Every second
         const level = this.calculateAudioLevel(input[0]);
+        const gain  = this.fskCore.agc.currentGain;
         const maxSample = Math.max(...Array.from(input[0]));
         const minSample = Math.min(...Array.from(input[0]));
-        console.log(`[FSKProcessor] Audio: level=${level.toFixed(4)}, max=${maxSample.toFixed(4)}, min=${minSample.toFixed(4)}, buffer=${this.inputBuffer.length}`);
+        console.log(`[FSKProcessor] Audio: level=${level.toFixed(4)}, gain=${gain}, max=${maxSample.toFixed(4)}, min=${minSample.toFixed(4)}, buffer=${this.inputBuffer.length}`);
       }
       
       // Try demodulation periodically (every 2 seconds)

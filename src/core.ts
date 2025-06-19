@@ -6,7 +6,7 @@ export interface BaseModulatorConfig {
 }
 
 export interface SignalQuality {
-  snr: number;           // Signal-to-Noise Ratio (dBっっ
+  snr: number;           // Signal-to-Noise Ratio (dB)
   ber: number;           // Bit Error Rate
   eyeOpening: number;    // Eye Pattern Opening (0-1)
   phaseJitter: number;   // Phase Jitter (radians)

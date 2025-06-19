@@ -385,8 +385,8 @@ function getCurrentFSKConfig() {
     return {
         sampleRate: parseInt(document.getElementById('sample-rate-input')?.value) || 44100,
         baudRate: parseInt(document.getElementById('baud-rate-input')?.value) || 300,
-        markFreq: parseInt(document.getElementById('mark-freq-input')?.value) || 1200,
-        spaceFreq: parseInt(document.getElementById('space-freq-input')?.value) || 2200,
+        markFrequency: parseInt(document.getElementById('mark-freq-input')?.value) || 1200,
+        spaceFrequency: parseInt(document.getElementById('space-freq-input')?.value) || 2200,
         ...DEFAULT_FSK_CONFIG
     };
 }

@@ -71,6 +71,7 @@ class AGCProcessor {
   private targetLevel: number;
   private attackTime: number;
   private releaseTime: number;
+  private maxGain: number;
   private currentGain = 1.0;
   private envelope = 0.0;
   
@@ -78,6 +79,7 @@ class AGCProcessor {
     this.targetLevel = 0.5;
     this.attackTime = Math.exp(-1 / (sampleRate * 0.001));  // 1ms attack
     this.releaseTime = Math.exp(-1 / (sampleRate * 0.1));   // 100ms release
+    this.maxGain = 100.0; // Maximum gain limit
   }
   
   process(samples: Float32Array): Float32Array {
@@ -100,7 +102,7 @@ class AGCProcessor {
       // Gain calculation
       if (this.envelope > 0.001) {
         const desiredGain = this.targetLevel / this.envelope;
-        this.currentGain = Math.min(10.0, Math.max(0.1, desiredGain)); // Limit gain range
+        this.currentGain = Math.min(this.maxGain, Math.max(0.1, desiredGain)); // Limit gain range
       }
       
       output[i] = samples[i] * this.currentGain;
