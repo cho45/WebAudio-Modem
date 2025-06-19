@@ -52,6 +52,40 @@ export class RingBuffer {
     return value;
   }
   
+  // Additional methods for AudioWorklet usage
+  read(): number {
+    return this._length > 0 ? this.remove() : 0;
+  }
+  
+  write(value: number): void {
+    this.put(value);
+  }
+  
+  // Bulk operations for Float32Array
+  writeArray(samples: Float32Array): void {
+    for (let i = 0; i < samples.length; i++) {
+      this.put(samples[i]);
+    }
+  }
+  
+  readArray(output: Float32Array): void {
+    for (let i = 0; i < output.length; i++) {
+      output[i] = this._length > 0 ? this.remove() : 0;
+    }
+  }
+  
+  availableRead(): number {
+    return this._length;
+  }
+  
+  availableWrite(): number {
+    return this.maxLength - this._length;
+  }
+  
+  hasSpace(minSpace: number): boolean {
+    return this.availableWrite() > minSpace;
+  }
+  
   clear(): void {
     this.readIndex = 0;
     this.writeIndex = 0;

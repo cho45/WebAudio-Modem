@@ -142,4 +142,69 @@ describe('RingBuffer', () => {
     const array = buffer.toArray()
     expect(array.length).toBe(0)
   })
+  
+  it('should support AudioWorklet helper methods', () => {
+    // Test read() method (safe remove)
+    expect(buffer.read()).toBe(0) // Empty buffer returns 0
+    
+    buffer.write(5.5)
+    buffer.write(6.6)
+    
+    expect(buffer.availableRead()).toBe(2)
+    expect(buffer.availableWrite()).toBe(2) // 4 - 2
+    
+    expect(buffer.read()).toBeCloseTo(5.5)
+    expect(buffer.read()).toBeCloseTo(6.6)
+    expect(buffer.read()).toBe(0) // Empty again
+    
+    expect(buffer.availableRead()).toBe(0)
+    expect(buffer.availableWrite()).toBe(4)
+  })
+  
+  it('should have write method as alias for put', () => {
+    buffer.write(7.7)
+    expect(buffer.get(0)).toBeCloseTo(7.7)
+    expect(buffer.length).toBe(1)
+  })
+  
+  it('should support bulk Float32Array operations', () => {
+    const input = new Float32Array([1.5, 2.5, 3.5, 4.5])
+    buffer.writeArray(input)
+    
+    expect(buffer.length).toBe(4)
+    expect(buffer.get(0)).toBeCloseTo(1.5)
+    expect(buffer.get(3)).toBeCloseTo(4.5)
+    
+    const output = new Float32Array(3)
+    buffer.readArray(output)
+    
+    expect(output[0]).toBeCloseTo(1.5)
+    expect(output[1]).toBeCloseTo(2.5)
+    expect(output[2]).toBeCloseTo(3.5)
+    expect(buffer.length).toBe(1) // One remaining
+  })
+  
+  it('should handle hasSpace method', () => {
+    expect(buffer.hasSpace(2)).toBe(true) // 4 - 0 > 2
+    
+    buffer.put(1, 2, 3) // 3 items, 1 space left
+    expect(buffer.hasSpace(2)).toBe(false) // 4 - 3 = 1 < 2
+    expect(buffer.hasSpace(0)).toBe(true) // 1 > 0
+  })
+  
+  it('should fill with zeros when reading more than available', () => {
+    buffer.put(10, 20)
+    
+    const output = new Float32Array(5)
+    output.fill(99) // Pre-fill to verify zeros are written
+    
+    buffer.readArray(output)
+    
+    expect(output[0]).toBe(10)
+    expect(output[1]).toBe(20) 
+    expect(output[2]).toBe(0) // Zero fill
+    expect(output[3]).toBe(0)
+    expect(output[4]).toBe(0)
+    expect(buffer.length).toBe(0)
+  })
 })
