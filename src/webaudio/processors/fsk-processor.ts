@@ -25,15 +25,21 @@ export class FSKProcessor extends AudioWorkletProcessor {
   private outputBuffer: RingBuffer;
   private pendingModulation: PendingModulation | null = null;
   private minOutputSpace = 1000;
+  private sampleCount = 0;
+  private lastDemodSampleCount = 0;
+  private demodIntervalSamples = 96000; // Process demodulation every ~2 seconds at 48kHz
   
   constructor() {
     super();
-    this.fskCore = new FSKCore({
+    // Create FSKCore without config initially
+    const defaultConfig = {
       sampleRate: 48000,
       baudRate: 300,
       markFreq: 1200,
       spaceFreq: 2200
-    });
+    };
+    this.fskCore = new FSKCore(defaultConfig);
+    this.fskCore.configure(defaultConfig); // Configure to set ready flag
     this.inputBuffer = new RingBuffer(8192);
     this.outputBuffer = new RingBuffer(8192);
     this.port.onmessage = this.handleMessage.bind(this);
@@ -45,7 +51,7 @@ export class FSKProcessor extends AudioWorkletProcessor {
     try {
       switch (type) {
         case 'configure':
-          await this.fskCore.configure(data.config);
+          this.fskCore.configure(data.config);
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
           
@@ -99,6 +105,21 @@ export class FSKProcessor extends AudioWorkletProcessor {
     // Handle input (for demodulation)
     if (input && input[0]) {
       this.inputBuffer.writeArray(input[0]);
+      this.sampleCount += input[0].length;
+      
+      // Debug: Log audio level info periodically
+      if (this.sampleCount % 48000 === 0) { // Every second
+        const level = this.calculateAudioLevel(input[0]);
+        const maxSample = Math.max(...Array.from(input[0]));
+        const minSample = Math.min(...Array.from(input[0]));
+        console.log(`[FSKProcessor] Audio: level=${level.toFixed(4)}, max=${maxSample.toFixed(4)}, min=${minSample.toFixed(4)}, buffer=${this.inputBuffer.length}`);
+      }
+      
+      // Try demodulation periodically (every 2 seconds)
+      if (this.sampleCount - this.lastDemodSampleCount > this.demodIntervalSamples) {
+        this.tryDemodulation();
+        this.lastDemodSampleCount = this.sampleCount;
+      }
     }
     
     // Process pending modulation chunk if buffer has space
@@ -115,6 +136,62 @@ export class FSKProcessor extends AudioWorkletProcessor {
     }
     
     return true;
+  }
+  
+  private calculateAudioLevel(samples: Float32Array): number {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) {
+      sum += samples[i] * samples[i];
+    }
+    return Math.sqrt(sum / samples.length);
+  }
+  
+  private async tryDemodulation(): Promise<void> {
+    if (this.inputBuffer.length < 8000) {
+      console.log(`[FSKProcessor] Buffer too small: ${this.inputBuffer.length} < 8000`);
+      return;
+    }
+    
+    try {
+      // Get samples from input buffer
+      const samples = this.inputBuffer.toArray();
+      
+      // Calculate signal statistics
+      const level = this.calculateAudioLevel(samples);
+      const maxSample = Math.max(...Array.from(samples));
+      const minSample = Math.min(...Array.from(samples));
+      
+      console.log(`[FSKProcessor] Demodulation attempt: ${samples.length} samples, level=${level.toFixed(4)}, range=[${minSample.toFixed(4)}, ${maxSample.toFixed(4)}]`);
+      
+      // Try to demodulate
+      const demodulated = await this.fskCore.demodulateData(samples);
+      
+      console.log(`[FSKProcessor] Demodulation result: ${demodulated?.length || 0} bytes`);
+      
+      if (demodulated && demodulated.length > 0) {
+        // Log the received bytes
+        const bytesHex = Array.from(demodulated).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`[FSKProcessor] 🎵 Decoded bytes: ${bytesHex}`);
+        
+        // Send demodulated data to main thread
+        this.port.postMessage({
+          id: 'realtime-demod',
+          type: 'demodulated',
+          data: { bytes: Array.from(demodulated) }
+        });
+        
+        // Clear processed samples but keep some overlap
+        this.inputBuffer.clear();
+        this.inputBuffer.writeArray(samples.slice(-4096));
+      } else {
+        // Keep half the buffer for continuous processing
+        const halfLength = Math.floor(samples.length / 2);
+        this.inputBuffer.clear();
+        this.inputBuffer.writeArray(samples.slice(halfLength));
+      }
+    } catch (error) {
+      console.error(`[FSKProcessor] Demodulation error:`, error);
+    }
   }
 }
 

@@ -21,9 +21,13 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   readonly type = 'WebAudio' as const;
   
   private audioContext: AudioContext;
-  private workletNode: AudioWorkletNode | null = null;
+  private _workletNode: AudioWorkletNode | null = null;
   private pendingOperations = new Map<string, { resolve: Function, reject: Function }>();
   private operationCounter = 0;
+  
+  get workletNode(): AudioWorkletNode | null {
+    return this._workletNode;
+  }
   
   constructor(audioContext: AudioContext, private descriptor: ModulatorDescriptor) {
     super();
@@ -35,10 +39,10 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
     await this.audioContext.audioWorklet.addModule(this.descriptor.processorUrl);
     
     // Create the worklet node
-    this.workletNode = new AudioWorkletNode(this.audioContext, this.descriptor.processorName);
+    this._workletNode = new AudioWorkletNode(this.audioContext, this.descriptor.processorName);
     
     // Setup message handling
-    this.workletNode.port.onmessage = this.handleMessage.bind(this);
+    this._workletNode.port.onmessage = this.handleMessage.bind(this);
   }
   
   private handleMessage(event: MessageEvent<WorkletMessage>) {
@@ -60,7 +64,7 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   }
   
   private sendMessage(type: string, data?: any): Promise<any> {
-    if (!this.workletNode) {
+    if (!this._workletNode) {
       throw new Error('WebAudioModulatorNode not initialized');
     }
     
@@ -68,7 +72,7 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
     
     return new Promise((resolve, reject) => {
       this.pendingOperations.set(id, { resolve, reject });
-      this.workletNode!.port.postMessage({ id, type, data });
+      this._workletNode!.port.postMessage({ id, type, data });
     });
   }
   
@@ -95,7 +99,7 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   }
   
   isReady(): boolean {
-    return !!this.workletNode;
+    return !!this._workletNode;
   }
   
   getConfig(): any {

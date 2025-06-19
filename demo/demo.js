@@ -179,12 +179,12 @@ async function playLastSignal() {
     }
 }
 
-// Start receiving data using WebAudioModulatorNode
+// Start receiving data using WebAudioModulatorNode with direct AudioWorklet connection
 async function startReceiving() {
     if (isReceiving) return;
     
     try {
-        log('Starting to receive data using WebAudioModulatorNode...');
+        log('Starting real-time FSK reception via AudioWorklet...');
         isReceiving = true;
         updateStatus('receive-status', 'Listening for incoming data...', 'info');
         updateUI();
@@ -200,85 +200,52 @@ async function startReceiving() {
             } 
         });
         
-        // Buffer for collecting samples
-        let sampleBuffer = [];
-        let lastProcessTime = Date.now();
+        // Get the actual AudioWorkletNode from demodulator
+        const workletNode = demodulator.workletNode;
+        if (!workletNode) {
+            throw new Error('Demodulator worklet not available');
+        }
         
-        // Listen for incoming audio data
-        const handleAudioData = async () => {
-            const now = Date.now();
-            
-            // Process buffer every 2 seconds or when we have enough samples
-            if (now - lastProcessTime > 2000 && sampleBuffer.length > 0) {
-                try {
-                    log(`Processing ${sampleBuffer.length} samples for demodulation...`);
+        // Listen for real-time demodulation results and debug info
+        workletNode.port.onmessage = (event) => {
+            if (event.data.type === 'demodulated') {
+                const demodulated = new Uint8Array(event.data.data.bytes);
+                
+                if (demodulated && demodulated.length > 0) {
+                    // Convert bytes to text
+                    const decoder = new TextDecoder('utf-8', { fatal: false });
+                    const text = decoder.decode(demodulated);
                     
-                    // Use WebAudioModulatorNode for demodulation
-                    const samples = new Float32Array(sampleBuffer);
-                    const demodulated = await demodulator.demodulateData(samples);
+                    // Filter out non-printable characters
+                    const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
                     
-                    if (demodulated && demodulated.length > 0) {
-                        // Convert bytes to text
-                        const decoder = new TextDecoder('utf-8', { fatal: false });
-                        const text = decoder.decode(demodulated);
+                    if (cleanText.length > 0) {
+                        log(`🎵 Received: "${cleanText}" (${demodulated.length} bytes)`);
                         
-                        // Filter out non-printable characters
-                        const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+                        // Append to receive text area
+                        const receiveTextArea = document.getElementById('receive-text');
+                        receiveTextArea.value += cleanText + '\n';
+                        receiveTextArea.scrollTop = receiveTextArea.scrollHeight;
                         
-                        if (cleanText.length > 0) {
-                            log(`Received data: "${cleanText}" (${demodulated.length} bytes)`);
-                            
-                            // Append to receive text area
-                            const receiveTextArea = document.getElementById('receive-text');
-                            receiveTextArea.value += cleanText + '\n';
-                            receiveTextArea.scrollTop = receiveTextArea.scrollHeight;
-                            
-                            updateStatus('receive-status', `Received: ${cleanText}`, 'success');
-                        }
+                        updateStatus('receive-status', `Received: ${cleanText}`, 'success');
                     }
-                    
-                    // Clear buffer but keep some overlap
-                    sampleBuffer = sampleBuffer.slice(-4096);
-                    lastProcessTime = now;
-                    
-                } catch (error) {
-                    log(`Demodulation error: ${error.message}`);
                 }
-            }
-            
-            if (isReceiving) {
-                setTimeout(handleAudioData, 100);
             }
         };
         
-        // Start audio processing
-        handleAudioData();
-        
-        // Connect microphone to analyzer for visualization and data collection
+        // Connect microphone directly to demodulator AudioWorklet
         const source = audioContext.createMediaStreamSource(stream);
+        source.connect(workletNode);
+        
+        // Also connect to analyzer for visualization
         const analyzer = audioContext.createAnalyser();
         analyzer.fftSize = 2048;
         source.connect(analyzer);
         
         const dataArray = new Uint8Array(analyzer.frequencyBinCount);
-        const timeDataArray = new Uint8Array(analyzer.fftSize);
         
         const updateVisualization = () => {
             if (!isReceiving) return;
-            
-            // Get time domain data for demodulation
-            analyzer.getByteTimeDomainData(timeDataArray);
-            
-            // Convert to Float32Array and add to buffer
-            for (let i = 0; i < timeDataArray.length; i++) {
-                const sample = (timeDataArray[i] - 128) / 128.0;
-                sampleBuffer.push(sample);
-            }
-            
-            // Keep buffer size manageable
-            if (sampleBuffer.length > 96000) { // ~2 seconds at 48kHz
-                sampleBuffer = sampleBuffer.slice(-48000);
-            }
             
             // Draw frequency spectrum for visualization
             analyzer.getByteFrequencyData(dataArray);
@@ -290,8 +257,9 @@ async function startReceiving() {
         
         // Store references for cleanup
         window.audioStream = stream;
+        window.receiverWorklet = workletNode;
         
-        log('WebAudioModulatorNode receiver ready, listening for FSK signals...');
+        log('✅ Real-time AudioWorklet receiver connected and ready!');
         
     } catch (error) {
         log(`Receive start failed: ${error.message}`);
@@ -313,7 +281,10 @@ function stopReceiving() {
         window.audioStream = null;
     }
     
-    // Cleanup is handled by stream termination
+    if (window.receiverWorklet) {
+        window.receiverWorklet.disconnect();
+        window.receiverWorklet = null;
+    }
     
     log('Stopped receiving');
     updateStatus('receive-status', 'Stopped receiving', 'info');
