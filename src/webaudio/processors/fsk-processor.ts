@@ -28,7 +28,12 @@ export class FSKProcessor extends AudioWorkletProcessor {
   
   constructor() {
     super();
-    this.fskCore = new FSKCore();
+    this.fskCore = new FSKCore({
+      sampleRate: 48000,
+      baudRate: 300,
+      markFreq: 1200,
+      spaceFreq: 2200
+    });
     this.inputBuffer = new RingBuffer(8192);
     this.outputBuffer = new RingBuffer(8192);
     this.port.onmessage = this.handleMessage.bind(this);
@@ -45,17 +50,15 @@ export class FSKProcessor extends AudioWorkletProcessor {
           break;
           
         case 'modulate':
-          // Create new chunked modulator for this data
-          const modulator = new ChunkedModulator(this.fskCore, { chunkSize: 32 });
-          modulator.startModulation(data.bytes);
-          this.pendingModulation = { id, modulator };
+          // For demo purposes, do direct modulation instead of chunked
+          const signal = await this.fskCore.modulateData(data.bytes);
+          this.port.postMessage({ id, type: 'result', data: { signal } });
           break;
           
         case 'demodulate':
-          // Use buffered input data for demodulation
-          const inputSamples = this.inputBuffer.toArray();
-          this.inputBuffer.clear();
-          const bytes = await this.fskCore.demodulateData(inputSamples);
+          // Use provided samples for demodulation
+          const samples = new Float32Array(data.samples);
+          const bytes = await this.fskCore.demodulateData(samples);
           this.port.postMessage({ id, type: 'result', data: { bytes } });
           break;
           
