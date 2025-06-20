@@ -291,6 +291,7 @@
                     <button id="send-button" class="primary" onclick="sendText()" disabled>Send Text</button>
                     <button id="play-button" class="secondary" onclick="playLastSignal()" disabled>Play Last Signal</button>
                     <button id="loopback-button" class="secondary" onclick="testLoopback()" disabled>Test Loopback</button>
+                    <button id="direct-audio-button" class="secondary" onclick="testDirectAudioLoopback()" disabled>Direct Audio Test</button>
                 </div>
                 <div id="send-status"></div>
                 <canvas id="send-signal" class="signal-display"></canvas>
@@ -419,12 +420,12 @@
                     
                     <div class="config-item">
                         <label for="mark-freq-input">Mark Frequency (Hz)</label>
-                        <input type="number" id="mark-freq-input" value="1200" min="300" max="3000">
+                        <input type="number" id="mark-freq-input" value="1650" min="300" max="3000">
                     </div>
                     
                     <div class="config-item">
                         <label for="space-freq-input">Space Frequency (Hz)</label>
-                        <input type="number" id="space-freq-input" value="2200" min="300" max="3000">
+                        <input type="number" id="space-freq-input" value="1850" min="300" max="3000">
                     </div>
                 </div>
                 

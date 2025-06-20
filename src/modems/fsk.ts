@@ -35,7 +35,7 @@ export const DEFAULT_FSK_CONFIG: Partial<FSKConfig> = {
   markFrequency: 1650,
   spaceFrequency: 1850,
   baudRate: 300,
-  sampleRate: 44100,
+  sampleRate: 48000,
   startBits: 1,
   stopBits: 1,
   parity: 'none',
@@ -44,7 +44,7 @@ export const DEFAULT_FSK_CONFIG: Partial<FSKConfig> = {
   agcEnabled: true,
   preamblePattern: [0x55, 0x55], // Alternating bit pattern for sync
   sfdPattern: [0x7E],           // Start Frame Delimiter (01111110) - unique pattern
-  syncThreshold: 0.8
+  syncThreshold: 0.85
 };
 
 /**
@@ -283,6 +283,7 @@ class SimpleSync {
     const samplesPerBit = Math.floor(this.config.sampleRate / this.config.baudRate);
     const patternLength = this.preambleSfdBits.length;
     
+    
     // Convert phase data to bits
     const bits = this.convertToBits(phaseData, samplesPerBit);
     
@@ -304,14 +305,28 @@ class SimpleSync {
       }
       
       // Use reasonable threshold for pattern matching
-      if (matchRatio >= 0.8) {
-        const frameStartSample = (i + patternLength) * samplesPerBit;
+      if (matchRatio >= this.config.syncThreshold) {
+        // Calculate frame start at bit boundary, not sample boundary
+        // Use the same phase alignment as convertToBits for the first data bit
+        const bitStartIndex = i + patternLength;
+        const frameStartSample = Math.floor(bitStartIndex * samplesPerBit);
         return [{
           startIndex: frameStartSample,
           confidence: matchRatio,
           length: 0
         }];
       }
+    }
+    
+    
+    // If no perfect match found, try the best match if it's reasonably good
+    if (bestMatch.index >= 0 && bestMatch.ratio >= 0.8) {
+      const frameStartSample = (bestMatch.index + patternLength) * samplesPerBit;
+      return [{
+        startIndex: frameStartSample,
+        confidence: bestMatch.ratio,
+        length: 0
+      }];
     }
     
     return [];
@@ -322,12 +337,27 @@ class SimpleSync {
     const bits: number[] = [];
     
     for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
+      // Use multiple samples around the center for better accuracy
       const centerSample = Math.floor((bitIndex + 0.5) * samplesPerBit);
-      if (centerSample < phaseData.length) {
-        const value = phaseData[centerSample];
+      const sampleWindow = Math.min(8, Math.floor(samplesPerBit / 4)); // Use up to 8 samples or 1/4 of bit period
+      
+      let sum = 0;
+      let count = 0;
+      
+      for (let i = -sampleWindow; i <= sampleWindow; i++) {
+        const sampleIndex = centerSample + i;
+        if (sampleIndex >= 0 && sampleIndex < phaseData.length) {
+          sum += phaseData[sampleIndex];
+          count++;
+        }
+      }
+      
+      if (count > 0) {
+        const avgValue = sum / count;
         // Negative phase difference → lower frequency (mark=1650Hz) → bit 1
         // Positive phase difference → higher frequency (space=1850Hz) → bit 0
-        bits.push(value > 0 ? 1 : 0);
+        const bit = avgValue > 0 ? 1 : 0;
+        bits.push(bit);
       }
     }
     
@@ -549,7 +579,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       for (let j = 0; j < samplesPerBit; j++) {
         output[sampleIndex++] = Math.sin(phase);
         phase += omega;
-        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+        if (phase > 2 * Math.PI) {phase -= 2 * Math.PI;}
       }
     }
     
@@ -561,7 +591,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       for (let j = 0; j < samplesPerBit; j++) {
         output[sampleIndex++] = Math.sin(phase);
         phase += omega;
-        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+        if (phase > 2 * Math.PI) {phase -= 2 * Math.PI;}
       }
     }
     
@@ -573,7 +603,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       for (let j = 0; j < samplesPerBit; j++) {
         output[sampleIndex++] = Math.sin(phase);
         phase += omega;
-        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+        if (phase > 2 * Math.PI) {phase -= 2 * Math.PI;}
       }
     }
     
@@ -583,7 +613,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       for (let j = 0; j < samplesPerBit; j++) {
         output[sampleIndex++] = Math.sin(phase);
         phase += omega;
-        if (phase > 2 * Math.PI) phase -= 2 * Math.PI;
+        if (phase > 2 * Math.PI) {phase -= 2 * Math.PI;}
       }
     }
     
@@ -614,6 +644,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       let currentFrameStart = frameLocation.startIndex;
       let frameCount = 0;
       
+      
       // Decode consecutive frames until framing error occurs
       while (currentFrameStart + frameLength <= phaseData.length && frameCount < maxFrames) {
         // Extract frame data
@@ -621,6 +652,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         
         // Bit decision using simple threshold
         const bits = this.makeBitDecisions(frameData, samplesPerBit);
+        
         
         // Decode frame - stop on any framing error
         const byte = this.decodeFrame(bits);
@@ -644,18 +676,27 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     const bits: number[] = [];
     
     for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
-      // Sample at the center of the bit period for better stability
+      // Use multiple samples around the center for better accuracy (same as convertToBits)
       const centerSample = Math.floor((bitIndex + 0.5) * samplesPerBit);
+      const sampleWindow = Math.min(8, Math.floor(samplesPerBit / 4)); // Use up to 8 samples or 1/4 of bit period
       
-      if (centerSample < frameData.length) {
-        // Single sample decision at optimal point
-        const value = frameData[centerSample];
-        
-        
+      let sum = 0;
+      let count = 0;
+      
+      for (let i = -sampleWindow; i <= sampleWindow; i++) {
+        const sampleIndex = centerSample + i;
+        if (sampleIndex >= 0 && sampleIndex < frameData.length) {
+          sum += frameData[sampleIndex];
+          count++;
+        }
+      }
+      
+      if (count > 0) {
+        const avgValue = sum / count;
         // For FSK phase discrimination:
         // Negative phase difference → lower frequency (mark=1650Hz) → bit 1
         // Positive phase difference → higher frequency (space=1850Hz) → bit 0
-        bits.push(value > 0 ? 1 : 0);
+        bits.push(avgValue > 0 ? 1 : 0);
       }
     }
     
@@ -669,11 +710,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Check start bits
     for (let i = 0; i < this.config.startBits; i++) {
       if (bitIndex >= bits.length) {
-        console.log(`[DecodeFrame] Not enough bits for start bit ${i}`);
         return null;
       }
       if (bits[bitIndex] !== 0) {
-        console.log(`[DecodeFrame] Start bit ${i} error: expected 0, got ${bits[bitIndex]} at index ${bitIndex}`);
         return null; // Framing error
       }
       bitIndex++;
@@ -683,7 +722,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     let byte = 0;
     for (let i = 7; i >= 0; i--) {
       if (bitIndex >= bits.length) {
-        console.log(`[DecodeFrame] Not enough bits for data bit ${i}`);
         return null;
       }
       if (bits[bitIndex]) {
@@ -696,13 +734,11 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Check parity bit
     if (this.config.parity !== 'none') {
       if (bitIndex >= bits.length) {
-        console.log(`[DecodeFrame] Not enough bits for parity`);
         return null;
       }
       const receivedParity = bits[bitIndex++];
       const calculatedParity = this.calculateParity(byte);
       if (receivedParity !== calculatedParity) {
-        console.log(`[DecodeFrame] Parity error: received ${receivedParity}, calculated ${calculatedParity}`);
         return null; // Parity error
       }
     }
@@ -710,11 +746,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Check stop bits
     for (let i = 0; i < this.config.stopBits; i++) {
       if (bitIndex >= bits.length) {
-        console.log(`[DecodeFrame] Not enough bits for stop bit ${i}`);
         return null;
       }
       if (bits[bitIndex] !== 1) {
-        console.log(`[DecodeFrame] Stop bit ${i} error: expected 1, got ${bits[bitIndex]} at index ${bitIndex}`);
         return null; // Framing error
       }
       bitIndex++;

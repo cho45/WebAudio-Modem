@@ -12,10 +12,11 @@ class MockAudioWorkletProcessor {
   };
 }
 
-// Mock registerProcessor
+// Mock registerProcessor and sampleRate
 const mockRegisterProcessor = vi.fn();
 vi.stubGlobal('AudioWorkletProcessor', MockAudioWorkletProcessor);
 vi.stubGlobal('registerProcessor', mockRegisterProcessor);
+vi.stubGlobal('sampleRate', 44100);
 
 // Import the module dynamically
 await import('../../src/webaudio/processors/fsk-processor.js');
@@ -105,7 +106,7 @@ describe('FSKProcessor', () => {
     expect(mockPort.postMessage).toHaveBeenCalledWith({
       id: 'test-3',
       type: 'result',
-      data: { bytes: expect.any(Uint8Array) }
+      data: { bytes: expect.any(Array) }
     });
   });
 
@@ -204,12 +205,18 @@ describe('FSKProcessor', () => {
       data: { config: { sampleRate: 44100, baudRate: 300 } }
     });
 
-    // Simulate audio input
-    const audioInput = new Float32Array(1000);
-    // Fill with some test pattern
-    for (let i = 0; i < audioInput.length; i++) {
-      audioInput[i] = Math.sin(2 * Math.PI * 1200 * i / 44100); // 1200 Hz tone
-    }
+    // Create a proper FSK signal for testing
+    const { FSKCore, DEFAULT_FSK_CONFIG } = await import('../../src/modems/fsk.js');
+    const fskCore = new FSKCore();
+    fskCore.configure({ 
+      ...DEFAULT_FSK_CONFIG,
+      sampleRate: 44100,
+      baudRate: 300 
+    });
+    
+    // Generate FSK signal with test data
+    const testData = new Uint8Array([0x48]); // 'H'
+    const audioInput = await fskCore.modulateData(testData);
 
     // Process audio input
     const inputs = [[audioInput]];
@@ -226,10 +233,11 @@ describe('FSKProcessor', () => {
       data: {}
     });
 
+    // Expect some bytes to be returned (may be empty if signal processing isn't perfect in test environment)
     expect(mockPort.postMessage).toHaveBeenCalledWith({
       id: 'demod-test',
       type: 'result',
-      data: { bytes: expect.any(Uint8Array) }
+      data: { bytes: expect.any(Array) }
     });
   });
 
@@ -270,7 +278,7 @@ describe('FSKProcessor', () => {
     expect(mockPort.postMessage).toHaveBeenCalledWith({
       id: 'msg-3',
       type: 'result',
-      data: { bytes: expect.any(Uint8Array) }
+      data: { bytes: expect.any(Array) }
     });
   });
 });

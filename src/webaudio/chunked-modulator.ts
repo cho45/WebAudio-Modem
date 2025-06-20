@@ -84,7 +84,7 @@ export class ChunkedModulator {
    * Get current progress (0-1)
    */
   getProgress(): number {
-    if (!this.pendingData) return 0;
+    if (!this.pendingData) {return 0;}
     return this.position / this.pendingData.length;
   }
   

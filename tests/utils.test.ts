@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { RingBuffer } from '../src/utils'
 
 describe('RingBuffer', () => {
-  let buffer: RingBuffer
+  let buffer: RingBuffer<Float32Array>;
 
   beforeEach(() => {
-    buffer = new RingBuffer(4)
+    buffer = new RingBuffer(Float32Array, 4);
   })
 
   it('should initialize with correct capacity and empty state', () => {
@@ -127,7 +127,7 @@ describe('RingBuffer', () => {
   })
 
   it('should handle edge case with size 1 buffer', () => {
-    const smallBuffer = new RingBuffer(1)
+    const smallBuffer = new RingBuffer(Float32Array, 1)
     
     smallBuffer.put(1.0)
     expect(smallBuffer.length).toBe(1)

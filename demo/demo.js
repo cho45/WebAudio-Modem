@@ -46,12 +46,15 @@ async function initializeSystem() {
             processorName: 'fsk-processor'
         });
         
-        // Initialize and configure both
+        // Initialize and configure both with AudioContext sampleRate
         await modulator.initialize();
-        await modulator.configure(getCurrentFSKConfig());
+        const fskConfig = getCurrentFSKConfig();
+        fskConfig.sampleRate = audioContext.sampleRate; // Use actual AudioContext sampleRate
+        console.log('[Demo] FSK Config:', fskConfig);
+        await modulator.configure(fskConfig);
         
         await demodulator.initialize();
-        await demodulator.configure(getCurrentFSKConfig());
+        await demodulator.configure(fskConfig);
         
         // Create transport
         transport = new XModemTransport(modulator);
@@ -350,6 +353,7 @@ async function sendFile() {
         log(`File read: ${data.length} bytes`);
         updateStatus('send-file-status', 'Transferring via XModem...', 'info');
         
+        // 未実装
         // Simulate transfer progress
         let progress = 0;
         const updateProgress = () => {
@@ -383,11 +387,20 @@ async function sendFile() {
 // Configuration management
 function getCurrentFSKConfig() {
     return {
-        sampleRate: parseInt(document.getElementById('sample-rate-input')?.value) || 44100,
+        ...DEFAULT_FSK_CONFIG,
+        sampleRate: parseInt(document.getElementById('sample-rate-input')?.value) || 48000,
         baudRate: parseInt(document.getElementById('baud-rate-input')?.value) || 300,
-        markFrequency: parseInt(document.getElementById('mark-freq-input')?.value) || 1200,
-        spaceFrequency: parseInt(document.getElementById('space-freq-input')?.value) || 2200,
-        ...DEFAULT_FSK_CONFIG
+        markFrequency: parseInt(document.getElementById('mark-freq-input')?.value) || 1650,
+        spaceFrequency: parseInt(document.getElementById('space-freq-input')?.value) || 1850,
+        startBits: 1,
+        stopBits: 1,
+        parity: 'none',
+        preFilterBandwidth: 800,
+        adaptiveThreshold: true,
+        agcEnabled: true,
+        preamblePattern: [0x55, 0x55],
+        sfdPattern: [0x7E],
+        syncThreshold: 0.85  // Use stricter threshold for accurate sync
     };
 }
 
@@ -432,10 +445,10 @@ async function applySettings() {
 }
 
 function resetSettings() {
-    document.getElementById('sample-rate-input').value = '44100';
+    document.getElementById('sample-rate-input').value = '48000';
     document.getElementById('baud-rate-input').value = '300';
-    document.getElementById('mark-freq-input').value = '1200';
-    document.getElementById('space-freq-input').value = '2200';
+    document.getElementById('mark-freq-input').value = '1650';
+    document.getElementById('space-freq-input').value = '1850';
     document.getElementById('timeout-input').value = '3000';
     document.getElementById('retries-input').value = '10';
     document.getElementById('packet-size-input').value = '128';
@@ -551,6 +564,7 @@ function updateUI() {
     document.getElementById('send-button').disabled = !systemReady;
     document.getElementById('play-button').disabled = !systemReady || !lastSignal;
     document.getElementById('loopback-button').disabled = !systemReady;
+    document.getElementById('direct-audio-button').disabled = !systemReady;
     document.getElementById('receive-button').disabled = !systemReady || isReceiving;
     document.getElementById('stop-receive-button').disabled = !isReceiving;
     document.getElementById('send-file-button').disabled = !systemReady || !currentFile;
@@ -621,6 +635,87 @@ function downloadLog() {
     URL.revokeObjectURL(url);
     
     log('Log downloaded');
+}
+
+// Test direct audio loopback (bypassing microphone)
+async function testDirectAudioLoopback() {
+    try {
+        const text = document.getElementById('send-text').value;
+        if (!text.trim()) {
+            updateStatus('send-status', 'Please enter text to test', 'error');
+            return;
+        }
+        
+        log(`Testing direct audio loopback with: "${text}"`);
+        updateStatus('send-status', 'Testing direct audio loopback...', 'info');
+        
+        // Convert text to bytes
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        
+        // Generate signal
+        const signal = await modulator.modulateData(data);
+        log(`Generated signal: ${signal.length} samples`);
+        
+        // Get the worklet node for direct injection
+        const workletNode = demodulator.workletNode;
+        if (!workletNode) {
+            throw new Error('Demodulator worklet not available');
+        }
+        
+        // Create a buffer source and connect directly to worklet
+        const buffer = audioContext.createBuffer(1, signal.length, audioContext.sampleRate);
+        buffer.copyToChannel(signal, 0);
+        
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        
+        // Connect directly to demodulator worklet (bypass microphone)
+        source.connect(workletNode);
+        
+        // Listen for results
+        let received = false;
+        const messageHandler = (event) => {
+            if (event.data.type === 'demodulated' && event.data.data.bytes.length > 0) {
+                const demodulated = new Uint8Array(event.data.data.bytes);
+                const decoder = new TextDecoder('utf-8', { fatal: false });
+                const receivedText = decoder.decode(demodulated).replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+                
+                log(`Direct audio loopback result: "${receivedText}"`);
+                document.getElementById('receive-text').value = receivedText;
+                
+                if (receivedText === text) {
+                    updateStatus('send-status', '✓ Perfect direct audio loopback!', 'success');
+                } else {
+                    updateStatus('send-status', `⚠ Partial direct audio: "${receivedText}"`, 'info');
+                }
+                received = true;
+                workletNode.port.removeEventListener('message', messageHandler);
+            }
+        };
+        
+        workletNode.port.addEventListener('message', messageHandler);
+        
+        // Play the signal
+        source.start();
+        
+        // Wait for result or timeout
+        setTimeout(() => {
+            if (!received) {
+                updateStatus('send-status', '✗ Direct audio loopback timeout', 'error');
+                log('Direct audio loopback: TIMEOUT - No data received within 5 seconds');
+                workletNode.port.removeEventListener('message', messageHandler);
+            }
+        }, 5000);
+        
+        drawSignal('send-signal', signal.slice(0, 2000));
+        lastSignal = signal;
+        updateUI();
+        
+    } catch (error) {
+        log(`Direct audio loopback failed: ${error.message}`);
+        updateStatus('send-status', `Direct audio failed: ${error.message}`, 'error');
+    }
 }
 
 // Test loopback by sending text and immediately trying to decode it
@@ -699,3 +794,4 @@ window.showTab = showTab;
 window.clearLog = clearLog;
 window.downloadLog = downloadLog;
 window.testLoopback = testLoopback;
+window.testDirectAudioLoopback = testDirectAudioLoopback;

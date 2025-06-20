@@ -16,9 +16,9 @@ export class IIRFilter {
   
   constructor(b: number[], a: number[]) {
     // Validate input coefficients
-    if (!b || b.length === 0) throw new Error('Feedforward coefficients (b) cannot be empty');
-    if (!a || a.length === 0) throw new Error('Feedback coefficients (a) cannot be empty');
-    if (a[0] === 0) throw new Error('First feedback coefficient (a[0]) cannot be zero');
+    if (!b || b.length === 0) {throw new Error('Feedforward coefficients (b) cannot be empty');}
+    if (!a || a.length === 0) {throw new Error('Feedback coefficients (a) cannot be empty');}
+    if (a[0] === 0) {throw new Error('First feedback coefficient (a[0]) cannot be zero');}
     
     this.b = [...b];
     this.a = [...a];
