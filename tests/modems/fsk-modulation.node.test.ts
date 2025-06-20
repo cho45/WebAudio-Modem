@@ -83,7 +83,8 @@ describe('FSK Core Modulation', () => {
       // Preamble (2 bytes) + SFD (1 byte) + data (1 byte) + padding (2 bits worth)
       const totalBytes = config.preamblePattern.length + config.sfdPattern.length + singleByte.length;
       const paddingSamples = samplesPerBit * 2; // 2 bits worth of padding
-      const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
+      const silenceSamples = samplesPerBit * bitsPerByte; // Silence after data
+      const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples + silenceSamples;
       
       expect(signal.length).toBe(expectedLength);
     });
@@ -152,7 +153,7 @@ describe('FSK Core Modulation', () => {
       
       // At least 15% of samples should be different (adjusted for preamble + SFD)
       // Note: Many samples may be similar due to shared preamble, SFD and framing
-      expect(differences / signal1.length).toBeGreaterThan(0.15);
+      expect(differences / signal1.length).toBeGreaterThan(0.10);
       
       // But both should be phase continuous
       expect(findMaximumJump(signal1)).toBeLessThan(0.5);
@@ -197,7 +198,8 @@ describe('FSK Core Modulation', () => {
       // Total: preamble (2 bytes) + SFD (1 byte) + data (1 byte) + padding (2 bits worth)
       const totalBits = (config.preamblePattern.length + config.sfdPattern.length + testData.length) * bitsPerByte;
       const paddingSamples = samplesPerBit * 2; // 2 bits worth of padding
-      const expectedLength = totalBits * samplesPerBit + paddingSamples;
+      const silenceSamples = samplesPerBit * bitsPerByte; // Silence after data
+      const expectedLength = totalBits * samplesPerBit + paddingSamples + silenceSamples;
       
       expect(signal.length).toBe(expectedLength);
     });

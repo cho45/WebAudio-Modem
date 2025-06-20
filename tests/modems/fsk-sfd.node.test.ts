@@ -106,7 +106,8 @@ describe('FSK SFD (Start Frame Delimiter) Tests', () => {
       // Expected: preamble (2 bytes) + SFD (1 byte) + data (1 byte) + padding
       const totalBytes = config.preamblePattern.length + config.sfdPattern.length + userData.length;
       const paddingSamples = samplesPerBit * 2; // 2 bits worth of padding
-      const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
+      const silenceSamples = samplesPerBit * bitsPerByte; // Silence after data
+      const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples + silenceSamples;
       
       expect(modulatedSignal.length).toBe(expectedLength);
     });
@@ -144,12 +145,11 @@ describe('FSK SFD (Start Frame Delimiter) Tests', () => {
       const signal2 = await fskCore.modulateData(userData2);
       
       const result1 = await fskCore.demodulateData(signal1);
+      // fskCore.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
       const result2 = await fskCore.demodulateData(signal2);
       
-      expect(result1.length).toBe(1);
-      expect(result1[0]).toBe(0x55);
-      expect(result2.length).toBe(1);
-      expect(result2[0]).toBe(0x48);
+      expect([...result1]).toEqual([0x55]);
+      expect([...result2]).toEqual([0x48]);
     });
   });
   

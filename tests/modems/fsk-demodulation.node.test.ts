@@ -119,6 +119,36 @@ describe('FSK Core Demodulation', () => {
         expect(demodulatedData[dataStart + i]).toBe(originalData[i]);
       }
     });
+
+    test('roundtrip with multiple bytes /w splitted chunks', async () => {
+      const originalData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
+      
+      const modulatedSignal = await fskCore.modulateData(originalData);
+      console.log(`Total signal: ${modulatedSignal.length} samples`);
+
+      const demodulatedData = [];
+      const CHUNK_SIZE = 128;
+      let processedCount = 0;
+      for (let i = 0; i < modulatedSignal.length; i += CHUNK_SIZE) {
+        const chunk = modulatedSignal.slice(i, i + CHUNK_SIZE);
+        const part = await fskCore.demodulateData(chunk);
+        demodulatedData.push(...part);
+        if (part.length > 0) {
+          console.log(`Chunk ${Math.floor(i/CHUNK_SIZE)}: got ${part.length} bytes`);
+          processedCount++;
+        }
+      }
+      
+      console.log(`Total processed chunks: ${processedCount}, total bytes: ${demodulatedData.length}`);
+      
+      expect(demodulatedData.length).toBeGreaterThanOrEqual(originalData.length);
+      
+      const dataStart = findDataStart(new Uint8Array(demodulatedData), originalData);
+      expect(dataStart).toBeGreaterThanOrEqual(0);
+      for (let i = 0; i < originalData.length; i++) {
+        expect(demodulatedData[dataStart + i]).toBe(originalData[i]);
+      }
+    });
   });
   
   describe('Noise Resistance', () => {

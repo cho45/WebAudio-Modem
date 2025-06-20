@@ -25,11 +25,10 @@ export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorC
   
   // Modulation/Demodulation (async data processing)
   modulateData(_data: Uint8Array): Promise<Float32Array>;
+
+  // ストリーム処理のため、連続してデータを受けとれること
+  // samples を跨いでも処理することができること
   demodulateData(_samples: Float32Array): Promise<Uint8Array>;
-  
-  // Audio integration (browser-specific)
-  modulate?(_data: Uint8Array): Promise<AudioBuffer>;
-  demodulate?(_audioBuffer: AudioBuffer): Promise<Uint8Array>;
   
   // State management
   reset(): void;

@@ -33,6 +33,8 @@ export class FSKProcessor extends AudioWorkletProcessor {
     // Create simple buffers for audio streaming
     this.inputBuffer = new RingBuffer(Float32Array, 8192);
     this.outputBuffer = new RingBuffer(Float32Array, 8192);
+
+    // 復調されたデータを保持するリングバッファ
     this.demodulatedBuffer = new RingBuffer(Uint8Array, 1024);
     
     this.port.onmessage = this.handleMessage.bind(this);
@@ -49,13 +51,24 @@ export class FSKProcessor extends AudioWorkletProcessor {
           break;
           
         case 'modulate': {
-          // Create ChunkedModulator for streaming modulation
+          /**
+           * 変調リクエスト: バイト列を受けとり、変調キューに入れる
+           * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
+           */
+          if (this.pendingModulation) {
+            throw new Error('Modulation already in progress');
+          }
           this.pendingModulation = new ChunkedModulator(this.fskCore, data.bytes);
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
           
         case 'demodulate': {
+          /**
+           * 復調リクエスト: 復調済みのデータを返す
+           * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
+           */
+
           // Process any pending input data
           await this.processDemodulation();
           

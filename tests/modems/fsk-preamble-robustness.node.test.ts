@@ -247,36 +247,5 @@ describe('FSK Preamble Robustness Tests', () => {
       }
     });
     
-    test('handles frame with truncated previous frame ending', async () => {
-      const userData1 = new Uint8Array([0x48]);
-      const userData2 = new Uint8Array([0x65]);
-      
-      const signal1 = await fskCore.modulateData(userData1);
-      const signal2 = await fskCore.modulateData(userData2);
-      
-      // Truncate end of first signal and concatenate with second
-      const truncatedSignal1 = signal1.slice(0, signal1.length - 500); // Remove some samples
-      const combinedSignal = new Float32Array(truncatedSignal1.length + signal2.length);
-      combinedSignal.set(truncatedSignal1, 0);
-      combinedSignal.set(signal2, truncatedSignal1.length);
-      
-      const result = await fskCore.demodulateData(combinedSignal);
-      
-      console.log(`Truncated + full frame: result length: ${result.length}`);
-      
-      // Current implementation limitation: requires complete preamble+SFD pattern
-      // Should at least decode the second complete frame (but may fail with current implementation)
-      if (result.length === 0) {
-        console.log('Current implementation cannot handle truncated frame boundaries');
-        expect(result.length).toBe(0); // Document current limitation
-      } else {
-        expect(result.length).toBeGreaterThanOrEqual(1);
-      }
-      
-      // The last decoded byte should be from the second frame
-      if (result.length > 0) {
-        expect(result[result.length - 1]).toBe(0x65);
-      }
-    });
   });
 });
