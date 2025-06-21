@@ -10,22 +10,22 @@ describe('FSK Debug', () => {
       baudRate: 300,
       markFrequency: 1650,
       spaceFrequency: 1850,
-      preamblePattern: [0xAA, 0xAA, 0xAA, 0xAA],
-      sfdPattern: [0x55],
+      preamblePattern: [0x55, 0x55],
+      sfdPattern: [0x7E],
       startBits: 1,
       stopBits: 1,
       parity: 'none',
-      syncThreshold: 0.6, // Lower threshold for testing
+      syncThreshold: 0.75,
       agcEnabled: true,
       preFilterBandwidth: 800,
-      adaptiveThreshold: false
+      adaptiveThreshold: true
     });
 
     console.log('Expected preamble+SFD pattern:');
-    // 0xAA = 10101010, 0x55 = 01010101
+    // 0x55 = 01010101, 0x7E = 01111110
     // With start(0) and stop(1) bits for each byte
-    console.log('0xAA with framing: 0,0,1,0,1,0,1,0,1,1 (LSB first)');
     console.log('0x55 with framing: 0,1,0,1,0,1,0,1,0,1 (LSB first)');
+    console.log('0x7E with framing: 0,0,1,1,1,1,1,1,0,1 (LSB first)');
 
     console.log('FSK configured');
     

@@ -20,15 +20,15 @@ const DEFAULT_FSK_CONFIG: FSKConfig = {
   baudRate: 300,
   markFrequency: 1650,
   spaceFrequency: 1850,
-  preamblePattern: [0xAA, 0xAA, 0xAA, 0xAA],
-  sfdPattern: [0x55],
+  preamblePattern: [0x55, 0x55],
+  sfdPattern: [0x7E],
   startBits: 1,
   stopBits: 1,
   parity: 'none',
-  syncThreshold: 0.85,
+  syncThreshold: 0.75,
   agcEnabled: true,
   preFilterBandwidth: 800,
-  adaptiveThreshold: false
+  adaptiveThreshold: true
 };
 
 /**
@@ -184,8 +184,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       this.preambleSfdBits.push(0); // Start bits are 0
     }
     
-    // Add data bits (LSB first)
-    for (let i = 0; i < 8; i++) {
+    // Add data bits (MSB first)
+    for (let i = 7; i >= 0; i--) {
       this.preambleSfdBits.push((byte >> i) & 1);
     }
     
@@ -251,29 +251,13 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         processedSamples = this.preFilter.processBuffer(processedSamples);
       }
       
-      // Step 1: I/Q demodulation on entire buffer (like original)
-      const iqData = this.processIQDemodulation(processedSamples);
-      
-      // Step 2: Phase detection on entire buffer
-      const phaseAmplitudeData = this.processPhaseDetection(iqData);
-      
-      // Step 3: Sample-level silence detection (the original requirement!)
-      for (let i = 0; i < phaseAmplitudeData.amplitude.length; i++) {
-        if (phaseAmplitudeData.amplitude[i] < this.SILENCE_THRESHOLD) {
-          this.silentSampleCount++;
-          if (this.silentSampleCount >= this.silenceSamplesForEOD) {
-            console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
-            this.emit('endOfData');
-            this.resetState();
-            return new Uint8Array(0);
-          }
-        } else {
-          this.silentSampleCount = 0;
+      // Stream processing: process each sample individually
+      for (let i = 0; i < processedSamples.length; i++) {
+        const endOfData = this.processSample(processedSamples[i]);
+        if (endOfData) {
+          return new Uint8Array(0);
         }
       }
-      
-      // Step 4: Convert to bits using original averaging approach
-      this.convertPhaseDataToBits(phaseAmplitudeData.phase, phaseAmplitudeData.amplitude);
       
       // Return accumulated bytes
       if (this.byteBuffer.length > 0) {
@@ -290,66 +274,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
   }
 
-  private processIQDemodulation(samples: Float32Array): { i: Float32Array; q: Float32Array } {
-    const i = new Float32Array(samples.length);
-    const q = new Float32Array(samples.length);
-    const omega = 2 * Math.PI * this.centerFreq / this.sampleRate;
-    
-    for (let n = 0; n < samples.length; n++) {
-      i[n] = samples[n] * Math.cos(this.localOscPhase);
-      q[n] = samples[n] * Math.sin(this.localOscPhase);
-      
-      this.localOscPhase += omega;
-      if (this.localOscPhase > 2 * Math.PI) {
-        this.localOscPhase -= 2 * Math.PI;
-      }
-    }
-    
-    // Apply I/Q filters (like original)
-    if (this.iqFilters) {
-      return {
-        i: this.iqFilters.i.processBuffer(i),
-        q: this.iqFilters.q.processBuffer(q)
-      };
-    }
-    
-    return { i, q };
-  }
-  
-  private processPhaseDetection(iqData: { i: Float32Array; q: Float32Array }): { phase: Float32Array; amplitude: Float32Array } {
-    const { i, q } = iqData;
-    const phaseData = new Float32Array(i.length);
-    const amplitudeData = new Float32Array(i.length);
-    
-    for (let n = 0; n < i.length; n++) {
-      // Calculate instantaneous phase
-      const phase = Math.atan2(q[n], i[n]);
-      
-      // Calculate phase difference (frequency)
-      let phaseDiff = phase - this.lastPhase;
-      
-      // Handle phase wraparound
-      if (phaseDiff > Math.PI) {
-        phaseDiff -= 2 * Math.PI;
-      } else if (phaseDiff < -Math.PI) {
-        phaseDiff += 2 * Math.PI;
-      }
-      
-      phaseData[n] = phaseDiff;
-      amplitudeData[n] = Math.sqrt(i[n] * i[n] + q[n] * q[n]);
-      this.lastPhase = phase;
-    }
-    
-    // Apply post-filter to phase data (like original)
-    let filteredPhaseData = phaseData;
-    if (this.postFilter) {
-      filteredPhaseData = this.postFilter.processBuffer(phaseData);
-    }
-    
-    return { phase: filteredPhaseData, amplitude: amplitudeData };
-  }
-
-  private processSample(sample: number): void {
+  private processSample(sample: number): boolean {
     // Step 1: I/Q demodulation - one sample at a time
     const omega = 2 * Math.PI * this.centerFreq / this.sampleRate;
     let i = sample * Math.cos(this.localOscPhase);
@@ -361,7 +286,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       this.localOscPhase -= 2 * Math.PI;
     }
     
-    // Step 2: Apply I/Q filters sample by sample (critical for proper demodulation)
+    // Step 2: Apply I/Q filters sample by sample
     if (this.iqFilters) {
       i = this.iqFilters.i.process(i);
       q = this.iqFilters.q.process(q);
@@ -390,6 +315,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
     
     // Step 6: Frequency discrimination for bit decision
+    // Mark frequency (1650Hz) < center < Space frequency (1850Hz)  
+    // Following original implementation: positive phase diff → bit 1
+    // This works despite theoretical expectation being opposite
     const bitValue = filteredPhaseDiff > 0 ? 1 : 0;
     
     // Debug: Log first few samples
@@ -404,7 +332,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
         this.emit('endOfData');
         this.resetState();
-        return;
+        return true; // End of data detected
       }
     } else {
       this.silentSampleCount = 0; // Reset on non-silent sample
@@ -431,6 +359,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       
       this.processBit(bit);
     }
+    
+    return false; // Continue processing
   }
 
   private processBit(bit: number): void {
@@ -448,40 +378,50 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
     
     if (!this.frameStarted) {
-      // Look for preamble+SFD pattern
-      if (this.receivedBits.length >= this.preambleSfdBits.length) {
-        const startIndex = this.receivedBits.length - this.preambleSfdBits.length;
-        let matches = 0;
-        
-        for (let i = 0; i < this.preambleSfdBits.length; i++) {
-          if (this.receivedBits[startIndex + i] === this.preambleSfdBits[i]) {
-            matches++;
-          }
-        }
-        
-        const matchRatio = matches / this.preambleSfdBits.length;
-        
-        // Debug: Log pattern matching
-        if (this.receivedBits.length <= 60) {
-          console.log(`Pattern match attempt: ${matches}/${this.preambleSfdBits.length} = ${matchRatio.toFixed(3)} (threshold: ${this.config.syncThreshold})`);
-          if (this.receivedBits.length === this.preambleSfdBits.length) {
-            console.log(`Expected: [${this.preambleSfdBits.join(',')}]`);
-            console.log(`Received: [${this.receivedBits.join(',')}]`);
-          }
-        }
-        
-        if (matchRatio >= this.config.syncThreshold) {
-          console.log(`[FSK] Frame sync detected with confidence ${matchRatio}`);
-          this.frameStarted = true;
-          this.currentByte = 0;
-          this.bitPosition = 0;
-          return;
-        }
+      // Try to detect frame start pattern
+      if (this.detectFrameStart()) {
+        console.log(`[FSK] Frame sync detected`);
+        this.frameStarted = true;
+        this.currentByte = 0;
+        this.bitPosition = 0;
+        return;
       }
     } else {
       // Process data bits
       this.processByte(bit);
     }
+  }
+  
+  /**
+   * Detect frame start pattern in received bits buffer
+   * Separated method for clarity and reusability
+   */
+  private detectFrameStart(): boolean {
+    if (this.receivedBits.length < this.preambleSfdBits.length) {
+      return false;
+    }
+    
+    const startIndex = this.receivedBits.length - this.preambleSfdBits.length;
+    let matches = 0;
+    
+    for (let i = 0; i < this.preambleSfdBits.length; i++) {
+      if (this.receivedBits[startIndex + i] === this.preambleSfdBits[i]) {
+        matches++;
+      }
+    }
+    
+    const matchRatio = matches / this.preambleSfdBits.length;
+    
+    // Debug: Log pattern matching
+    if (this.receivedBits.length <= 60) {
+      console.log(`Pattern match attempt: ${matches}/${this.preambleSfdBits.length} = ${matchRatio.toFixed(3)} (threshold: ${this.config.syncThreshold})`);
+      if (this.receivedBits.length === this.preambleSfdBits.length) {
+        console.log(`Expected: [${this.preambleSfdBits.join(',')}]`);
+        console.log(`Received: [${this.receivedBits.join(',')}]`);
+      }
+    }
+    
+    return matchRatio >= this.config.syncThreshold;
   }
 
   private processByte(bit: number): void {
@@ -496,9 +436,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       return;
     }
     
-    // Data bits (LSB first)
+    // Data bits (MSB first)
     if (this.bitPosition >= 1 && this.bitPosition <= 8) {
-      const dataIndex = this.bitPosition - 1;
+      const dataIndex = 8 - this.bitPosition;
       this.currentByte |= (bit << dataIndex);
       this.bitPosition++;
       return;
@@ -580,8 +520,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         generateBit(0);
       }
       
-      // Data bits (LSB first)
-      for (let i = 0; i < 8; i++) {
+      // Data bits (MSB first)
+      for (let i = 7; i >= 0; i--) {
         generateBit((byte >> i) & 1);
       }
       
