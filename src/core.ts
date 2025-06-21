@@ -13,18 +13,16 @@ export interface SignalQuality {
   frequencyOffset: number; // Frequency Offset (Hz)
 }
 
-export type ModulationType = 'FSK' | 'PSK' | 'QAM' | 'ASK';
 
 export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorConfig> {
   readonly name: string;
-  readonly type: ModulationType;
   
   // Configuration management
   configure(_config: TConfig): void;
   getConfig(): TConfig;
   
   // Modulation/Demodulation (async data processing)
-  modulateData(_data: Uint8Array): Promise<Float32Array>;
+  modulateData(_data: Uint8Array): Promise<boolean>;
 
   // ストリーム処理のため、連続してデータを受けとれること
   // samples を跨いでも処理することができること

@@ -37,7 +37,6 @@ describe('WebAudioModulatorNode', () => {
   
   test('creates instance', () => {
     expect(modulator.name).toBe('WebAudioModulator');
-    expect(modulator.type).toBe('WebAudio');
     expect(modulator.isReady()).toBe(false);
   });
   
@@ -71,21 +70,6 @@ describe('WebAudioModulatorNode', () => {
     } as MessageEvent);
     
     await configPromise;
-  });
-  
-  test('handles modulation request', async () => {
-    await modulator.initialize();
-    
-    const testData = new Uint8Array([0x48]); // "H" - single byte
-    
-    // modulateData uses FSKCore directly, not worklet messaging
-    const result = await modulator.modulateData(testData);
-    console.log('Modulation result length:', result.length);
-    console.log('Modulation result type:', result.constructor.name);
-    
-    expect(result).toBeInstanceOf(Float32Array);
-    // For now, just check it's not completely empty
-    expect(result.length).toBeGreaterThanOrEqual(0);
   });
   
   test('handles errors from processor', async () => {

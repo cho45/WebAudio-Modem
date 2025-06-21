@@ -85,7 +85,6 @@ describe('XModem + WebAudio Integration', () => {
     // Document the expected integration pattern
     expect(transport.transportName).toBe('XModem');
     expect(modulator.name).toBe('WebAudioModulator');
-    expect(modulator.type).toBe('WebAudio');
     
     // The flow should be:
     // 1. XModemTransport creates packets

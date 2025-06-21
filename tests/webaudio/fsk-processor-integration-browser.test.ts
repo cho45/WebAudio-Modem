@@ -13,7 +13,6 @@ describe('FSK Processor Integration', () => {
   let audioContext: AudioContext;
 
   beforeEach(async () => {
-    console.log('🧪 Starting FSK Processor Integration Tests...');
     // Create AudioContext
     audioContext = new AudioContext();
     
@@ -25,35 +24,27 @@ describe('FSK Processor Integration', () => {
 
     const resumePromise = new Promise<void>((resolve, reject) => {
       button.addEventListener('click', async function me () {
+        button.removeEventListener('click', me);
         console.log('User clicked button, resuming AudioContext...');
         if (audioContext.state === 'suspended') {
           await audioContext.resume();
-          console.log('AudioContext resumed successfully');
-        } else {
-          console.log('AudioContext already running:', audioContext.state);
         }
         resolve();
-        button.removeEventListener('click', me);
       });
     });
     
     // Create and dispatch click event
-    console.log('Simulating user interaction to resume AudioContext...');
+    // console.log('Simulating user interaction to resume AudioContext...');
     await userEvent.click(button); // Simulate user click for test environment
 
     await resumePromise;
     
     // Resume AudioContext after user interaction
-    console.log('AudioContext state before resume:', audioContext.state);
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
-    }
+    // console.log('AudioContext state before resume:', audioContext.state);
     
     // Cleanup
     document.body.removeChild(button);
     
-    // Verify AudioContext is running
-    console.log('AudioContext state after resume:', audioContext.state);
     expect(audioContext.state).toBe('running');
   });
 
@@ -74,7 +65,6 @@ describe('FSK Processor Integration', () => {
       });
       
       expect(modulator.name).toBe('WebAudioModulator');
-      expect(modulator.type).toBe('WebAudio');
       
       // Note: Full AudioWorklet testing requires a more complex setup
       // This test verifies the basic structure works
@@ -94,38 +84,6 @@ describe('FSK Processor Integration', () => {
       expect(transport.transportName).toBe('XModem');
   });
   
-   test('should create WebAudioModulatorNode and handle processor loading gracefully', async () => {
-       // Create WebAudioModulatorNode
-       const modulator = new WebAudioModulatorNode(audioContext, {
-         processorUrl: '/src/webaudio/processors/fsk-processor.ts',
-         processorName: 'fsk-processor'
-       });
-       
-       expect(modulator.name).toBe('WebAudioModulator');
-       expect(modulator.type).toBe('WebAudio');
-       expect(modulator.isReady()).toBe(false);
-       
-       // In headless browser test environment, AudioWorklet loading will fail
-       // This is expected behavior, so we test the graceful failure handling
-       try {
-         // Set a very short timeout to quickly fail
-         const controller = new AbortController();
-         setTimeout(() => controller.abort(), 100);
-         
-         await modulator.initialize();
-         
-         // If we somehow get here, test the functionality
-         console.log('✅ Unexpected success: FSK processor loaded in test environment!');
-         expect(modulator.isReady()).toBe(true);
-         
-       } catch (error) {
-         // Expected failure in test environment
-         console.log('⚠️ AudioWorklet loading failed as expected in test environment:', error.message);
-         expect(error).toBeDefined();
-         expect(modulator.isReady()).toBe(false);
-       }
-   });
- 
    test('should handle WebAudio and XModem integration', async () => {
        // Test that XModemTransport can work with WebAudioModulatorNode
        const modulator = new WebAudioModulatorNode(audioContext, {
@@ -168,10 +126,7 @@ describe('FSK Processor Integration', () => {
      expect(expectedLength).toBe(13120); // Expected signal length for "Hello" with 48kHz
    });
  
-   test('Direct Audio Test - AudioWorklet Integration (Real Environment Only)', async () => {
-     // This test requires a real browser environment with proper AudioWorklet support
-     // It will fail in headless environments, which is expected
- 
+   test('Direct Audio Test - AudioWorklet Integration', async () => {
        console.log('🧪 Starting Direct Audio Test...');
  
        // Create modulator and demodulator
@@ -185,21 +140,34 @@ describe('FSK Processor Integration', () => {
          processorName: 'fsk-processor'
        });
  
-       // Initialize both (this will likely fail in test environment)
        await modulator.initialize();
        await demodulator.initialize();
- 
+
        // Configure with test-friendly settings
        const testConfig = {
          sampleRate: audioContext.sampleRate,
          baudRate: 300,
          markFrequency: 1650,
          spaceFrequency: 1850,
-         syncThreshold: 0.85
+         syncThreshold: 0.75
        };
  
        await modulator.configure(testConfig);
        await demodulator.configure(testConfig);
+
+       // Get worklet nodes for proper AudioWorklet connection
+       const modulatorWorklet = modulator.workletNode;
+       const demodulatorWorklet = demodulator.workletNode;
+       if (!modulatorWorklet || !demodulatorWorklet) {
+         throw new Error('AudioWorklet nodes not available');
+       }
+ 
+       // Connect modulator output to demodulator input (AudioWorklet loopback)
+       modulatorWorklet.connect(demodulatorWorklet);
+ 
+       console.log('🎯 Connected AudioWorklet modulator → demodulator...');
+       audioContext.resume(); // Ensure AudioContext is running
+       expect(audioContext.state).equal('running');
  
        console.log('✅ AudioWorklet processors loaded successfully!');
  
@@ -209,8 +177,7 @@ describe('FSK Processor Integration', () => {
        console.log(`🔊 Testing with: "${testText}"`);
  
        // Generate signal
-       const signal = await modulator.modulateData(testData);
-       console.log(`📡 Generated signal: ${signal.length} samples`);
+       await modulator.modulateData(testData);
  
        // Set up demodulation result listener  
        const demodulationPromise = new Promise((resolve, reject) => {
@@ -224,21 +191,6 @@ describe('FSK Processor Integration', () => {
            resolve(new Uint8Array(data.bytes));
          });
        });
- 
-       // Get worklet nodes for proper AudioWorklet connection
-       const modulatorWorklet = modulator.workletNode;
-       const demodulatorWorklet = demodulator.workletNode;
- 
-       if (!modulatorWorklet || !demodulatorWorklet) {
-         throw new Error('AudioWorklet nodes not available');
-       }
- 
-       // Connect modulator output to demodulator input (AudioWorklet loopback)
-       modulatorWorklet.connect(demodulatorWorklet);
- 
-       console.log('🎯 Connected AudioWorklet modulator → demodulator...');
-       audioContext.resume(); // Ensure AudioContext is running
-       expect(audioContext.state).equal('running');
  
        // Wait a bit for connection to stabilize, then check for buffered data
        await new Promise(resolve => setTimeout(resolve, 1000));

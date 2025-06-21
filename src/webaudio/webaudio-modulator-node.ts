@@ -18,7 +18,6 @@ interface WorkletMessage {
 
 export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   readonly name = 'WebAudioModulator';
-  readonly type = 'WebAudio' as const;
   
   private audioContext: AudioContext;
   private _workletNode: AudioWorkletNode | null = null;
@@ -47,13 +46,6 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
-    
-    // Handle realtime messages (not part of pendingOperations)
-    if (id === 'realtime-demod' && type === 'demodulated') {
-      this.emit('demodulated', data);
-      return;
-    }
-    
     const operation = this.pendingOperations.get(id);
     
     if (!operation) {
@@ -87,22 +79,9 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
     await this.sendMessage('configure', { config });
   }
   
-  async modulateData(data: Uint8Array): Promise<Float32Array> {
-    // For output (modulation), use FSKCore directly to get the signal
-    // The AudioWorklet version buffers to outputBuffer for streaming
-    const { FSKCore, DEFAULT_FSK_CONFIG } = await import('../modems/fsk');
-    const config = {
-      ...DEFAULT_FSK_CONFIG,
-      sampleRate: this.audioContext.sampleRate,
-      baudRate: 300,
-      markFrequency: 1650,
-      spaceFrequency: 1850
-    };
-    
-    const fskCore = new FSKCore();
-    fskCore.configure(config);
-    
-    return await fskCore.modulateData(data);
+  async modulateData(data: Uint8Array): Promise<boolean> {
+    const result = await this.sendMessage('modulate', { bytes: data });
+    return result.success;
   }
   
   async demodulateData(samples: Float32Array): Promise<Uint8Array> {

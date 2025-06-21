@@ -67,7 +67,6 @@ describe('FSK Processor Browser Tests', () => {
       
       expect(modulator).toBeDefined();
       expect(modulator.name).toBe('WebAudioModulator');
-      expect(modulator.type).toBe('WebAudio');
       
       // Try to initialize (may fail due to module loading in test)
       try {
