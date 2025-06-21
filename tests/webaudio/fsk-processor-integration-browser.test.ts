@@ -78,7 +78,7 @@ describe('FSK Processor Integration', () => {
       const { XModemTransport } = await import('/src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(modulator);
       
-      expect(transport.isReady()).toBe(false); // Not ready until modulator is initialized
+      expect(transport.isReady()).toBe(true); // Ready when data channel is available
       expect(transport.transportName).toBe('XModem');
   });
   
@@ -94,7 +94,7 @@ describe('FSK Processor Integration', () => {
        
        // Basic integration test
        expect(transport.transportName).toBe('XModem');
-       expect(transport.isReady()).toBe(false); // Modulator not initialized
+       expect(transport.isReady()).toBe(true); // Data channel available
        
        // Configure transport
        transport.configure({ timeoutMs: 1000, maxRetries: 1 });

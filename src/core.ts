@@ -285,7 +285,7 @@ export abstract class BaseModulator<TConfig extends BaseModulatorConfig>
  * Provides event handling and basic statistics tracking
  * while enforcing the ITransport interface.
  * 
- * Transport層はIAudioProcessorを通じて通信し、音声処理の詳細を知らない。
+ * Transport層はIDataChannelを通じて通信し、音声処理の詳細を知らない。
  */
 export abstract class BaseTransport 
   extends EventEmitter 
@@ -293,7 +293,7 @@ export abstract class BaseTransport
   
   abstract readonly transportName: string;
   
-  protected audioProcessor: IAudioProcessor;
+  protected dataChannel: IDataChannel;
   protected statistics: MutableTransportStatistics = {
     packetsSent: 0,
     packetsReceived: 0,
@@ -304,9 +304,9 @@ export abstract class BaseTransport
     averageRoundTripTime: 0
   };
 
-  constructor(audioProcessor: IAudioProcessor) {
+  constructor(dataChannel: IDataChannel) {
     super();
-    this.audioProcessor = audioProcessor;
+    this.dataChannel = dataChannel;
   }
   
   // Abstract methods that must be implemented by concrete protocols
