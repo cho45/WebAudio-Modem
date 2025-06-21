@@ -55,6 +55,7 @@ export class FSKProcessor extends AudioWorkletProcessor {
            * 変調リクエスト: バイト列を受けとり、変調キューに入れる
            * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
            */
+          console.log(`[FSKProcessor] Modulation started for ${data.bytes.length} bytes`);
           if (this.pendingModulation) {
             throw new Error('Modulation already in progress');
           }

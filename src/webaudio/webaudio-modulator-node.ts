@@ -80,11 +80,13 @@ export class WebAudioModulatorNode extends EventEmitter implements IModulator {
   }
   
   async modulateData(data: Uint8Array): Promise<boolean> {
+    console.log(`[WebAudioModulator] Modulating ${data.length} bytes`);
     const result = await this.sendMessage('modulate', { bytes: data });
     return result.success;
   }
   
-  async demodulateData(samples: Float32Array): Promise<Uint8Array> {
+  async demodulateData(): Promise<Uint8Array> {
+    console.log(`[WebAudioModulator] Demodulating data...`);
     // Get currently buffered demodulated data from the AudioWorklet
     const result = await this.sendMessage('demodulate', {});
     return new Uint8Array(result.bytes || []);

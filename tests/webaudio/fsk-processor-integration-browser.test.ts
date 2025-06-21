@@ -52,8 +52,6 @@ describe('FSK Processor Integration', () => {
   });
 
   test('actual modulation and XModem integration', async () => {
-    console.log('First test!!!!!');
-  
       // Test basic AudioContext functionality
       expect(audioContext.state).toBeDefined();
       expect(['suspended', 'running', 'closed']).toContain(audioContext.state);

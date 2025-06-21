@@ -13,7 +13,71 @@ export interface SignalQuality {
   frequencyOffset: number; // Frequency Offset (Hz)
 }
 
+/**
+ * Data Channel Interface - Transport層とAudio処理層を繋ぐ抽象化
+ * 
+ * Transport層はこのインターフェースを通じてデータを送受信し、
+ * 音声処理の詳細（サンプルレート、変調方式など）を知る必要がない。
+ * 
+ * 実装例:
+ * - WebAudioDataChannel: WebAudio APIを使用した音声通信
+ * - SerialDataChannel: シリアル通信
+ * - TCPDataChannel: TCP/IP通信
+ * - MockDataChannel: テスト用
+ */
+export interface IDataChannel {
+  /**
+   * データを送信する
+   * @param data 送信するデータ
+   * @returns 送信完了を示すPromise
+   */
+  send(data: Uint8Array): Promise<void>;
+  
+  /**
+   * データを受信する（データが到着するまで待機）
+   * @param timeoutMs タイムアウト時間（ミリ秒）
+   * @returns 受信したデータ
+   * @throws Error タイムアウトまたは通信エラー
+   */
+  receive(timeoutMs?: number): Promise<Uint8Array>;
+  
+  /**
+   * チャネルが送受信可能な状態かチェック
+   */
+  isReady(): boolean;
+  
+  /**
+   * チャネルを初期化する
+   */
+  initialize?(): Promise<void>;
+  
+  /**
+   * チャネルを閉じる
+   */
+  close(): void;
+  
+  /**
+   * イベント処理（接続状態変化、エラー通知など）
+   */
+  on(eventName: 'ready' | 'error' | 'closed', callback: (event: Event) => void): void;
+  off(eventName: 'ready' | 'error' | 'closed', callback: (event: Event) => void): void;
+}
 
+
+/**
+ * Audio Modulator Interface - 純粋な音声信号処理層
+ * 
+ * このインターフェースは音声サンプルとデータの変換を担当し、
+ * 通信プロトコルやトランスポート層の詳細は知らない。
+ * 
+ * 実装例:
+ * - FSKCore: FSK変復調
+ * - PSKCore: PSK変復調  
+ * - QAMCore: QAM変復調
+ * 
+ * 注意: Transport層は通常このインターフェースを直接使用せず、
+ * IDataChannelを通じて抽象化された通信を行う。
+ */
 export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorConfig> {
   readonly name: string;
   
@@ -21,11 +85,11 @@ export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorC
   configure(_config: TConfig): void;
   getConfig(): TConfig;
   
-  // Modulation/Demodulation (async data processing)
-  modulateData(_data: Uint8Array): Promise<boolean>;
+  // データを音声信号に変調（純粋な信号処理）
+  modulateData(_data: Uint8Array): Promise<Float32Array>;
 
-  // ストリーム処理のため、連続してデータを受けとれること
-  // samples を跨いでも処理することができること
+  // 音声サンプルからデータを復調（ストリーム処理対応）
+  // 連続的にsamplesを処理し、復調可能なデータがあれば返す
   demodulateData(_samples: Float32Array): Promise<Uint8Array>;
   
   // State management
@@ -217,7 +281,9 @@ export abstract class BaseModulator<TConfig extends BaseModulatorConfig>
  * Base class for transport protocols with common functionality
  * 
  * Provides event handling and basic statistics tracking
- * while enforcing the ITransport interface
+ * while enforcing the ITransport interface.
+ * 
+ * Transport層はIDataChannelを通じて通信し、音声処理の詳細を知らない。
  */
 export abstract class BaseTransport 
   extends EventEmitter 
@@ -225,7 +291,7 @@ export abstract class BaseTransport
   
   abstract readonly transportName: string;
   
-  protected modulator: IModulator;
+  protected dataChannel: IDataChannel;
   protected statistics: MutableTransportStatistics = {
     packetsSent: 0,
     packetsReceived: 0,
@@ -236,9 +302,9 @@ export abstract class BaseTransport
     averageRoundTripTime: 0
   };
 
-  constructor(modulator: IModulator) {
+  constructor(dataChannel: IDataChannel) {
     super();
-    this.modulator = modulator;
+    this.dataChannel = dataChannel;
   }
   
   // Abstract methods that must be implemented by concrete protocols
