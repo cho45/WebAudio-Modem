@@ -15,7 +15,7 @@ export interface FSKConfig extends BaseModulatorConfig {
   adaptiveThreshold: boolean;
 }
 
-const DEFAULT_FSK_CONFIG: FSKConfig = {
+export const DEFAULT_FSK_CONFIG: FSKConfig = {
   sampleRate: 48000,
   baudRate: 300,
   markFrequency: 1650,

@@ -388,19 +388,10 @@ async function sendFile() {
 function getCurrentFSKConfig() {
     return {
         ...DEFAULT_FSK_CONFIG,
-        sampleRate: parseInt(document.getElementById('sample-rate-input')?.value) || 48000,
+        sampleRate: audioContext ? audioContext.sampleRate : 48000,
         baudRate: parseInt(document.getElementById('baud-rate-input')?.value) || 300,
         markFrequency: parseInt(document.getElementById('mark-freq-input')?.value) || 1650,
         spaceFrequency: parseInt(document.getElementById('space-freq-input')?.value) || 1850,
-        startBits: 1,
-        stopBits: 1,
-        parity: 'none',
-        preFilterBandwidth: 800,
-        adaptiveThreshold: true,
-        agcEnabled: true,
-        preamblePattern: [0x55, 0x55],
-        sfdPattern: [0x7E],
-        syncThreshold: 0.85  // Use stricter threshold for accurate sync
     };
 }
 
