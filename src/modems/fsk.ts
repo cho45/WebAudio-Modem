@@ -108,6 +108,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private bitSampleCounter = 0;
   private bitAccumulator = 0;
   private bitAccumCount = 0;
+  private bitBoundaryLearned = false;
+  private nextBitSampleIndex = 0;
   
   // Frame detection state
   private preambleSfdBits: number[] = [];
@@ -222,15 +224,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.bitSampleCounter = 0;
     this.bitAccumulator = 0;
     this.bitAccumCount = 0;
+    this.bitBoundaryLearned = false;
+    this.nextBitSampleIndex = 0;
     
     // Reset frame state
     this.receivedBits = [];
     this.frameStarted = false;
-    
-    // Reset byte state
-    this.currentByte = 0;
-    this.bitPosition = 0;
-    this.byteBuffer = [];
     
     // Reset silence state
     this.silentSampleCount = 0;
@@ -240,6 +239,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     if (!this.ready || !this.config) {
       throw new Error('FSK demodulator not configured');
     }
+    
     
     try {
       // Process samples through AGC and preFilter
@@ -253,10 +253,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       
       // Stream processing: process each sample individually
       for (let i = 0; i < processedSamples.length; i++) {
-        const endOfData = this.processSample(processedSamples[i]);
-        if (endOfData) {
-          return new Uint8Array(0);
-        }
+        this.processSample(processedSamples[i]);
       }
       
       // Return accumulated bytes
@@ -320,44 +317,66 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // This works despite theoretical expectation being opposite
     const bitValue = filteredPhaseDiff > 0 ? 1 : 0;
     
-    // Debug: Log first few samples
-    if (this.bitSampleCounter < 5 && this.receivedBits.length < 10) {
-      console.log(`Sample ${this.bitSampleCounter}: rawPhaseDiff=${phaseDiff.toFixed(4)}, filteredPhaseDiff=${filteredPhaseDiff.toFixed(4)}, bit=${bitValue}, amp=${amplitude.toFixed(4)}`);
-    }
+    // Debug: Log first few samples (disabled)
+    // if (this.bitSampleCounter < 5 && this.receivedBits.length < 10) {
+    //   console.log(`Sample ${this.bitSampleCounter}: rawPhaseDiff=${phaseDiff.toFixed(4)}, filteredPhaseDiff=${filteredPhaseDiff.toFixed(4)}, bit=${bitValue}, amp=${amplitude.toFixed(4)}`);
+    // }
     
     // Step 7: Sample-level silence detection (this was the original requirement!)
     if (amplitude < this.SILENCE_THRESHOLD) {
       this.silentSampleCount++;
       if (this.silentSampleCount >= this.silenceSamplesForEOD) {
-        console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
-        this.emit('endOfData');
-        this.resetState();
-        return true; // End of data detected
+        // console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
+        this.resetState(); // Reset state on EOD
+        this.emit('eod');
+        return true;
       }
     } else {
       this.silentSampleCount = 0; // Reset on non-silent sample
     }
     
-    // Step 8: Bit synchronization - accumulate samples per bit
-    this.bitAccumulator += bitValue;
-    this.bitAccumCount++;
+    // Step 8: Bit synchronization with proper boundary tracking
     this.bitSampleCounter++;
     
-    if (this.bitSampleCounter >= this.samplesPerBit) {
-      // Decide bit based on majority vote
-      const bit = this.bitAccumulator > (this.bitAccumCount / 2) ? 1 : 0;
+    if (!this.bitBoundaryLearned) {
+      // Before frame sync: accumulate all samples
+      this.bitAccumulator += bitValue;
+      this.bitAccumCount++;
       
-      // Debug: Log bit decisions
-      if (this.receivedBits.length < 20) {
-        console.log(`Bit decision: ${bit} (accumulator=${this.bitAccumulator}/${this.bitAccumCount})`);
+      if (this.bitSampleCounter >= this.samplesPerBit) {
+        // Decide bit based on majority vote
+        const bit = this.bitAccumulator > (this.bitAccumCount / 2) ? 1 : 0;
+        
+        // Debug: Log bit decisions (disabled)
+        // if (this.receivedBits.length < 20) {
+        //   console.log(`Bit decision: ${bit} (accumulator=${this.bitAccumulator}/${this.bitAccumCount})`);
+        // }
+        
+        // Reset for next bit
+        this.bitSampleCounter = 0;
+        this.bitAccumulator = 0;
+        this.bitAccumCount = 0;
+        
+        this.processBit(bit);
       }
+    } else {
+      // After frame sync: use learned bit boundaries
+      this.bitAccumulator += bitValue;
+      this.bitAccumCount++;
       
-      // Reset for next bit
-      this.bitSampleCounter = 0;
-      this.bitAccumulator = 0;
-      this.bitAccumCount = 0;
-      
-      this.processBit(bit);
+      if (this.bitSampleCounter >= this.nextBitSampleIndex) {
+        // Decide bit based on majority vote
+        const bit = this.bitAccumulator > (this.bitAccumCount / 2) ? 1 : 0;
+        
+        // Reset accumulator for next bit
+        this.bitAccumulator = 0;
+        this.bitAccumCount = 0;
+        
+        // Set next bit boundary
+        this.nextBitSampleIndex += this.samplesPerBit;
+        
+        this.processBit(bit);
+      }
     }
     
     return false; // Continue processing
@@ -367,10 +386,10 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Add bit to received bits buffer
     this.receivedBits.push(bit);
     
-    // Debug: Log received bits
-    if (this.receivedBits.length <= 50) {
-      console.log(`Received bit ${this.receivedBits.length}: ${bit}, buffer: [${this.receivedBits.slice(-10).join(',')}]`);
-    }
+    // Debug: Log received bits (disabled)
+    // if (this.receivedBits.length <= 50) {
+    //   console.log(`Received bit ${this.receivedBits.length}: ${bit}, buffer: [${this.receivedBits.slice(-10).join(',')}]`);
+    // }
     
     // Keep buffer size manageable
     if (this.receivedBits.length > this.maxSyncBits) {
@@ -380,10 +399,17 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     if (!this.frameStarted) {
       // Try to detect frame start pattern
       if (this.detectFrameStart()) {
-        console.log(`[FSK] Frame sync detected`);
+        // console.log(`[FSK] Frame sync detected`);
         this.frameStarted = true;
         this.currentByte = 0;
         this.bitPosition = 0;
+        
+        // Learn bit boundary from frame sync position
+        this.bitBoundaryLearned = true;
+        // Set next bit sample to be at the next bit boundary (start of next bit)
+        this.nextBitSampleIndex = this.bitSampleCounter + this.samplesPerBit;
+        // console.log(`[FSK] Bit boundary learned: next bit at sample ${this.nextBitSampleIndex}`);
+        
         return;
       }
     } else {
@@ -412,14 +438,14 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     
     const matchRatio = matches / this.preambleSfdBits.length;
     
-    // Debug: Log pattern matching
-    if (this.receivedBits.length <= 60) {
-      console.log(`Pattern match attempt: ${matches}/${this.preambleSfdBits.length} = ${matchRatio.toFixed(3)} (threshold: ${this.config.syncThreshold})`);
-      if (this.receivedBits.length === this.preambleSfdBits.length) {
-        console.log(`Expected: [${this.preambleSfdBits.join(',')}]`);
-        console.log(`Received: [${this.receivedBits.join(',')}]`);
-      }
-    }
+    // Debug: Log pattern matching (disabled)
+    // if (this.receivedBits.length <= 60) {
+    //   console.log(`Pattern match attempt: ${matches}/${this.preambleSfdBits.length} = ${matchRatio.toFixed(3)} (threshold: ${this.config.syncThreshold})`);
+    //   if (this.receivedBits.length === this.preambleSfdBits.length) {
+    //     console.log(`Expected: [${this.preambleSfdBits.join(',')}]`);
+    //     console.log(`Received: [${this.receivedBits.join(',')}]`);
+    //   }
+    // }
     
     return matchRatio >= this.config.syncThreshold;
   }
@@ -427,9 +453,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private processByte(bit: number): void {
     // Start bit
     if (this.bitPosition === 0) {
+      // console.log(`[FSK] Start bit: ${bit} (expected: 0)`);
       if (bit !== 0) {
-        // Invalid start bit, reset frame
+        // Invalid start bit, reset frame and bit boundary
+        // console.log(`[FSK] Invalid start bit ${bit}, resetting frame`);
         this.frameStarted = false;
+        this.bitBoundaryLearned = false;
         return;
       }
       this.bitPosition++;
@@ -440,12 +469,14 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     if (this.bitPosition >= 1 && this.bitPosition <= 8) {
       const dataIndex = 8 - this.bitPosition;
       this.currentByte |= (bit << dataIndex);
+      // console.log(`[FSK] Data bit ${this.bitPosition}: ${bit}, currentByte=0x${this.currentByte.toString(16).padStart(2, '0')}`);
       this.bitPosition++;
       return;
     }
     
     // Parity bit (if enabled)
     if (this.config.parity !== 'none' && this.bitPosition === 9) {
+      // console.log(`[FSK] Parity bit: ${bit}`);
       // TODO: Check parity if needed
       this.bitPosition++;
       return;
@@ -454,13 +485,17 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Stop bit
     const stopBitPosition = this.config.parity === 'none' ? 9 : 10;
     if (this.bitPosition === stopBitPosition) {
+      // console.log(`[FSK] Stop bit: ${bit} (expected: 1)`);
       if (bit !== 1) {
-        // Invalid stop bit, reset frame
+        // Invalid stop bit, reset frame and bit boundary
+        // console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
         this.frameStarted = false;
+        this.bitBoundaryLearned = false;
         return;
       }
       
       // Complete byte received
+      // console.log(`[FSK] Complete byte: 0x${this.currentByte.toString(16).padStart(2, '0')} (${this.currentByte}), buffer length: ${this.byteBuffer.length + 1}`);
       this.byteBuffer.push(this.currentByte);
       this.currentByte = 0;
       this.bitPosition = 0;
@@ -469,6 +504,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     
     // Should not reach here
     this.frameStarted = false;
+    this.bitBoundaryLearned = false;
   }
 
   async modulateData(data: Uint8Array): Promise<Float32Array> {
@@ -506,7 +542,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       const frequency = bit === 1 ? this.config.markFrequency : this.config.spaceFrequency;
       for (let i = 0; i < samplesPerBit; i++) {
         if (sampleIndex < output.length) {
-          output[sampleIndex] = 0.5 * Math.sin(phase);
+          output[sampleIndex] = Math.sin(phase);
           phase += 2 * Math.PI * frequency / this.config.sampleRate;
           sampleIndex++;
         }
@@ -563,6 +599,11 @@ export class FSKCore extends BaseModulator<FSKConfig> {
 
   reset(): void {
     this.resetState();
+    
+    // Reset byte state
+    this.currentByte = 0;
+    this.bitPosition = 0;
+    this.byteBuffer = [];
   }
 
   getSignalQuality() {

@@ -179,8 +179,10 @@ describe('FSK Core Modulation', () => {
         config.stopBits
       );
       
-      // Beginning of signal should correlate with preamble
-      const signalStart = signal.slice(0, preambleSignal.length);
+      // Skip initial padding to find the actual preamble
+      const samplesPerBit = Math.floor(config.sampleRate / config.baudRate);
+      const paddingSamples = samplesPerBit * 2; // Match FSKCore padding
+      const signalStart = signal.slice(paddingSamples, paddingSamples + preambleSignal.length);
       const correlation = computeCorrelation(signalStart, preambleSignal);
       
       expect(Math.abs(correlation)).toBeGreaterThan(0.3); // Should have reasonable correlation

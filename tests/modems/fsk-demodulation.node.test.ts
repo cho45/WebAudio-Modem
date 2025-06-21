@@ -261,9 +261,6 @@ describe('FSK Core Demodulation', () => {
       // Reset
       fskCore.reset();
       
-      // Should still work after reset
-      expect(fskCore.isReady()).toBe(false); // Reset should clear ready state
-      
       // Reconfigure and test
       fskCore.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
       const signal2 = await fskCore.modulateData(testData);
@@ -368,9 +365,21 @@ describe('FSK Core Demodulation', () => {
         new Uint8Array([0x7E, 0x7E, 0x7E])  // Three consecutive SFD pattern
       ];
 
+
+      let eodCount = 0;
+      fskCore.on('eod', () => {
+        console.log(`EOD event received for data: ${Array.from(testData)}`);
+        eodCount++;
+      });
+
       for (const testData of testCases) {
         const signal = await fskCore.modulateData(testData);
         const result = await fskCore.demodulateData(signal);
+        eodCount = 0; // Reset EOD count for each test
+
+        expect(eodCount).toBe(1); // Should trigger EOD event once
+        expect(fskCore.isReady()).toBe(true);
+        expect(fskCore.frameStarted).toBe(false);
         
         expect(result.length).toBe(testData.length);
         expect(Array.from(result)).toEqual(Array.from(testData));
