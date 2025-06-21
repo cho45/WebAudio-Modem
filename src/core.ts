@@ -5,6 +5,8 @@ export interface BaseModulatorConfig {
   baudRate: number;
 }
 
+export type ModulationType = 'FSK' | 'PSK' | 'QAM' | 'WebAudio';
+
 export interface SignalQuality {
   snr: number;           // Signal-to-Noise Ratio (dB)
   ber: number;           // Bit Error Rate
@@ -14,69 +16,67 @@ export interface SignalQuality {
 }
 
 /**
- * Data Channel Interface - Transport層とAudio処理層を繋ぐ抽象化
+ * Audio Processor Interface - リアルタイム音声処理とアプリケーション通信の統合
  * 
- * Transport層はこのインターフェースを通じてデータを送受信し、
- * 音声処理の詳細（サンプルレート、変調方式など）を知る必要がない。
+ * このインターフェースは、WebAudioの制約（リアルタイム処理）と
+ * アプリケーションの要求（非同期データ送受信）を橋渡しします。
  * 
  * 実装例:
- * - WebAudioDataChannel: WebAudio APIを使用した音声通信
- * - SerialDataChannel: シリアル通信
- * - TCPDataChannel: TCP/IP通信
- * - MockDataChannel: テスト用
+ * - FSKProcessor: FSK変復調のAudioWorkletProcessor実装
+ * - PSKProcessor: PSK変復調のAudioWorkletProcessor実装
+ * - MockAudioProcessor: テスト用のモック実装
+ * 
+ * 重要な責務:
+ * 1. リアルタイム音声処理（128サンプル/チャンク）
+ * 2. 送信データのキューイング・分割
+ * 3. 受信データのバッファリング・待機制御
  */
-export interface IDataChannel {
+export interface IAudioProcessor {
   /**
-   * データを送信する
-   * @param data 送信するデータ
-   * @returns 送信完了を示すPromise
+   * リアルタイム音声処理（AudioWorkletProcessor.process()相当）
+   * 
+   * @param inputs 入力音声データ（[チャネル][サンプル]の2次元配列）
+   * @param outputs 出力音声データ（[チャネル][サンプル]の2次元配列）
+   * @returns 処理継続フラグ（falseで処理停止）
    */
-  send(data: Uint8Array): Promise<void>;
-  
-  /**
-   * データを受信する（データが到着するまで待機）
-   * @param timeoutMs タイムアウト時間（ミリ秒）
-   * @returns 受信したデータ
-   * @throws Error タイムアウトまたは通信エラー
-   */
-  receive(timeoutMs?: number): Promise<Uint8Array>;
-  
-  /**
-   * チャネルが送受信可能な状態かチェック
-   */
-  isReady(): boolean;
-  
-  /**
-   * チャネルを初期化する
-   */
-  initialize?(): Promise<void>;
-  
-  /**
-   * チャネルを閉じる
-   */
-  close(): void;
-  
-  /**
-   * イベント処理（接続状態変化、エラー通知など）
-   */
-  on(eventName: 'ready' | 'error' | 'closed', callback: (event: Event) => void): void;
-  off(eventName: 'ready' | 'error' | 'closed', callback: (event: Event) => void): void;
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
 }
 
+export interface IDataChannel {
+  /**
+   * アプリケーションレベルの変調要求
+   * データを音声信号に変調し、音声出力キューに追加
+   * 
+   * @param data 変調するデータ
+   * @returns 変調完了を示すPromise
+   */
+  modulate(data: Uint8Array): Promise<void>;
+  
+  /**
+   * アプリケーションレベルの復調データ取得
+   * バッファされた復調データを取得（データが来るまで待機）
+   * 
+   * @returns 復調されたデータ
+   */
+  demodulate(): Promise<Uint8Array>;
+
+}
 
 /**
  * Audio Modulator Interface - 純粋な音声信号処理層
  * 
- * このインターフェースは音声サンプルとデータの変換を担当し、
- * 通信プロトコルやトランスポート層の詳細は知らない。
+ * このインターフェースは音声サンプルとデータの変換を担当する純粋計算エンジンです。
+ * 通信プロトコル、リアルタイム制約、バッファリングなどは一切関知しません。
  * 
  * 実装例:
  * - FSKCore: FSK変復調
  * - PSKCore: PSK変復調  
  * - QAMCore: QAM変復調
  * 
- * 注意: Transport層は通常このインターフェースを直接使用せず、
- * IDataChannelを通じて抽象化された通信を行う。
+ * 使用パターン:
+ * - IAudioProcessor実装内で使用される（FSKProcessor内のFSKCore）
+ * - 直接的なテストで使用される（純粋な信号処理テスト）
+ * - Transport層からは IAudioProcessor を通じて間接的に使用される
  */
 export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorConfig> {
   readonly name: string;
@@ -85,10 +85,12 @@ export interface IModulator<TConfig extends BaseModulatorConfig = BaseModulatorC
   configure(_config: TConfig): void;
   getConfig(): TConfig;
   
-  // データを音声信号に変調（純粋な信号処理）
+  // データを音声信号に変調（純粋な計算処理）
+  // 入力: データ → 出力: 音声信号（Float32Array）
   modulateData(_data: Uint8Array): Promise<Float32Array>;
 
   // 音声サンプルからデータを復調（ストリーム処理対応）
+  // 入力: 音声サンプル → 出力: 復調されたデータ（即座に処理可能な分のみ）
   // 連続的にsamplesを処理し、復調可能なデータがあれば返す
   demodulateData(_samples: Float32Array): Promise<Uint8Array>;
   
@@ -283,7 +285,7 @@ export abstract class BaseModulator<TConfig extends BaseModulatorConfig>
  * Provides event handling and basic statistics tracking
  * while enforcing the ITransport interface.
  * 
- * Transport層はIDataChannelを通じて通信し、音声処理の詳細を知らない。
+ * Transport層はIAudioProcessorを通じて通信し、音声処理の詳細を知らない。
  */
 export abstract class BaseTransport 
   extends EventEmitter 
@@ -291,7 +293,7 @@ export abstract class BaseTransport
   
   abstract readonly transportName: string;
   
-  protected dataChannel: IDataChannel;
+  protected audioProcessor: IAudioProcessor;
   protected statistics: MutableTransportStatistics = {
     packetsSent: 0,
     packetsReceived: 0,
@@ -302,9 +304,9 @@ export abstract class BaseTransport
     averageRoundTripTime: 0
   };
 
-  constructor(dataChannel: IDataChannel) {
+  constructor(audioProcessor: IAudioProcessor) {
     super();
-    this.dataChannel = dataChannel;
+    this.audioProcessor = audioProcessor;
   }
   
   // Abstract methods that must be implemented by concrete protocols

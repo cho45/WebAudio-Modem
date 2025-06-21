@@ -7,6 +7,7 @@
 // AudioWorkletGlobalScope provides sampleRate as a global variable
 declare const sampleRate: number;
 
+import { IAudioProcessor, IDataChannel } from '../../core';
 import { FSKCore } from '../../modems/fsk';
 import { ChunkedModulator } from '../chunked-modulator';
 import { RingBuffer } from '../../utils';
@@ -17,7 +18,7 @@ interface WorkletMessage {
   data?: any;
 }
 
-export class FSKProcessor extends AudioWorkletProcessor {
+export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
   private fskCore: FSKCore;
   private inputBuffer: RingBuffer<Float32Array>;
   private outputBuffer: RingBuffer<Float32Array>;
@@ -39,10 +40,57 @@ export class FSKProcessor extends AudioWorkletProcessor {
     
     this.port.onmessage = this.handleMessage.bind(this);
   }
+
+  async modulate(data: Uint8Array): Promise<void> {
+    /**
+     * 変調リクエスト: バイト列を受けとり、変調キューに入れる
+     * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
+     */
+    if (this.pendingModulation) {
+      throw new Error('Modulation already in progress');
+    }
+    this.pendingModulation = new ChunkedModulator(this.fskCore);
+    this.pendingModulation.startModulation(data);
+  }
+
+  async demodulate(): Promise<Uint8Array> {
+      /**
+       * 復調リクエスト: 復調済みのデータを返す
+       * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
+       */
+
+      // Process any pending input data
+      await this.processDemodulation();
+      
+      // Return currently buffered demodulated data
+      const availableBytes = this.demodulatedBuffer.length;
+      const demodulatedBytes = new Uint8Array(availableBytes);
+      for (let i = 0; i < availableBytes; i++) {
+        demodulatedBytes[i] = this.demodulatedBuffer.remove();
+      }
+      return demodulatedBytes
+  }
   
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const input = inputs[0];
+    const output = outputs[0];
+    
+    // Handle input for demodulation
+    if (input && input[0]) {
+      this.demodulateFrom(input[0]);
+    }
+    
+    // Handle output for modulation
+    if (output && output[0]) {
+      this.modulateTo(output[0]);
+    }
+    
+    return true;
+  }
+
   private async handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
-    
+
     try {
       switch (type) {
         case 'configure':
@@ -51,34 +99,13 @@ export class FSKProcessor extends AudioWorkletProcessor {
           break;
           
         case 'modulate': {
-          /**
-           * 変調リクエスト: バイト列を受けとり、変調キューに入れる
-           * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
-           */
-          console.log(`[FSKProcessor] Modulation started for ${data.bytes.length} bytes`);
-          if (this.pendingModulation) {
-            throw new Error('Modulation already in progress');
-          }
-          this.pendingModulation = new ChunkedModulator(this.fskCore, data.bytes);
+          await this.modulate(new Uint8Array(data.bytes));
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
           
         case 'demodulate': {
-          /**
-           * 復調リクエスト: 復調済みのデータを返す
-           * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
-           */
-
-          // Process any pending input data
-          await this.processDemodulation();
-          
-          // Return currently buffered demodulated data
-          const availableBytes = this.demodulatedBuffer.length;
-          const demodulatedBytes = new Uint8Array(availableBytes);
-          for (let i = 0; i < availableBytes; i++) {
-            demodulatedBytes[i] = this.demodulatedBuffer.remove();
-          }
+          const demodulatedBytes = await this.demodulate();
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
           break;
         }
@@ -111,22 +138,6 @@ export class FSKProcessor extends AudioWorkletProcessor {
     }
   }
   
-  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    const input = inputs[0];
-    const output = outputs[0];
-    
-    // Handle input for demodulation
-    if (input && input[0]) {
-      this.demodulateFrom(input[0]);
-    }
-    
-    // Handle output for modulation
-    if (output && output[0]) {
-      this.modulateTo(output[0]);
-    }
-    
-    return true;
-  }
 
   /**
    * Process incoming audio samples for demodulation
