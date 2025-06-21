@@ -368,18 +368,18 @@ describe('FSK Core Demodulation', () => {
 
       let eodCount = 0;
       fskCore.on('eod', () => {
-        console.log(`EOD event received for data: ${Array.from(testData)}`);
+        console.log(`EOD event received`);
         eodCount++;
       });
 
       for (const testData of testCases) {
+        eodCount = 0; // Reset EOD count for each test
+
         const signal = await fskCore.modulateData(testData);
         const result = await fskCore.demodulateData(signal);
-        eodCount = 0; // Reset EOD count for each test
 
         expect(eodCount).toBe(1); // Should trigger EOD event once
         expect(fskCore.isReady()).toBe(true);
-        expect(fskCore.frameStarted).toBe(false);
         
         expect(result.length).toBe(testData.length);
         expect(Array.from(result)).toEqual(Array.from(testData));

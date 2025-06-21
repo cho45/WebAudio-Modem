@@ -143,11 +143,17 @@ describe('FSK SFD (Start Frame Delimiter) Tests', () => {
       
       const signal1 = await fskCore.modulateData(userData1);
       const signal2 = await fskCore.modulateData(userData2);
+
+      let eodCallCount = 0;
+      fskCore.on('eod', () => {
+        console.log('End of data reached');
+        eodCallCount++;
+      });
       
       const result1 = await fskCore.demodulateData(signal1);
-      // fskCore.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
       const result2 = await fskCore.demodulateData(signal2);
       
+      expect(eodCallCount).toBe(2); // Should call endOfData for each frame
       expect([...result1]).toEqual([0x55]);
       expect([...result2]).toEqual([0x48]);
     });

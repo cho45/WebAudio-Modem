@@ -171,7 +171,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.maxSyncBits = this.preambleSfdBits.length + 32; // Allow some extra bits for sync
     
     // Initialize silence detection
-    this.silenceSamplesForEOD = this.bitsPerByte * this.samplesPerBit;
+    this.silenceSamplesForEOD = this.bitsPerByte * this.samplesPerBit * 0.7;
     
     // Reset all state
     this.resetState();
@@ -326,9 +326,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     if (amplitude < this.SILENCE_THRESHOLD) {
       this.silentSampleCount++;
       if (this.silentSampleCount >= this.silenceSamplesForEOD) {
-        // console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
-        this.resetState(); // Reset state on EOD
+        console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
         this.emit('eod');
+        this.resetState(); // Reset state on EOD
         return true;
       }
     } else {
@@ -408,7 +408,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         this.bitBoundaryLearned = true;
         // Set next bit sample to be at the next bit boundary (start of next bit)
         this.nextBitSampleIndex = this.bitSampleCounter + this.samplesPerBit;
-        // console.log(`[FSK] Bit boundary learned: next bit at sample ${this.nextBitSampleIndex}`);
+        console.log(`[FSK] Bit boundary learned: next bit at sample ${this.nextBitSampleIndex}`);
         
         return;
       }
@@ -453,12 +453,11 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private processByte(bit: number): void {
     // Start bit
     if (this.bitPosition === 0) {
-      // console.log(`[FSK] Start bit: ${bit} (expected: 0)`);
+      console.log(`[FSK] Start bit: ${bit} (expected: 0)`);
       if (bit !== 0) {
         // Invalid start bit, reset frame and bit boundary
-        // console.log(`[FSK] Invalid start bit ${bit}, resetting frame`);
-        this.frameStarted = false;
-        this.bitBoundaryLearned = false;
+        console.log(`[FSK] Invalid start bit ${bit}, resetting frame`);
+        this.resetState();
         return;
       }
       this.bitPosition++;
@@ -485,17 +484,17 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Stop bit
     const stopBitPosition = this.config.parity === 'none' ? 9 : 10;
     if (this.bitPosition === stopBitPosition) {
-      // console.log(`[FSK] Stop bit: ${bit} (expected: 1)`);
+      console.log(`[FSK] Stop bit: ${bit} (expected: 1)`);
       if (bit !== 1) {
         // Invalid stop bit, reset frame and bit boundary
-        // console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
+        console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
         this.frameStarted = false;
         this.bitBoundaryLearned = false;
         return;
       }
       
       // Complete byte received
-      // console.log(`[FSK] Complete byte: 0x${this.currentByte.toString(16).padStart(2, '0')} (${this.currentByte}), buffer length: ${this.byteBuffer.length + 1}`);
+      console.log(`[FSK] Complete byte: 0x${this.currentByte.toString(16).padStart(2, '0')} (${this.currentByte}), buffer length: ${this.byteBuffer.length + 1}`);
       this.byteBuffer.push(this.currentByte);
       this.currentByte = 0;
       this.bitPosition = 0;
