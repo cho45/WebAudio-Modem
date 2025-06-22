@@ -1,8 +1,11 @@
 /**
  * WebAudio-Modem Demo Application
+ * 
+ * NOTE: This demo needs to be updated to use WebAudioDataChannel instead of WebAudioModulatorNode
+ * Many method calls and API usage patterns have changed in the refactoring.
  */
 
-import { WebAudioModulatorNode } from '../src/webaudio/webaudio-modulator-node.js';
+import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 
@@ -34,26 +37,20 @@ async function initializeSystem() {
         audioContext = new AudioContext();
         log(`AudioContext created: ${audioContext.sampleRate}Hz`);
         
+        // Add module first
+        await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.ts');
+        
         // Create modulator (for sending)
-        modulator = new WebAudioModulatorNode(audioContext, {
-            processorUrl: '../src/webaudio/processors/fsk-processor.ts',
-            processorName: 'fsk-processor'
-        });
+        modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
         
         // Create demodulator (for receiving)
-        demodulator = new WebAudioModulatorNode(audioContext, {
-            processorUrl: '../src/webaudio/processors/fsk-processor.ts',
-            processorName: 'fsk-processor'
-        });
+        demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
         
-        // Initialize and configure both with AudioContext sampleRate
-        await modulator.initialize();
+        // Configure both with AudioContext sampleRate
         const fskConfig = getCurrentFSKConfig();
         fskConfig.sampleRate = audioContext.sampleRate; // Use actual AudioContext sampleRate
         console.log('[Demo] FSK Config:', fskConfig);
         await modulator.configure(fskConfig);
-        
-        await demodulator.initialize();
         await demodulator.configure(fskConfig);
         
         // Create transport

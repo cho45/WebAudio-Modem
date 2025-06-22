@@ -217,7 +217,7 @@ export class FilterDesign {
    * @returns IIR filter coefficients
    */
   static butterworthBandpass(centerFreq: number, bandwidth: number, sampleRate: number): { b: number[], a: number[] } {
-    const nyquist = sampleRate / 2;
+    const _nyquist = sampleRate / 2;
     const omega = 2 * Math.PI * centerFreq / sampleRate;
     const bw = 2 * Math.PI * bandwidth / sampleRate;
     

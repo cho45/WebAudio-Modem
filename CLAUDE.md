@@ -133,7 +133,7 @@ Browser tests (`npm run test:browser`) are specifically designed to test **WebAu
 **Purpose**: Test WebAudio-specific functionality that cannot be tested in Node.js
 - AudioContext creation and lifecycle management
 - AudioWorklet processor loading and message communication
-- WebAudioModulatorNode integration with browser APIs
+- WebAudioDataChannel integration with browser APIs
 - XModemTransport integration with WebAudio components
 - Graceful error handling in browser environments
 
