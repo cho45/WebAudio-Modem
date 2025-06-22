@@ -105,7 +105,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private lastPhase = 0;
   
   // Bit synchronization state
-  private bitSampleCounter = 0;
+  private globalSampleCounter = 0; // Continuous sample counter across all chunks
+  private bitSampleCounter = 0;     // Samples within current bit period
   private bitAccumulator = 0;
   private bitAccumCount = 0;
   private bitBoundaryLearned = false;
@@ -126,6 +127,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private readonly SILENCE_THRESHOLD = 0.01;
   private silenceSamplesForEOD = 0;
   private silentSampleCount = 0;
+
+  // Simple debug counters
+  private syncDetectionCount = 0;
+  private demodulationCallCount = 0;
+  private totalSamplesProcessed = 0;
+  private lastSyncAttemptGlobalCounter = 0;
 
   configure(config: FSKConfig): void {
     this.config = { ...DEFAULT_FSK_CONFIG, ...config } as FSKConfig;
@@ -221,6 +228,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.postFilter?.reset();
     
     // Reset bit sync state
+    this.globalSampleCounter = 0;
     this.bitSampleCounter = 0;
     this.bitAccumulator = 0;
     this.bitAccumCount = 0;
@@ -240,6 +248,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       throw new Error('FSK demodulator not configured');
     }
     
+    this.demodulationCallCount++;
+    this.totalSamplesProcessed += samples.length;
     
     try {
       // Process samples through AGC and preFilter
@@ -326,7 +336,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     if (amplitude < this.SILENCE_THRESHOLD) {
       this.silentSampleCount++;
       if (this.silentSampleCount >= this.silenceSamplesForEOD) {
-        console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
+        //  console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
         this.emit('eod');
         this.resetState(); // Reset state on EOD
         return true;
@@ -336,6 +346,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     }
     
     // Step 8: Bit synchronization with proper boundary tracking
+    this.globalSampleCounter++;
     this.bitSampleCounter++;
     
     if (!this.bitBoundaryLearned) {
@@ -346,11 +357,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       if (this.bitSampleCounter >= this.samplesPerBit) {
         // Decide bit based on majority vote
         const bit = this.bitAccumulator > (this.bitAccumCount / 2) ? 1 : 0;
-        
-        // Debug: Log bit decisions (disabled)
-        // if (this.receivedBits.length < 20) {
-        //   console.log(`Bit decision: ${bit} (accumulator=${this.bitAccumulator}/${this.bitAccumCount})`);
-        // }
         
         // Reset for next bit
         this.bitSampleCounter = 0;
@@ -386,10 +392,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Add bit to received bits buffer
     this.receivedBits.push(bit);
     
-    // Debug: Log received bits (disabled)
-    // if (this.receivedBits.length <= 50) {
-    //   console.log(`Received bit ${this.receivedBits.length}: ${bit}, buffer: [${this.receivedBits.slice(-10).join(',')}]`);
-    // }
+    // Record bit reception (no console log to avoid spam)
     
     // Keep buffer size manageable
     if (this.receivedBits.length > this.maxSyncBits) {
@@ -420,34 +423,52 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   
   /**
    * Detect frame start pattern in received bits buffer
-   * Separated method for clarity and reusability
+   * Enhanced to search multiple positions for robust chunk boundary handling
    */
   private detectFrameStart(): boolean {
     if (this.receivedBits.length < this.preambleSfdBits.length) {
       return false;
     }
     
-    const startIndex = this.receivedBits.length - this.preambleSfdBits.length;
-    let matches = 0;
+    // Search multiple possible starting positions, not just the end
+    // This helps when pattern spans chunk boundaries
+    const searchWindow = Math.min(4, this.receivedBits.length - this.preambleSfdBits.length + 1);
+    let bestMatchRatio = 0;
+    let bestStartIndex = -1;
     
-    for (let i = 0; i < this.preambleSfdBits.length; i++) {
-      if (this.receivedBits[startIndex + i] === this.preambleSfdBits[i]) {
-        matches++;
+    for (let startOffset = 0; startOffset < searchWindow; startOffset++) {
+      const startIndex = this.receivedBits.length - this.preambleSfdBits.length - startOffset;
+      if (startIndex < 0) break;
+      
+      let matches = 0;
+      for (let i = 0; i < this.preambleSfdBits.length; i++) {
+        if (this.receivedBits[startIndex + i] === this.preambleSfdBits[i]) {
+          matches++;
+        }
+      }
+      
+      const matchRatio = matches / this.preambleSfdBits.length;
+      if (matchRatio > bestMatchRatio) {
+        bestMatchRatio = matchRatio;
+        bestStartIndex = startIndex;
       }
     }
     
-    const matchRatio = matches / this.preambleSfdBits.length;
+    // Record sync detection attempts (for debugging offset issues)
+    this.lastSyncAttemptGlobalCounter = this.globalSampleCounter;
     
-    // Debug: Log pattern matching (disabled)
-    // if (this.receivedBits.length <= 60) {
-    //   console.log(`Pattern match attempt: ${matches}/${this.preambleSfdBits.length} = ${matchRatio.toFixed(3)} (threshold: ${this.config.syncThreshold})`);
-    //   if (this.receivedBits.length === this.preambleSfdBits.length) {
-    //     console.log(`Expected: [${this.preambleSfdBits.join(',')}]`);
-    //     console.log(`Received: [${this.receivedBits.join(',')}]`);
-    //   }
-    // }
+    console.log(`[FSK] Sync detection attempt at global sample ${this.globalSampleCounter}, best match ratio: ${bestMatchRatio.toFixed(3)}, start index: ${bestStartIndex}`);
+    if (bestMatchRatio >= this.config.syncThreshold) {
+      this.syncDetectionCount++;
+      
+      // Log only successful sync detections
+      console.log(`[FSK] SYNC DETECTED! Match: ${bestMatchRatio.toFixed(3)}, Detection #${this.syncDetectionCount} at global sample ${this.globalSampleCounter}`);
+      console.log(`[FSK] Expected: [${this.preambleSfdBits.join(',')}]`);
+      console.log(`[FSK] Received: [${this.receivedBits.slice(bestStartIndex, bestStartIndex + this.preambleSfdBits.length).join(',')}]`);
+      console.log(`[FSK] Match found at offset ${this.receivedBits.length - this.preambleSfdBits.length - bestStartIndex} from end`);
+    }
     
-    return matchRatio >= this.config.syncThreshold;
+    return bestMatchRatio >= this.config.syncThreshold;
   }
 
   private processByte(bit: number): void {
@@ -603,6 +624,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.currentByte = 0;
     this.bitPosition = 0;
     this.byteBuffer = [];
+    
+    // Reset debug counters
+    this.syncDetectionCount = 0;
+    this.demodulationCallCount = 0;
+    this.totalSamplesProcessed = 0;
+    this.lastSyncAttemptGlobalCounter = 0;
   }
 
   getSignalQuality() {
@@ -612,6 +639,21 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       eyeOpening: 0,
       phaseJitter: 0,
       frequencyOffset: 0
+    };
+  }
+
+  getStatus() {
+    return {
+      ready: this.ready,
+      frameStarted: this.frameStarted,
+      bitBoundaryLearned: this.bitBoundaryLearned,
+      globalSampleCounter: this.globalSampleCounter,
+      receivedBitsLength: this.receivedBits.length,
+      byteBufferLength: this.byteBuffer.length,
+      demodulationCalls: this.demodulationCallCount,
+      syncDetections: this.syncDetectionCount,
+      totalSamplesProcessed: this.totalSamplesProcessed,
+      lastSyncAttemptGlobalCounter: this.lastSyncAttemptGlobalCounter
     };
   }
 }

@@ -39,6 +39,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
 
     // 復調されたデータを保持するリングバッファ
     this.demodulatedBuffer = new RingBuffer(Uint8Array, 1024);
+    console.log('[FSKProcessor] Buffers initialized - demodulatedBuffer length:', this.demodulatedBuffer.length);
     
     this.port.onmessage = this.handleMessage.bind(this);
   }
@@ -48,6 +49,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
      * 変調リクエスト: バイト列を受けとり、変調キューに入れる
      * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
      */
+    console.log(`[FSKProcessor] modulate() called with ${data.length} bytes: [${Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+    console.log(`[FSKProcessor] Current demodulatedBuffer length before modulation: ${this.demodulatedBuffer.length}`);
+    
     if (this.pendingModulation) {
       throw new Error('Modulation already in progress');
     }
@@ -62,19 +66,30 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
        * 復調リクエスト: 復調済みのデータを返す
        * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
        */
+      console.log(`[FSKProcessor] demodulate() called, buffer length: ${this.demodulatedBuffer.length}`);
+      
       // Return currently buffered demodulated data
       const availableBytes = this.demodulatedBuffer.length;
       if (availableBytes === 0) {
+        console.log(`[FSKProcessor] No data available, waiting for callback...`);
         await new Promise<void>((resolve) => {
           this.awaitingCallback = resolve;  
         });
+        console.log(`[FSKProcessor] Callback triggered, buffer length now: ${this.demodulatedBuffer.length}`);
       }
 
-      const demodulatedBytes = new Uint8Array(availableBytes);
-      for (let i = 0; i < availableBytes; i++) {
-        demodulatedBytes[i] = this.demodulatedBuffer.remove();
+      const finalAvailableBytes = this.demodulatedBuffer.length;
+      const demodulatedBytes = new Uint8Array(finalAvailableBytes);
+      
+      console.log(`[FSKProcessor] Removing ${finalAvailableBytes} bytes from buffer:`);
+      for (let i = 0; i < finalAvailableBytes; i++) {
+        const byte = this.demodulatedBuffer.remove();
+        demodulatedBytes[i] = byte;
+        console.log(`[FSKProcessor] Removed byte ${i}: 0x${byte.toString(16).padStart(2, '0')}`);
       }
-      return demodulatedBytes
+      
+      console.log(`[FSKProcessor] demodulate() returning: [${Array.from(demodulatedBytes).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      return demodulatedBytes;
   }
   
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
@@ -101,8 +116,15 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     try {
       switch (type) {
         case 'configure':
-          this.fskCore.configure(data.config);
-          this.port.postMessage({ id, type: 'result', data: { success: true } });
+          try {
+            console.log('[FSKProcessor] Configuring FSKCore with:', data.config);
+            this.fskCore.configure(data.config);
+            console.log('[FSKProcessor] FSKCore configured successfully, ready:', this.fskCore.isReady());
+            this.port.postMessage({ id, type: 'result', data: { success: true } });
+          } catch (configError) {
+            console.error('[FSKProcessor] Configuration error:', configError);
+            throw configError;
+          }
           break;
           
         case 'modulate': {
@@ -118,7 +140,8 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
         }
 
         case 'status': {
-          // Send current status of buffers
+          // Send detailed status including debug info
+          const fskStatus = this.fskCore.getStatus();
           this.port.postMessage({
             id,
             type: 'result',
@@ -126,7 +149,10 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
               inputBufferLength: this.inputBuffer.length,
               outputBufferLength: this.outputBuffer.length,
               demodulatedBufferLength: this.demodulatedBuffer.length,
-              pendingModulation: !!this.pendingModulation
+              pendingModulation: !!this.pendingModulation,
+              fskCoreReady: this.fskCore.isReady(),
+              processDemodulationCallCount: this.processDemodulationCallCount,
+              ...fskStatus
             }
           });
           break;
@@ -144,33 +170,45 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     }
   }
   
+  private chunksProcessed = 0;
+  
   private async processChunk(): Promise<void> {
     if (!this.pendingModulation) return;
     
     const result = await this.pendingModulation.processNextChunk();
     
     if (result) {
+      this.chunksProcessed++;
+      
       // Add modulated signal to output buffer
-      console.log(`[FSKProcessor] Processing chunk: ${result.signal.length} samples, progress: ${result.position}/${result.totalLength}`);
       this.outputBuffer.writeArray(result.signal);
+      
+      // Log first chunk and completion
+      if (this.chunksProcessed === 1) {
+        console.log(`[FSKProcessor] *** MODULATION CHUNKS STARTED *** First chunk: ${result.signal.length} samples`);
+      }
       
       // Check if modulation is complete
       if (result.isComplete) {
-        console.log(`[FSKProcessor] Modulation complete!`);
+        console.log(`[FSKProcessor] *** MODULATION COMPLETE *** Processed ${this.chunksProcessed} chunks total`);
         this.pendingModulation = null;
+        this.chunksProcessed = 0; // Reset for next modulation
       }
     }
   }
   
 
+  private hasLoggedAudioInput = false;
+  
   /**
    * Process incoming audio samples for demodulation
    */
   private demodulateFrom(inputSamples: Float32Array): void {
-    // Check if we're receiving audio data
+    // Check if we're receiving audio data (log only once)
     const hasNonZero = inputSamples.some(sample => Math.abs(sample) > 0.001);
-    if (hasNonZero) {
-      console.log(`[FSKProcessor] Received ${inputSamples.length} audio samples for demodulation`);
+    if (hasNonZero && !this.hasLoggedAudioInput) {
+      console.log(`[FSKProcessor] *** AUDIO INPUT DETECTED *** First non-zero samples received`);
+      this.hasLoggedAudioInput = true;
     }
     
     // Simply buffer incoming samples - FSKCore handles the complex processing
@@ -178,6 +216,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     this.processDemodulation();
   }
 
+  private hasLoggedAudioOutput = false;
+  private totalAudioSamplesGenerated = 0;
+  
   /**
    * Generate outgoing audio samples for modulation
    */
@@ -196,37 +237,72 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     const availableSamples = this.outputBuffer.length;
     this.outputBuffer.readArray(outputSamples);
     
-    // Debug: Log when we're generating audio
+    // Log when we're generating audio (first time and periodically)
     if (availableSamples > 0) {
-      console.log(`[FSKProcessor] Generated ${Math.min(availableSamples, outputSamples.length)} audio samples to output`);
+      this.totalAudioSamplesGenerated += Math.min(availableSamples, outputSamples.length);
+      
+      if (!this.hasLoggedAudioOutput) {
+        console.log(`[FSKProcessor] *** AUDIO OUTPUT STARTED *** First audio samples generated`);
+        this.hasLoggedAudioOutput = true;
+      } else if (this.totalAudioSamplesGenerated % 4800 === 0) { // Every ~0.1 seconds at 48kHz
+        console.log(`[FSKProcessor] Audio generation progress: ${this.totalAudioSamplesGenerated} samples total`);
+      }
     }
   }
   
+  private processDemodulationCallCount = 0;
+  
   private async processDemodulation(): Promise<void> {
+    // Check if FSKCore is ready before processing
+    if (!this.fskCore.isReady()) {
+      return; // Skip processing if not configured yet
+    }
+    
     // Simple demodulation: delegate to FSKCore when enough samples are available
     const minSamples = 4000;
     
     if (this.inputBuffer.length >= minSamples) {
+      this.processDemodulationCallCount++;
+      
+      // Only log significant calls (first few, or when we actually get results)
+      const shouldLog = this.processDemodulationCallCount <= 3;
+      
+      if (shouldLog) {
+        console.log(`[FSKProcessor] processDemodulation call #${this.processDemodulationCallCount}, inputBuffer: ${this.inputBuffer.length} samples`);
+      }
+      
       try {
         const samples = this.inputBuffer.toArray();
         const demodulated = await this.fskCore.demodulateData(samples);
         
+        // Always log when we get actual demodulation results
         if (demodulated && demodulated.length > 0) {
+          console.log(`[FSKProcessor] *** DEMODULATION RESULT *** Call #${this.processDemodulationCallCount}`);
+          console.log(`[FSKProcessor] Input samples processed: ${samples.length}`);
+          console.log(`[FSKProcessor] FSKCore returned ${demodulated.length} bytes: [${Array.from(demodulated).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          console.log(`[FSKProcessor] Current demodulatedBuffer length: ${this.demodulatedBuffer.length}`);
+          
           // Store demodulated data
           for (const byte of demodulated) {
             this.demodulatedBuffer.put(byte);
+            console.log(`[FSKProcessor] Added byte 0x${byte.toString(16).padStart(2, '0')} to buffer, new length: ${this.demodulatedBuffer.length}`);
+            
             if (this.awaitingCallback) {
+              console.log(`[FSKProcessor] Triggering awaiting callback`);
               this.awaitingCallback();
               this.awaitingCallback = null;
             }
           }
           
-          // Keep overlap for continuity
-          const overlapSamples = 2048;
-          const keepSamples = samples.slice(-overlapSamples);
+          // Clear processed samples completely - FSKCore maintains its own internal state
+          // No overlap needed as FSKCore handles continuity internally
           this.inputBuffer.clear();
-          this.inputBuffer.writeArray(keepSamples);
+          console.log(`[FSKProcessor] Cleared input buffer after successful demodulation`);
         } else if (this.inputBuffer.length > 12000) {
+          if (shouldLog) {
+            console.log(`[FSKProcessor] No demodulation result, managing buffer size (${this.inputBuffer.length} -> 8000)`);
+          }
+          
           // Manage buffer size
           const keepSamples = samples.slice(-8000);
           this.inputBuffer.clear();
