@@ -101,6 +101,7 @@ describe('FSKProcessor', () => {
       data: {}
     };
 
+    processor.demodulatedBuffer.put(0xff);
     await sendMessage(demodulateMessage);
 
     expect(mockPort.postMessage).toHaveBeenCalledWith({
@@ -269,6 +270,8 @@ describe('FSKProcessor', () => {
 
     // Demodulate
     mockPort.postMessage.mockClear();
+
+    processor.demodulatedBuffer.put(0x41, 0x42); // Simulate demodulated data
     await sendMessage({
       id: 'msg-3',
       type: 'demodulate',

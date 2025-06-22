@@ -137,14 +137,11 @@ describe('FSK Processor Integration', () => {
 
     // Configure with test-friendly settings for reliable transmission
     const testConfig = {
+      ...DEFAULT_FSK_CONFIG,
       sampleRate: audioContext.sampleRate,
-      baudRate: 300,  // Lower baud rate for more reliable detection
-      markFrequency: 1650,
-      spaceFrequency: 1850,
-      syncThreshold: 0.6,  // Lower threshold for easier detection
-      preamblePattern: [0xAA, 0xAA],  // Shorter preamble for faster test
-      sfdPattern: [0x55]  // Shorter SFD
     };
+
+    console.log('🔧 Configuring FSK processors with test settings:', testConfig);
 
     await modulator.configure(testConfig);
     await demodulator.configure(testConfig);
@@ -164,16 +161,20 @@ describe('FSK Processor Integration', () => {
     const testData = new TextEncoder().encode(testText);
     console.log(`🔊 Testing with: "${testText}" (${testData.length} bytes)`);
 
+//     console.log('⏳ Waiting for audio signal processing...');
+//     await new Promise(resolve => setTimeout(resolve, 1000));  // 1 second for audio processing
+
+    // console.log('📊 Demodulator status:', await demodulator.getStatus());
+
     // Start modulation - this will generate audio signal
     await modulator.modulate(testData);
     console.log('🎵 Modulation started - audio signal generating');
 
     // Allow time for audio processing through the connection
     console.log('⏳ Waiting for audio signal processing...');
-    await new Promise(resolve => setTimeout(resolve, 2000));  // 2 seconds for audio processing
+    await new Promise(resolve => setTimeout(resolve, 1000));  // 1 second for audio processing
 
-    const status = await demodulator.getStatus();
-    console.log('📊 Demodulator status:', status);
+    console.log('📊 Demodulator status:', await demodulator.getStatus());
 
     // Check demodulated buffer
     const demodulated = await demodulator.demodulate();
