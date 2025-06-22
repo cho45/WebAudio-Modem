@@ -26,7 +26,7 @@ export const DEFAULT_FSK_CONFIG: FSKConfig = {
   startBits: 1,
   stopBits: 1,
   parity: 'none',
-  syncThreshold: 0.75,
+  syncThreshold: 0.85,
   agcEnabled: true,
   preFilterBandwidth: 800,
   adaptiveThreshold: true
