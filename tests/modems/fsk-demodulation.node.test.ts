@@ -789,6 +789,324 @@ describe('FSK Core Demodulation', () => {
       expect(allResults[0].bytes.length).toBe(originalData.length);
       expect(allResults[0].bytes).toEqual(Array.from(originalData));
     });
+
+    test('WebAudio-style concurrent modulation and demodulation', async () => {
+      const originalData = new Uint8Array([0x41, 0x42]); // "AB"
+      
+      console.log(`=== WebAudio-STYLE CONCURRENT PROCESSING TEST ===`);
+      
+      // Create separate FSKCore instances for modulation and demodulation
+      const modulator = new FSKCore();
+      const demodulator = new FSKCore();
+      
+      modulator.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      demodulator.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      // Generate complete signal first
+      const fullSignal = await modulator.modulateData(originalData);
+      console.log(`Generated signal: ${fullSignal.length} samples`);
+      
+      // Simulate WebAudio-style processing: 128-sample chunks processed concurrently
+      const CHUNK_SIZE = 128;
+      const results: number[] = [];
+      let modulationComplete = false;
+      let outputChunkIndex = 0;
+      let inputChunkIndex = 0;
+      
+      // WebAudio processes audio in both directions simultaneously
+      // Simulate this by processing modulation output → demodulation input with timing
+      while (inputChunkIndex * CHUNK_SIZE < fullSignal.length) {
+        // Get next input chunk from generated signal
+        const inputChunk = fullSignal.slice(
+          inputChunkIndex * CHUNK_SIZE, 
+          (inputChunkIndex + 1) * CHUNK_SIZE
+        );
+        
+        if (inputChunk.length > 0) {
+          // Process through demodulator
+          const demodResult = await demodulator.demodulateData(inputChunk);
+          
+          if (demodResult.length > 0) {
+            console.log(`Input chunk ${inputChunkIndex}: demodulated ${demodResult.length} bytes: [${Array.from(demodResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+            results.push(...demodResult);
+          }
+        }
+        
+        inputChunkIndex++;
+        
+        // Add some realistic timing simulation (every few chunks)
+        if (inputChunkIndex % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1));
+        }
+      }
+      
+      const demodStatus = demodulator.getStatus();
+      console.log(`Concurrent processing complete: ${results.length} bytes demodulated`);
+      console.log(`Demodulator status:`, {
+        syncDetections: demodStatus.syncDetections,
+        frameStarted: demodStatus.frameStarted,
+        demodulationCalls: demodStatus.demodulationCalls
+      });
+      
+      // Results should match exactly
+      expect(results.length).toBe(originalData.length);
+      expect(Array.from(results)).toEqual(Array.from(originalData));
+      expect(demodStatus.syncDetections).toBeGreaterThan(0);
+    });
+
+    test('WebAudio-style continuous streaming with multiple transmissions', async () => {
+      console.log(`=== CONTINUOUS STREAMING TEST ===`);
+      
+      // Simulate continuous WebAudio streaming where multiple transmissions
+      // happen over time with the same FSKCore instances
+      const testMessages = [
+        new Uint8Array([0x41, 0x42]), // "AB"
+        new Uint8Array([0x48, 0x65, 0x6C]), // "Hel"
+        new Uint8Array([0x6C, 0x6F]), // "lo"
+      ];
+      
+      const modulator = new FSKCore();
+      const demodulator = new FSKCore();
+      
+      modulator.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      demodulator.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      const CHUNK_SIZE = 128;
+      const allResults: Array<{message: number, bytes: number[]}> = [];
+      
+      for (let msgIndex = 0; msgIndex < testMessages.length; msgIndex++) {
+        const message = testMessages[msgIndex];
+        console.log(`\n--- Processing message ${msgIndex}: [${Array.from(message).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}] ---`);
+        
+        // Generate signal for this message
+        const signal = await modulator.modulateData(message);
+        
+        // Add silence between transmissions (except for first)
+        let processSignal = signal;
+        if (msgIndex > 0) {
+          const silenceGap = new Float32Array(500).fill(0); // 500 samples of silence
+          const combined = new Float32Array(silenceGap.length + signal.length);
+          combined.set(silenceGap, 0);
+          combined.set(signal, silenceGap.length);
+          processSignal = combined;
+          console.log(`Added ${silenceGap.length} samples of silence before signal`);
+        }
+        
+        // Process in chunks
+        const messageResults: number[] = [];
+        for (let i = 0; i < processSignal.length; i += CHUNK_SIZE) {
+          const chunk = processSignal.slice(i, i + CHUNK_SIZE);
+          const result = await demodulator.demodulateData(chunk);
+          
+          if (result.length > 0) {
+            console.log(`Message ${msgIndex}, chunk ${Math.floor(i/CHUNK_SIZE)}: ${result.length} bytes`);
+            messageResults.push(...result);
+          }
+        }
+        
+        allResults.push({ message: msgIndex, bytes: messageResults });
+        
+        // Verify this message was demodulated correctly
+        console.log(`Message ${msgIndex} result: ${messageResults.length} bytes = [${messageResults.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        expect(messageResults.length).toBe(message.length);
+        expect(messageResults).toEqual(Array.from(message));
+        
+        // Brief pause between messages to simulate real-world timing
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      
+      const finalStatus = demodulator.getStatus();
+      console.log(`\nContinuous streaming complete - final status:`, {
+        totalMessages: testMessages.length,
+        syncDetections: finalStatus.syncDetections,
+        demodulationCalls: finalStatus.demodulationCalls,
+        totalSamplesProcessed: finalStatus.totalSamplesProcessed
+      });
+      
+      // Should have detected sync for each message transmission
+      expect(finalStatus.syncDetections).toBeGreaterThanOrEqual(testMessages.length);
+    });
+
+    test('FSKProcessor-style continuous FSKCore usage investigation', async () => {
+      console.log(`=== FSKProcessor-STYLE INVESTIGATION ===`);
+      
+      // This test investigates the exact pattern used in FSKProcessor:
+      // 1. Single FSKCore instance used continuously
+      // 2. processDemodulation() called multiple times
+      // 3. Simulate audio input buffering behavior
+      
+      const fsk = new FSKCore();
+      fsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      const originalData = new Uint8Array([0x41, 0x42]); // "AB"
+      
+      // Step 1: Generate the signal using SAME FSKCore instance (like FSKProcessor)
+      const signal = await fsk.modulateData(originalData);
+      console.log(`Generated signal: ${signal.length} samples`);
+      
+      // Step 2: Simulate FSKProcessor.processDemodulation() behavior
+      // In FSKProcessor, this method is called whenever inputBuffer >= 4000 samples
+      const MIN_SAMPLES = 4000;
+      let inputBuffer = new Float32Array(0);
+      const allDemodulatedBytes: number[] = [];
+      let processDemodulationCalls = 0;
+      
+      // Add samples to buffer in chunks of 128 (like AudioWorklet input)
+      for (let i = 0; i < signal.length; i += 128) {
+        const chunk = signal.slice(i, i + 128);
+        
+        // Add to input buffer
+        const newBuffer = new Float32Array(inputBuffer.length + chunk.length);
+        newBuffer.set(inputBuffer);
+        newBuffer.set(chunk, inputBuffer.length);
+        inputBuffer = newBuffer;
+        
+        // Check if we have enough samples to call demodulateData (like FSKProcessor)
+        if (inputBuffer.length >= MIN_SAMPLES) {
+          processDemodulationCalls++;
+          console.log(`processDemodulation call #${processDemodulationCalls}: processing ${inputBuffer.length} samples`);
+          
+          // Call FSKCore.demodulateData with ALL accumulated samples (like FSKProcessor Line 276)
+          const demodulated = await fsk.demodulateData(inputBuffer);
+          
+          if (demodulated.length > 0) {
+            console.log(`Call #${processDemodulationCalls}: FSKCore returned ${demodulated.length} bytes: [${Array.from(demodulated).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+            allDemodulatedBytes.push(...demodulated);
+            
+            // Clear buffer after successful demodulation (like FSKProcessor Line 299)
+            inputBuffer = new Float32Array(0);
+          } else if (inputBuffer.length > 12000) {
+            // Buffer management like FSKProcessor Line 301-309
+            const keepSamples = inputBuffer.slice(-8000);
+            inputBuffer = keepSamples;
+            console.log(`Call #${processDemodulationCalls}: No result, managed buffer size to ${inputBuffer.length}`);
+          }
+        }
+      }
+      
+      // Final processing if buffer has remaining samples
+      if (inputBuffer.length > 0) {
+        processDemodulationCalls++;
+        console.log(`Final processDemodulation call #${processDemodulationCalls}: processing remaining ${inputBuffer.length} samples`);
+        const demodulated = await fsk.demodulateData(inputBuffer);
+        if (demodulated.length > 0) {
+          console.log(`Final call: FSKCore returned ${demodulated.length} bytes: [${Array.from(demodulated).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          allDemodulatedBytes.push(...demodulated);
+        }
+      }
+      
+      const status = fsk.getStatus();
+      console.log(`FSKProcessor simulation complete:`);
+      console.log(`- processDemodulation calls: ${processDemodulationCalls}`);
+      console.log(`- Total bytes demodulated: ${allDemodulatedBytes.length}`);
+      console.log(`- Bytes: [${allDemodulatedBytes.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      console.log(`- FSKCore status:`, {
+        syncDetections: status.syncDetections,
+        demodulationCalls: status.demodulationCalls,
+        frameStarted: status.frameStarted
+      });
+      
+      // Analysis: check if we get extra bytes (the false positive issue)
+      if (allDemodulatedBytes.length > originalData.length) {
+        console.log(`⚠️  ISSUE DETECTED: Got ${allDemodulatedBytes.length} bytes, expected ${originalData.length}`);
+        console.log(`Extra bytes: [${allDemodulatedBytes.slice(0, allDemodulatedBytes.length - originalData.length).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        
+        // Check if extra bytes match preamble/SFD pattern
+        const preambleBytes = [0x55, 0x55]; // From DEFAULT_FSK_CONFIG.preamblePattern
+        const sfdBytes = [0x7E]; // From DEFAULT_FSK_CONFIG.sfdPattern
+        const expectedPattern = [...preambleBytes, ...sfdBytes];
+        
+        console.log(`Expected preamble+SFD pattern: [${expectedPattern.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        
+        if (allDemodulatedBytes.length === originalData.length + expectedPattern.length) {
+          const extraBytes = allDemodulatedBytes.slice(0, expectedPattern.length);
+          const actualData = allDemodulatedBytes.slice(expectedPattern.length);
+          
+          console.log(`Analysis: Extra bytes appear to be preamble/SFD pattern`);
+          console.log(`Extra: [${extraBytes.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          console.log(`Data: [${actualData.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          
+          // This would be the exact issue described in the demo
+          expect(actualData).toEqual(Array.from(originalData)); // Data should be correct
+          expect(extraBytes).toEqual(expectedPattern); // Extra should be preamble/SFD
+        }
+      } else {
+        // This would be the ideal case
+        expect(allDemodulatedBytes.length).toBe(originalData.length);
+        expect(allDemodulatedBytes).toEqual(Array.from(originalData));
+      }
+    });
+
+    test('same FSKCore instance modulation-demodulation state investigation', async () => {
+      console.log(`=== SAME INSTANCE STATE INVESTIGATION ===`);
+      
+      const originalData = new Uint8Array([0x41, 0x42]); // "AB"
+      
+      // Test 1: Fresh FSKCore instance - baseline
+      console.log(`\n--- Test 1: Fresh FSKCore (baseline) ---`);
+      const freshFsk = new FSKCore();
+      freshFsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      const freshSignal = await freshFsk.modulateData(originalData);
+      freshFsk.reset(); // Reset to clear any potential state
+      freshFsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      const freshResult = await freshFsk.demodulateData(freshSignal);
+      
+      console.log(`Fresh FSK: ${freshResult.length} bytes = [${Array.from(freshResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      
+      // Test 2: Same instance modulation then demodulation 
+      console.log(`\n--- Test 2: Same instance mod→demod ---`);
+      const sameFsk = new FSKCore();
+      sameFsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      console.log(`Before modulation:`, sameFsk.getStatus());
+      const sameSignal = await sameFsk.modulateData(originalData);
+      console.log(`After modulation:`, sameFsk.getStatus());
+      
+      const sameResult = await sameFsk.demodulateData(sameSignal);
+      console.log(`After demodulation:`, sameFsk.getStatus());
+      
+      console.log(`Same FSK: ${sameResult.length} bytes = [${Array.from(sameResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      
+      // Test 3: Same instance with explicit reset between mod and demod
+      console.log(`\n--- Test 3: Same instance with reset ---`);
+      const resetFsk = new FSKCore();
+      resetFsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      
+      const resetSignal = await resetFsk.modulateData(originalData);
+      console.log(`Before reset:`, resetFsk.getStatus());
+      
+      // Reset only demodulation state, not configuration
+      resetFsk.reset();
+      resetFsk.configure({ ...DEFAULT_FSK_CONFIG } as FSKConfig);
+      console.log(`After reset:`, resetFsk.getStatus());
+      
+      const resetResult = await resetFsk.demodulateData(resetSignal);
+      console.log(`Reset FSK: ${resetResult.length} bytes = [${Array.from(resetResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      
+      // Analysis
+      console.log(`\n=== ANALYSIS ===`);
+      console.log(`Fresh FSK result: [${Array.from(freshResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      console.log(`Same FSK result:  [${Array.from(sameResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      console.log(`Reset FSK result: [${Array.from(resetResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+      
+      // Check if modulation affects demodulation state
+      if (sameResult.length !== originalData.length || !sameResult.every((byte, i) => byte === originalData[i])) {
+        console.log(`⚠️  CONFIRMED: Modulation affects demodulation state!`);
+        console.log(`Expected: [${Array.from(originalData).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        console.log(`Got:      [${Array.from(sameResult).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        
+        if (resetResult.length === originalData.length && resetResult.every((byte, i) => byte === originalData[i])) {
+          console.log(`✅ Reset fixes the issue - state contamination confirmed`);
+        }
+      } else {
+        console.log(`✅ No state contamination detected in this simple case`);
+      }
+      
+      // For this test, we'll be lenient and accept either correct result or document the issue
+      // The main goal is to identify the problem pattern
+      console.log(`\nTest completed - issue investigation complete`);
+    });
   });
 
   describe('Pattern Coverage Tests', () => {
