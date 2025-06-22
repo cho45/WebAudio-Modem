@@ -119,8 +119,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private frameStarted = false;
 
   // Frame detection state2
-  private syncSamplesBuffer?: RingBuffer<Float32Array>;
-  
+  private syncSamplesBuffer?: RingBuffer<Uint8Array>;
+
   // Byte assembly state
   private currentByte = 0;
   private bitPosition = 0;
@@ -183,7 +183,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Initialize silence detection
     this.silenceSamplesForEOD = this.bitsPerByte * this.samplesPerBit * 0.7;
 
-    this.syncSamplesBuffer = new RingBuffer(Float32Array, this.maxSyncBits * this.samplesPerBit * 1.1);
+    this.syncSamplesBuffer = new RingBuffer(Uint8Array, this.maxSyncBits * this.samplesPerBit * 1.1);
     
     // Reset all state
     this.resetState();
@@ -355,8 +355,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
 
     if (!this.frameStarted) {
       const sampleCount = this.preambleSfdBits.length * this.samplesPerBit;
+      const sampleCountForBitDecision = Math.round(this.samplesPerBit / 4); // 4x oversampling for bit decision
       let matched = 0, total = 0;
-      if (this.syncSamplesBuffer && (this.syncSamplesBuffer.length >= sampleCount) ) {
+      if (this.syncSamplesBuffer && (this.syncSamplesBuffer.length >= sampleCount) && this.globalSampleCounter % sampleCountForBitDecision === 0) {
         // フレーム同期開始、サンプル単位でのパターン比較を行い一致率とビット同期位置を決定する
         for (let j = 0; j < this.preambleSfdBits.length; j++) {
           for (let k = 0; k < this.samplesPerBit; k++) {
