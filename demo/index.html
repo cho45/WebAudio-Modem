@@ -1,470 +1,202 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebAudio-Modem Demo</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
             background-color: #f5f5f5;
         }
         
-        .container {
+        .section { 
+            margin: 20px 0; 
+            padding: 15px; 
             background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         h1 {
-            color: #333;
             text-align: center;
+            color: #333;
             margin-bottom: 30px;
         }
         
         h2 {
             color: #555;
+            margin-top: 0;
             border-bottom: 2px solid #e0e0e0;
             padding-bottom: 10px;
         }
         
-        .section {
-            margin-bottom: 30px;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-        
-        button {
-            padding: 10px 20px;
-            font-size: 14px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        
-        button.primary {
-            background-color: #007cba;
-            color: white;
-        }
-        
-        button.primary:hover {
-            background-color: #005a8b;
-        }
-        
-        button.secondary {
-            background-color: #6c757d;
-            color: white;
-        }
-        
-        button.secondary:hover {
-            background-color: #545b62;
-        }
-        
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        
-        input, textarea, select {
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+        button { 
+            padding: 10px 15px; 
+            margin: 5px; 
+            background: #007cba; 
+            color: white; 
+            border: none; 
+            border-radius: 3px; 
+            cursor: pointer; 
             font-size: 14px;
         }
         
-        textarea {
-            width: 100%;
-            height: 100px;
-            resize: vertical;
-            font-family: monospace;
+        button:disabled { 
+            background: #ccc; 
+            cursor: not-allowed; 
         }
         
-        .status {
+        button:hover:not(:disabled) { 
+            background: #005a8b; 
+        }
+        
+        button.danger {
+            background: #dc3545;
+        }
+        
+        button.danger:hover:not(:disabled) {
+            background: #c82333;
+        }
+        
+        input { 
+            padding: 8px; 
+            margin: 5px; 
+            border: 1px solid #ddd; 
+            border-radius: 3px; 
+            font-size: 14px;
+        }
+        
+        #input-text { 
+            width: 200px; 
+        }
+        
+        #output-text { 
+            font-weight: bold; 
+            color: #007cba; 
+            margin: 10px 0; 
             padding: 10px;
-            border-radius: 4px;
-            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 3px;
+            min-height: 20px;
+        }
+        
+        #log { 
+            width: 100%; 
+            height: 200px; 
+            font-family: monospace; 
+            font-size: 12px; 
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            resize: vertical;
+        }
+        
+        .status { 
+            padding: 10px; 
+            margin: 10px 0; 
+            border-radius: 3px; 
             font-weight: bold;
         }
         
-        .status.success {
-            background-color: #d4edda;
-            color: #155724;
+        .status.success { 
+            background: #d4edda; 
+            color: #155724; 
             border: 1px solid #c3e6cb;
         }
         
-        .status.error {
-            background-color: #f8d7da;
-            color: #721c24;
+        .status.error { 
+            background: #f8d7da; 
+            color: #721c24; 
             border: 1px solid #f5c6cb;
         }
         
-        .status.info {
-            background-color: #d1ecf1;
-            color: #0c5460;
+        .status.info { 
+            background: #d1ecf1; 
+            color: #0c5460; 
             border: 1px solid #bee5eb;
         }
-        
-        .progress {
-            width: 100%;
-            height: 20px;
-            background-color: #e9ecef;
-            border-radius: 4px;
-            overflow: hidden;
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
             margin: 10px 0;
         }
-        
-        .progress-bar {
-            height: 100%;
-            background-color: #28a745;
-            transition: width 0.3s;
-            text-align: center;
-            line-height: 20px;
-            color: white;
-            font-size: 12px;
+
+        .controls button {
+            margin: 0;
         }
-        
-        .signal-display {
-            width: 100%;
-            height: 150px;
-            border: 1px solid #ddd;
-            background-color: #f8f9fa;
+
+        .instructions {
+            background: #e8f4f8;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+
+        .instructions h3 {
+            margin-top: 0;
+            color: #007cba;
+        }
+
+        .instructions ol {
             margin: 10px 0;
-        }
-        
-        .config-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .config-item {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .config-item label {
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #555;
-        }
-        
-        .log {
-            background-color: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 4px;
-            padding: 10px;
-            height: 200px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 12px;
-            white-space: pre-wrap;
-        }
-        
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid #ddd;
-            margin-bottom: 20px;
-        }
-        
-        .tab {
-            padding: 10px 20px;
-            cursor: pointer;
-            border: none;
-            background: none;
-            border-bottom: 2px solid transparent;
-        }
-        
-        .tab.active {
-            border-bottom-color: #007cba;
-            color: #007cba;
-            font-weight: bold;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
-        
-        .file-drop {
-            border: 2px dashed #ddd;
-            border-radius: 4px;
-            padding: 40px;
-            text-align: center;
-            color: #666;
-            transition: border-color 0.3s;
-        }
-        
-        .file-drop.dragover {
-            border-color: #007cba;
-            color: #007cba;
-        }
-        
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin: 15px 0;
-        }
-        
-        .stat-item {
-            text-align: center;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 4px;
-        }
-        
-        .stat-value {
-            font-size: 18px;
-            font-weight: bold;
-            color: #007cba;
-        }
-        
-        .stat-label {
-            font-size: 12px;
-            color: #666;
+            padding-left: 20px;
         }
     </style>
 </head>
 <body>
-    <h1>🎵 WebAudio-Modem Demo</h1>
-    <p style="text-align: center; color: #666; margin-bottom: 30px;">
-        Real-time FSK modulation and XModem file transfer over audio
-    </p>
-
-    <div class="container">
-        <div class="tabs">
-            <button class="tab active" onclick="showTab('basic')">Basic Modem</button>
-            <button class="tab" onclick="showTab('file-transfer')">File Transfer</button>
-            <button class="tab" onclick="showTab('signal-analysis')">Signal Analysis</button>
-            <button class="tab" onclick="showTab('settings')">Settings</button>
-        </div>
-
-        <!-- Basic Modem Tab -->
-        <div id="basic" class="tab-content active">
-            <div class="section">
-                <h2>🔧 System Status</h2>
-                <div class="controls">
-                    <button id="init-button" class="primary" onclick="initializeSystem()">Initialize System</button>
-                    <button id="test-button" class="secondary" onclick="runSystemTest()" disabled>Run Self Test</button>
-                </div>
-                <div id="system-status" class="status info">System not initialized</div>
-                
-                <div class="stats">
-                    <div class="stat-item">
-                        <div class="stat-value" id="sample-rate">--</div>
-                        <div class="stat-label">Sample Rate (Hz)</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="baud-rate">--</div>
-                        <div class="stat-label">Baud Rate</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="mark-freq">--</div>
-                        <div class="stat-label">Mark Freq (Hz)</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="space-freq">--</div>
-                        <div class="stat-label">Space Freq (Hz)</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2>📤 Send Data</h2>
-                <textarea id="send-text" placeholder="Enter text to send via audio...">Hello, World!</textarea>
-                <div class="controls">
-                    <button id="send-button" class="primary" onclick="sendText()" disabled>Send Text</button>
-                    <button id="play-button" class="secondary" onclick="playLastSignal()" disabled>Play Last Signal</button>
-                    <button id="loopback-button" class="secondary" onclick="testLoopback()" disabled>Test Loopback</button>
-                    <button id="direct-audio-button" class="secondary" onclick="testDirectAudioLoopback()" disabled>Direct Audio Test</button>
-                </div>
-                <div id="send-status"></div>
-                <canvas id="send-signal" class="signal-display"></canvas>
-            </div>
-
-            <div class="section">
-                <h2>📥 Receive Data</h2>
-                <div class="controls">
-                    <button id="receive-button" class="primary" onclick="startReceiving()" disabled>Start Receiving</button>
-                    <button id="stop-receive-button" class="secondary" onclick="stopReceiving()" disabled>Stop</button>
-                </div>
-                <textarea id="receive-text" placeholder="Received data will appear here..." readonly></textarea>
-                <div id="receive-status"></div>
-                <canvas id="receive-signal" class="signal-display"></canvas>
-            </div>
-        </div>
-
-        <!-- File Transfer Tab -->
-        <div id="file-transfer" class="tab-content">
-            <div class="section">
-                <h2>📁 XModem File Transfer</h2>
-                
-                <h3>Send File</h3>
-                <div class="file-drop" id="file-drop" ondrop="handleFileDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
-                    <p>Drag and drop a file here, or</p>
-                    <input type="file" id="file-input" onchange="handleFileSelect(event)" style="margin-top: 10px;">
-                </div>
-                
-                <div id="file-info" style="display: none;">
-                    <h4>File Information</h4>
-                    <p><strong>Name:</strong> <span id="file-name"></span></p>
-                    <p><strong>Size:</strong> <span id="file-size"></span> bytes</p>
-                    <p><strong>Type:</strong> <span id="file-type"></span></p>
-                </div>
-                
-                <div class="controls">
-                    <button id="send-file-button" class="primary" onclick="sendFile()" disabled>Send File</button>
-                    <button id="cancel-send-button" class="secondary" onclick="cancelSend()" disabled>Cancel</button>
-                </div>
-                
-                <div class="progress">
-                    <div id="send-progress" class="progress-bar" style="width: 0%">0%</div>
-                </div>
-                <div id="send-file-status"></div>
-                
-                <h3>Receive File</h3>
-                <div class="controls">
-                    <button id="receive-file-button" class="primary" onclick="startFileReceive()" disabled>Start Receiving</button>
-                    <button id="stop-file-receive-button" class="secondary" onclick="stopFileReceive()" disabled>Stop</button>
-                    <button id="download-button" class="secondary" onclick="downloadReceivedFile()" disabled>Download Received File</button>
-                </div>
-                
-                <div class="progress">
-                    <div id="receive-progress" class="progress-bar" style="width: 0%">0%</div>
-                </div>
-                <div id="receive-file-status"></div>
-                
-                <div id="received-file-info" style="display: none;">
-                    <h4>Received File</h4>
-                    <p><strong>Size:</strong> <span id="received-file-size"></span> bytes</p>
-                    <p><strong>Packets:</strong> <span id="received-packets"></span></p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Signal Analysis Tab -->
-        <div id="signal-analysis" class="tab-content">
-            <div class="section">
-                <h2>📊 Real-time Signal Analysis</h2>
-                
-                <div class="controls">
-                    <button id="start-analysis-button" class="primary" onclick="startAnalysis()" disabled>Start Analysis</button>
-                    <button id="stop-analysis-button" class="secondary" onclick="stopAnalysis()" disabled>Stop Analysis</button>
-                </div>
-                
-                <div class="stats">
-                    <div class="stat-item">
-                        <div class="stat-value" id="signal-level">--</div>
-                        <div class="stat-label">Signal Level (dB)</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="snr-value">--</div>
-                        <div class="stat-label">SNR (dB)</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="bit-errors">--</div>
-                        <div class="stat-label">Bit Errors</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="sync-status">--</div>
-                        <div class="stat-label">Sync Status</div>
-                    </div>
-                </div>
-                
-                <h3>Waveform Display</h3>
-                <canvas id="waveform-display" class="signal-display"></canvas>
-                
-                <h3>Spectrum Display</h3>
-                <canvas id="spectrum-display" class="signal-display"></canvas>
-            </div>
-        </div>
-
-        <!-- Settings Tab -->
-        <div id="settings" class="tab-content">
-            <div class="section">
-                <h2>⚙️ FSK Configuration</h2>
-                
-                <div class="config-grid">
-                    <div class="config-item">
-                        <label for="sample-rate-input">Sample Rate (Hz)</label>
-                        <select id="sample-rate-input">
-                            <option value="44100">44100</option>
-                            <option value="48000">48000</option>
-                            <option value="96000">96000</option>
-                        </select>
-                    </div>
-                    
-                    <div class="config-item">
-                        <label for="baud-rate-input">Baud Rate</label>
-                        <select id="baud-rate-input">
-                            <option value="300">300</option>
-                            <option value="1200">1200</option>
-                            <option value="2400">2400</option>
-                        </select>
-                    </div>
-                    
-                    <div class="config-item">
-                        <label for="mark-freq-input">Mark Frequency (Hz)</label>
-                        <input type="number" id="mark-freq-input" value="1650" min="300" max="3000">
-                    </div>
-                    
-                    <div class="config-item">
-                        <label for="space-freq-input">Space Frequency (Hz)</label>
-                        <input type="number" id="space-freq-input" value="1850" min="300" max="3000">
-                    </div>
-                </div>
-                
-                <h3>XModem Configuration</h3>
-                <div class="config-grid">
-                    <div class="config-item">
-                        <label for="timeout-input">Timeout (ms)</label>
-                        <input type="number" id="timeout-input" value="3000" min="1000" max="10000">
-                    </div>
-                    
-                    <div class="config-item">
-                        <label for="retries-input">Max Retries</label>
-                        <input type="number" id="retries-input" value="10" min="1" max="20">
-                    </div>
-                    
-                    <div class="config-item">
-                        <label for="packet-size-input">Packet Size</label>
-                        <input type="number" id="packet-size-input" value="128" min="64" max="1024">
-                    </div>
-                </div>
-                
-                <div class="controls">
-                    <button class="primary" onclick="applySettings()">Apply Settings</button>
-                    <button class="secondary" onclick="resetSettings()">Reset to Defaults</button>
-                </div>
-                <div id="settings-status"></div>
-            </div>
-        </div>
+    <h1>WebAudio-Modem Demo</h1>
+    
+    <div class="instructions">
+        <h3>使用方法</h3>
+        <ol>
+            <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
+            <li><strong>Digital Loopback Test</strong> で内部ループバックテスト</li>
+            <li><strong>Play Audio Signal</strong> でスピーカーから音声出力</li>
+            <li><strong>Start Audio Listening</strong> でマイクからの受信開始</li>
+        </ol>
     </div>
-
-    <div class="container">
-        <h2>📋 System Log</h2>
+    
+    <div class="section">
+        <h2>System</h2>
+        <button id="init-btn" onclick="initializeSystem()">Initialize System</button>
+        <div id="system-status" class="status info">Click Initialize to start</div>
+    </div>
+    
+    <div class="section">
+        <h2>Input</h2>
+        <label for="input-text">送信テキスト:</label>
+        <input type="text" id="input-text" value="AB" placeholder="Enter text to send">
+    </div>
+    
+    <div class="section">
+        <h2>Test Options</h2>
         <div class="controls">
-            <button class="secondary" onclick="clearLog()">Clear Log</button>
-            <button class="secondary" onclick="downloadLog()">Download Log</button>
+            <button id="loopback-btn" onclick="testDigitalLoopback()" disabled>Digital Loopback Test</button>
+            <button id="play-btn" onclick="playAudio()" disabled>Play Audio Signal</button>
+            <button id="listen-btn" onclick="startListening()" disabled>Start Audio Listening</button>
+            <button id="stop-btn" onclick="stopListening()" disabled class="danger" style="display: none;">Stop Listening</button>
         </div>
-        <div id="log" class="log"></div>
+        <div id="test-status" class="status info">Initialize system first</div>
     </div>
-
+    
+    <div class="section">
+        <h2>Received Data</h2>
+        <div id="output-text">No data received</div>
+    </div>
+    
+    <div class="section">
+        <h2>System Log</h2>
+        <textarea id="log" readonly placeholder="System logs will appear here..."></textarea>
+        <br>
+        <button onclick="clearLog()">Clear Log</button>
+        <button onclick="clearReceivedData()">Clear Received Data</button>
+    </div>
+    
     <script type="module" src="demo.js"></script>
 </body>
 </html>

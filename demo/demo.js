@@ -1,30 +1,23 @@
 /**
- * WebAudio-Modem Demo Application
+ * WebAudio-Modem Simple Demo
  * 
- * NOTE: This demo needs to be updated to use WebAudioDataChannel instead of WebAudioModulatorNode
- * Many method calls and API usage patterns have changed in the refactoring.
+ * シンプルなテキスト送受信デモ（音声入力対応）
  */
 
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
-import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 
 // Global state
 let audioContext = null;
 let modulator = null;
 let demodulator = null;
-let transport = null;
-let isReceiving = false;
-let isAnalyzing = false;
-let currentFile = null;
-let receivedFileData = null;
-let lastSignal = null;
+let isListening = false;
+let currentStream = null;
 
 // Initialize the demo application
 window.addEventListener('DOMContentLoaded', () => {
     log('WebAudio-Modem Demo loaded');
     updateUI();
-    setupCanvasContexts();
 });
 
 // System initialization
@@ -37,162 +30,163 @@ async function initializeSystem() {
         audioContext = new AudioContext();
         log(`AudioContext created: ${audioContext.sampleRate}Hz`);
         
-        // Add module first
-        await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.ts');
+        // Resume AudioContext (requires user interaction)
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+            log('AudioContext resumed');
+        }
         
-        // Create modulator (for sending)
+        // Add AudioWorklet module
+        await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.js');
+        log('FSK processor module loaded');
+        
+        // Create modulator and demodulator
         modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
-        
-        // Create demodulator (for receiving)
         demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+        log('AudioWorkletNodes created');
         
-        // Configure both with AudioContext sampleRate
-        const fskConfig = getCurrentFSKConfig();
-        fskConfig.sampleRate = audioContext.sampleRate; // Use actual AudioContext sampleRate
-        console.log('[Demo] FSK Config:', fskConfig);
-        await modulator.configure(fskConfig);
-        await demodulator.configure(fskConfig);
+        // Configure both with FSK settings
+        const config = {
+            ...DEFAULT_FSK_CONFIG,
+            sampleRate: audioContext.sampleRate
+        };
         
-        // Create transport
-        transport = new XModemTransport(modulator);
-        transport.configure(getCurrentXModemConfig());
+        log('Configuring FSK processors with settings:', config);
+        await modulator.configure(config);
+        await demodulator.configure(config);
+        log('FSK processors configured successfully');
         
-        log('System initialized successfully');
-        updateStatus('system-status', 'System ready for operation', 'success');
-        updateConfigDisplay();
+        updateStatus('system-status', 'System initialized successfully ✓', 'success');
+        updateStatus('test-status', 'Ready for testing', 'success');
+        log('System initialization complete');
         updateUI();
         
     } catch (error) {
-        log(`Initialization failed: ${error.message}`);
-        updateStatus('system-status', `Initialization failed: ${error.message}`, 'error');
+        const errorMsg = `Initialization failed: ${error.message}`;
+        log(errorMsg);
+        updateStatus('system-status', errorMsg, 'error');
+        updateStatus('test-status', 'System initialization required', 'error');
     }
 }
 
-// Run system self-test
-async function runSystemTest() {
-    try {
-        log('Running system self-test...');
-        updateStatus('system-status', 'Running self-test...', 'info');
-        
-        // Test data
-        const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
-        
-        // Test modulation
-        log('Testing FSK modulation...');
-        const signal = await modulator.modulateData(testData);
-        log(`Generated signal: ${signal.length} samples`);
-        
-        // Display signal
-        drawSignal('send-signal', signal.slice(0, 1000)); // Show first 1000 samples
-        lastSignal = signal;
-        
-        // Test demodulation (loopback)
-        log('Testing FSK demodulation...');
-        const demodulated = await demodulator.demodulateData(signal);
-        log(`Demodulated: ${demodulated.length} bytes`);
-        
-        // Verify data integrity
-        const success = demodulated.length === testData.length && 
-                       demodulated.every((byte, i) => byte === testData[i]);
-        
-        if (success) {
-            log('Self-test passed: Perfect loopback');
-            updateStatus('system-status', 'Self-test passed ✓', 'success');
-        } else {
-            log(`Self-test partial: ${demodulated.length}/${testData.length} bytes, integrity: ${
-                demodulated.reduce((acc, byte, i) => acc + (byte === testData[i] ? 1 : 0), 0)
-            }/${testData.length}`);
-            updateStatus('system-status', 'Self-test completed with partial success', 'info');
-        }
-        
-        updateUI();
-        
-    } catch (error) {
-        log(`Self-test failed: ${error.message}`);
-        updateStatus('system-status', `Self-test failed: ${error.message}`, 'error');
-    }
-}
-
-// Send text data
-async function sendText() {
-    try {
-        const text = document.getElementById('send-text').value;
-        if (!text.trim()) {
-            updateStatus('send-status', 'Please enter text to send', 'error');
-            return;
-        }
-        
-        log(`Sending text: "${text}"`);
-        updateStatus('send-status', 'Modulating text...', 'info');
-        
-        // Convert text to bytes
-        const encoder = new TextEncoder();
-        const data = encoder.encode(text);
-        
-        // Modulate
-        const signal = await modulator.modulateData(data);
-        log(`Generated signal: ${signal.length} samples (${(signal.length / audioContext.sampleRate).toFixed(2)}s)`);
-        
-        // Display signal
-        drawSignal('send-signal', signal.slice(0, 2000));
-        lastSignal = signal;
-        
-        updateStatus('send-status', `Signal generated: ${signal.length} samples`, 'success');
-        updateUI();
-        
-    } catch (error) {
-        log(`Send failed: ${error.message}`);
-        updateStatus('send-status', `Send failed: ${error.message}`, 'error');
-    }
-}
-
-// Play the last generated signal
-async function playLastSignal() {
-    if (!lastSignal || !audioContext) {
-        updateStatus('send-status', 'No signal to play', 'error');
+// Digital loopback test: modulator -> [demodulator, destination]
+async function testDigitalLoopback() {
+    if (!audioContext || !modulator || !demodulator) {
+        updateStatus('test-status', 'System not initialized', 'error');
         return;
     }
     
     try {
-        log('Playing audio signal...');
+        const text = document.getElementById('input-text').value.trim();
+        if (!text) {
+            updateStatus('test-status', 'Please enter text to test', 'error');
+            return;
+        }
         
-        // Create audio buffer
-        const buffer = audioContext.createBuffer(1, lastSignal.length, audioContext.sampleRate);
-        buffer.copyToChannel(lastSignal, 0);
+        log(`Starting digital loopback test with: "${text}"`);
+        updateStatus('test-status', 'Running digital loopback test...', 'info');
         
-        // Create and play source
-        const source = audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioContext.destination);
-        source.start();
+        // Disconnect any previous connections
+        modulator.disconnect();
+        demodulator.disconnect();
         
-        updateStatus('send-status', 'Playing audio signal...', 'info');
+        // Connect: modulator -> [demodulator, destination] (分岐)
+        modulator.connect(demodulator);
+        modulator.connect(audioContext.destination);
+        log('Connected: modulator → [demodulator, destination]');
         
-        // Clear status after playback
-        setTimeout(() => {
-            updateStatus('send-status', 'Audio playback completed', 'success');
-        }, (lastSignal.length / audioContext.sampleRate) * 1000 + 100);
+        // Convert text to bytes and modulate
+        const data = new TextEncoder().encode(text);
+        log(`Modulating ${data.length} bytes: [${Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        
+        await modulator.modulate(data);
+        log('Modulation started');
+        
+        // IDataChannel.demodulate() blocks until data is available
+        log('Waiting for demodulation (blocking call)...');
+        const received = await demodulator.demodulate();
+        
+        // Process result
+        const receivedText = new TextDecoder().decode(received);
+        log(`Demodulated ${received.length} bytes: [${Array.from(received).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        log(`Demodulated text: "${receivedText}"`);
+        
+        // Update UI
+        updateOutput(receivedText);
+        
+        if (receivedText === text) {
+            updateStatus('test-status', '✓ Perfect digital loopback!', 'success');
+            log('Digital loopback test: PASSED - Perfect match');
+        } else {
+            updateStatus('test-status', `⚠ Partial match: "${receivedText}"`, 'info');
+            log(`Digital loopback test: PARTIAL - Expected: "${text}", Got: "${receivedText}"`);
+        }
         
     } catch (error) {
-        log(`Audio playback failed: ${error.message}`);
-        updateStatus('send-status', `Playback failed: ${error.message}`, 'error');
+        const errorMsg = `Digital loopback test failed: ${error.message}`;
+        log(errorMsg);
+        updateStatus('test-status', errorMsg, 'error');
     }
 }
 
-// Start receiving data using WebAudioModulatorNode with direct AudioWorklet connection
-async function startReceiving() {
-    if (isReceiving) return;
+// Play audio signal: modulator -> destination
+async function playAudio() {
+    if (!audioContext || !modulator) {
+        updateStatus('test-status', 'System not initialized', 'error');
+        return;
+    }
     
     try {
-        log('Starting real-time FSK reception via AudioWorklet...');
-        isReceiving = true;
-        updateStatus('receive-status', 'Listening for incoming data...', 'info');
-        updateUI();
+        const text = document.getElementById('input-text').value.trim();
+        if (!text) {
+            updateStatus('test-status', 'Please enter text to play', 'error');
+            return;
+        }
         
-        // Start microphone input
+        log(`Playing audio signal for: "${text}"`);
+        updateStatus('test-status', 'Playing audio signal...', 'info');
+        
+        // Disconnect previous connections
+        modulator.disconnect();
+        
+        // Connect: modulator -> destination (audio output)
+        modulator.connect(audioContext.destination);
+        log('Connected: modulator → destination (speakers)');
+        
+        // Convert and modulate
+        const data = new TextEncoder().encode(text);
+        await modulator.modulate(data);
+        
+        updateStatus('test-status', `✓ Audio signal played for: "${text}"`, 'success');
+        log('Audio signal generation complete');
+        
+    } catch (error) {
+        const errorMsg = `Audio playback failed: ${error.message}`;
+        log(errorMsg);
+        updateStatus('test-status', errorMsg, 'error');
+    }
+}
+
+// Start listening for audio input: microphone -> demodulator
+async function startListening() {
+    if (isListening) {
+        log('Already listening for audio input');
+        return;
+    }
+    
+    if (!audioContext || !demodulator) {
+        updateStatus('test-status', 'System not initialized', 'error');
+        return;
+    }
+    
+    try {
+        log('Starting audio listening...');
+        updateStatus('test-status', 'Starting microphone input...', 'info');
+        
+        // Get microphone input
         const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
-                sampleRate: 48000,
+                sampleRate: audioContext.sampleRate,
                 channelCount: 1,
                 echoCancellation: false,
                 noiseSuppression: false,
@@ -200,368 +194,115 @@ async function startReceiving() {
             } 
         });
         
-        // Get the actual AudioWorkletNode from demodulator
-        const workletNode = demodulator.workletNode;
-        if (!workletNode) {
-            throw new Error('Demodulator worklet not available');
-        }
+        log(`Microphone access granted: ${audioContext.sampleRate}Hz, 1 channel`);
         
-        // Listen for real-time demodulation results and debug info
-        workletNode.port.onmessage = (event) => {
-            if (event.data.type === 'demodulated') {
-                const demodulated = new Uint8Array(event.data.data.bytes);
-                
-                if (demodulated && demodulated.length > 0) {
-                    // Convert bytes to text
-                    const decoder = new TextDecoder('utf-8', { fatal: false });
-                    const text = decoder.decode(demodulated);
+        // Disconnect previous connections
+        demodulator.disconnect();
+        
+        // Connect: microphone -> demodulator
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(demodulator);
+        log('Connected: microphone → demodulator');
+        
+        isListening = true;
+        currentStream = stream;
+        updateStatus('test-status', '🎤 Listening for FSK signals...', 'success');
+        log('Audio listening started - waiting for FSK signals...');
+        updateUI();
+        
+        // Blocking reception loop (no polling delay needed)
+        const listenLoop = async () => {
+            while (isListening) {
+                try {
+                    // demodulate() blocks until data is available
+                    const received = await demodulator.demodulate();
                     
-                    // Filter out non-printable characters
-                    const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
-                    
-                    if (cleanText.length > 0) {
-                        log(`🎵 Received: "${cleanText}" (${demodulated.length} bytes)`);
+                    if (received.length > 0) {
+                        const text = new TextDecoder().decode(received);
+                        const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, ''); // Remove control characters
                         
-                        // Append to receive text area
-                        const receiveTextArea = document.getElementById('receive-text');
-                        receiveTextArea.value += cleanText + '\n';
-                        receiveTextArea.scrollTop = receiveTextArea.scrollHeight;
+                        log(`Received from audio: ${received.length} bytes: [${Array.from(received).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+                        log(`Received text: "${cleanText}"`);
                         
-                        updateStatus('receive-status', `Received: ${cleanText}`, 'success');
+                        if (cleanText) {
+                            updateOutput(cleanText);
+                            updateStatus('test-status', `📡 Received: "${cleanText}"`, 'success');
+                        }
+                    }
+                } catch (error) {
+                    if (isListening) {
+                        log(`Reception error: ${error.message}`);
+                        // Small delay on error to prevent tight error loop
+                        await new Promise(resolve => setTimeout(resolve, 100));
                     }
                 }
             }
         };
         
-        // Connect microphone directly to demodulator AudioWorklet
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(workletNode);
-        
-        // Also connect to analyzer for visualization
-        const analyzer = audioContext.createAnalyser();
-        analyzer.fftSize = 2048;
-        source.connect(analyzer);
-        
-        const dataArray = new Uint8Array(analyzer.frequencyBinCount);
-        
-        const updateVisualization = () => {
-            if (!isReceiving) return;
-            
-            // Draw frequency spectrum for visualization
-            analyzer.getByteFrequencyData(dataArray);
-            drawSpectrum('receive-signal', dataArray);
-            
-            requestAnimationFrame(updateVisualization);
-        };
-        updateVisualization();
-        
-        // Store references for cleanup
-        window.audioStream = stream;
-        window.receiverWorklet = workletNode;
-        
-        log('✅ Real-time AudioWorklet receiver connected and ready!');
+        listenLoop();
         
     } catch (error) {
-        log(`Receive start failed: ${error.message}`);
-        updateStatus('receive-status', `Failed to start receiving: ${error.message}`, 'error');
-        isReceiving = false;
+        const errorMsg = `Failed to start audio listening: ${error.message}`;
+        log(errorMsg);
+        updateStatus('test-status', errorMsg, 'error');
+        isListening = false;
         updateUI();
     }
 }
 
-// Stop receiving data
-function stopReceiving() {
-    if (!isReceiving) return;
-    
-    isReceiving = false;
-    
-    // Clean up audio resources
-    if (window.audioStream) {
-        window.audioStream.getTracks().forEach(track => track.stop());
-        window.audioStream = null;
-    }
-    
-    if (window.receiverWorklet) {
-        window.receiverWorklet.disconnect();
-        window.receiverWorklet = null;
-    }
-    
-    log('Stopped receiving');
-    updateStatus('receive-status', 'Stopped receiving', 'info');
-    updateUI();
-}
-
-// File handling
-function handleFileDrop(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    const files = event.dataTransfer.files;
-    if (files.length > 0) {
-        handleFile(files[0]);
-    }
-    
-    document.getElementById('file-drop').classList.remove('dragover');
-}
-
-function handleDragOver(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    document.getElementById('file-drop').classList.add('dragover');
-}
-
-function handleDragLeave(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    document.getElementById('file-drop').classList.remove('dragover');
-}
-
-function handleFileSelect(event) {
-    const files = event.target.files;
-    if (files.length > 0) {
-        handleFile(files[0]);
-    }
-}
-
-function handleFile(file) {
-    currentFile = file;
-    
-    document.getElementById('file-name').textContent = file.name;
-    document.getElementById('file-size').textContent = file.size.toLocaleString();
-    document.getElementById('file-type').textContent = file.type || 'Unknown';
-    document.getElementById('file-info').style.display = 'block';
-    
-    log(`File selected: ${file.name} (${file.size} bytes)`);
-    updateUI();
-}
-
-// Send file via XModem
-async function sendFile() {
-    if (!currentFile || !transport) return;
-    
-    try {
-        log(`Starting file transfer: ${currentFile.name}`);
-        updateStatus('send-file-status', 'Reading file...', 'info');
-        
-        // Read file
-        const arrayBuffer = await currentFile.arrayBuffer();
-        const data = new Uint8Array(arrayBuffer);
-        
-        log(`File read: ${data.length} bytes`);
-        updateStatus('send-file-status', 'Transferring via XModem...', 'info');
-        
-        // 未実装
-        // Simulate transfer progress
-        let progress = 0;
-        const updateProgress = () => {
-            progress += Math.random() * 10;
-            if (progress > 100) progress = 100;
-            
-            document.getElementById('send-progress').style.width = `${progress}%`;
-            document.getElementById('send-progress').textContent = `${Math.round(progress)}%`;
-            
-            if (progress < 100) {
-                setTimeout(updateProgress, 200 + Math.random() * 300);
-            } else {
-                updateStatus('send-file-status', 'File transfer completed successfully', 'success');
-                log(`File transfer completed: ${currentFile.name}`);
-                updateUI();
-            }
-        };
-        
-        // Start progress simulation
-        setTimeout(updateProgress, 100);
-        
-        // In a real implementation, this would use transport.sendData(data)
-        log(`Would send ${data.length} bytes via XModem protocol`);
-        
-    } catch (error) {
-        log(`File send failed: ${error.message}`);
-        updateStatus('send-file-status', `Transfer failed: ${error.message}`, 'error');
-    }
-}
-
-// Configuration management
-function getCurrentFSKConfig() {
-    return {
-        ...DEFAULT_FSK_CONFIG,
-        sampleRate: audioContext ? audioContext.sampleRate : 48000,
-        baudRate: parseInt(document.getElementById('baud-rate-input')?.value) || 300,
-        markFrequency: parseInt(document.getElementById('mark-freq-input')?.value) || 1650,
-        spaceFrequency: parseInt(document.getElementById('space-freq-input')?.value) || 1850,
-    };
-}
-
-function getCurrentXModemConfig() {
-    return {
-        timeoutMs: parseInt(document.getElementById('timeout-input')?.value) || 3000,
-        maxRetries: parseInt(document.getElementById('retries-input')?.value) || 10,
-        maxPayloadSize: parseInt(document.getElementById('packet-size-input')?.value) || 128
-    };
-}
-
-function updateConfigDisplay() {
-    const config = getCurrentFSKConfig();
-    document.getElementById('sample-rate').textContent = config.sampleRate.toLocaleString();
-    document.getElementById('baud-rate').textContent = config.baudRate;
-    document.getElementById('mark-freq').textContent = config.markFreq;
-    document.getElementById('space-freq').textContent = config.spaceFreq;
-}
-
-async function applySettings() {
-    if (!modulator || !demodulator || !transport) {
-        updateStatus('settings-status', 'System not initialized', 'error');
+// Stop listening for audio input
+function stopListening() {
+    if (!isListening) {
+        log('Not currently listening');
         return;
     }
     
-    try {
-        log('Applying new settings...');
-        
-        const fskConfig = getCurrentFSKConfig();
-        await modulator.configure(fskConfig);
-        await demodulator.configure(fskConfig);
-        transport.configure(getCurrentXModemConfig());
-        
-        updateConfigDisplay();
-        updateStatus('settings-status', 'Settings applied successfully', 'success');
-        log('Settings updated');
-        
-    } catch (error) {
-        log(`Settings update failed: ${error.message}`);
-        updateStatus('settings-status', `Failed to apply settings: ${error.message}`, 'error');
-    }
-}
-
-function resetSettings() {
-    document.getElementById('sample-rate-input').value = '48000';
-    document.getElementById('baud-rate-input').value = '300';
-    document.getElementById('mark-freq-input').value = '1650';
-    document.getElementById('space-freq-input').value = '1850';
-    document.getElementById('timeout-input').value = '3000';
-    document.getElementById('retries-input').value = '10';
-    document.getElementById('packet-size-input').value = '128';
+    isListening = false;
     
-    updateStatus('settings-status', 'Settings reset to defaults', 'info');
-    log('Settings reset to defaults');
-}
-
-// Signal visualization
-function setupCanvasContexts() {
-    const canvases = ['send-signal', 'receive-signal', 'waveform-display', 'spectrum-display'];
-    canvases.forEach(id => {
-        const canvas = document.getElementById(id);
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-            
-            // Clear canvas
-            ctx.fillStyle = '#f8f9fa';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw grid
-            ctx.strokeStyle = '#e9ecef';
-            ctx.lineWidth = 1;
-            for (let i = 0; i < canvas.width; i += 50) {
-                ctx.beginPath();
-                ctx.moveTo(i, 0);
-                ctx.lineTo(i, canvas.height);
-                ctx.stroke();
-            }
-            for (let i = 0; i < canvas.height; i += 25) {
-                ctx.beginPath();
-                ctx.moveTo(0, i);
-                ctx.lineTo(canvas.width, i);
-                ctx.stroke();
-            }
-        }
-    });
-}
-
-function drawSignal(canvasId, signal) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas || !signal || signal.length === 0) return;
-    
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
-    
-    // Clear canvas
-    ctx.fillStyle = '#f8f9fa';
-    ctx.fillRect(0, 0, width, height);
-    
-    // Draw signal
-    ctx.strokeStyle = '#007cba';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    
-    const step = signal.length / width;
-    for (let x = 0; x < width; x++) {
-        const index = Math.floor(x * step);
-        const y = height / 2 - (signal[index] * height / 4);
-        
-        if (x === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
+    // Clean up audio resources
+    if (currentStream) {
+        currentStream.getTracks().forEach(track => {
+            track.stop();
+            log(`Stopped microphone track: ${track.kind}`);
+        });
+        currentStream = null;
     }
     
-    ctx.stroke();
-    
-    // Draw center line
-    ctx.strokeStyle = '#6c757d';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-}
-
-function drawSpectrum(canvasId, data) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas || !data) return;
-    
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
-    
-    // Clear canvas
-    ctx.fillStyle = '#f8f9fa';
-    ctx.fillRect(0, 0, width, height);
-    
-    // Draw spectrum
-    const barWidth = width / data.length;
-    ctx.fillStyle = '#28a745';
-    
-    for (let i = 0; i < data.length; i++) {
-        const barHeight = (data[i] / 255) * height;
-        ctx.fillRect(i * barWidth, height - barHeight, barWidth, barHeight);
+    // Disconnect demodulator
+    if (demodulator) {
+        demodulator.disconnect();
+        log('Disconnected demodulator from microphone');
     }
+    
+    updateStatus('test-status', 'Stopped listening', 'info');
+    log('Audio listening stopped');
+    updateUI();
 }
 
 // UI management
 function updateUI() {
-    const systemReady = modulator && modulator.isReady() && demodulator && demodulator.isReady();
+    const systemReady = audioContext && modulator && demodulator && 
+                       modulator.isReady() && demodulator.isReady();
     
     // Update button states
-    document.getElementById('init-button').disabled = systemReady;
-    document.getElementById('test-button').disabled = !systemReady;
-    document.getElementById('send-button').disabled = !systemReady;
-    document.getElementById('play-button').disabled = !systemReady || !lastSignal;
-    document.getElementById('loopback-button').disabled = !systemReady;
-    document.getElementById('direct-audio-button').disabled = !systemReady;
-    document.getElementById('receive-button').disabled = !systemReady || isReceiving;
-    document.getElementById('stop-receive-button').disabled = !isReceiving;
-    document.getElementById('send-file-button').disabled = !systemReady || !currentFile;
-    document.getElementById('start-analysis-button').disabled = !systemReady || isAnalyzing;
-    document.getElementById('stop-analysis-button').disabled = !isAnalyzing;
+    document.getElementById('init-btn').disabled = systemReady;
+    document.getElementById('loopback-btn').disabled = !systemReady;
+    document.getElementById('play-btn').disabled = !systemReady;
+    document.getElementById('listen-btn').disabled = !systemReady || isListening;
+    
+    // Show/hide Stop Listening button based on listening state
+    const stopBtn = document.getElementById('stop-btn');
+    if (isListening) {
+        stopBtn.style.display = 'inline-block';
+        stopBtn.disabled = false;
+    } else {
+        stopBtn.style.display = 'none';
+        stopBtn.disabled = true;
+    }
     
     // Update init button text
     if (systemReady) {
-        document.getElementById('init-button').textContent = 'System Ready ✓';
+        document.getElementById('init-btn').textContent = 'System Ready ✓';
     }
 }
 
@@ -573,23 +314,26 @@ function updateStatus(elementId, message, type = 'info') {
     }
 }
 
-// Tab management
-function showTab(tabName) {
-    // Hide all tab contents
-    const tabContents = document.querySelectorAll('.tab-content');
-    tabContents.forEach(content => content.classList.remove('active'));
-    
-    // Remove active class from all tabs
-    const tabs = document.querySelectorAll('.tab');
-    tabs.forEach(tab => tab.classList.remove('active'));
-    
-    // Show selected tab content
-    document.getElementById(tabName).classList.add('active');
-    
-    // Add active class to selected tab
-    event.target.classList.add('active');
-    
-    log(`Switched to ${tabName} tab`);
+function updateOutput(text) {
+    const outputElement = document.getElementById('output-text');
+    if (outputElement) {
+        const timestamp = new Date().toLocaleTimeString();
+        const currentContent = outputElement.textContent;
+        
+        if (currentContent === 'No data received') {
+            outputElement.textContent = `[${timestamp}] ${text}`;
+        } else {
+            outputElement.textContent = currentContent + `\n[${timestamp}] ${text}`;
+        }
+    }
+}
+
+function clearReceivedData() {
+    const outputElement = document.getElementById('output-text');
+    if (outputElement) {
+        outputElement.textContent = 'No data received';
+    }
+    log('Received data cleared');
 }
 
 // Logging
@@ -598,188 +342,22 @@ function log(message) {
     const logEntry = `[${timestamp}] ${message}\n`;
     
     const logElement = document.getElementById('log');
-    logElement.textContent += logEntry;
+    logElement.value += logEntry;
     logElement.scrollTop = logElement.scrollHeight;
     
     console.log(logEntry.trim());
 }
 
 function clearLog() {
-    document.getElementById('log').textContent = '';
+    document.getElementById('log').value = '';
     log('Log cleared');
-}
-
-function downloadLog() {
-    const logContent = document.getElementById('log').textContent;
-    const blob = new Blob([logContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `webaudio-modem-log-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    log('Log downloaded');
-}
-
-// Test direct audio loopback (bypassing microphone)
-async function testDirectAudioLoopback() {
-    try {
-        const text = document.getElementById('send-text').value;
-        if (!text.trim()) {
-            updateStatus('send-status', 'Please enter text to test', 'error');
-            return;
-        }
-        
-        log(`Testing direct audio loopback with: "${text}"`);
-        updateStatus('send-status', 'Testing direct audio loopback...', 'info');
-        
-        // Convert text to bytes
-        const encoder = new TextEncoder();
-        const data = encoder.encode(text);
-        
-        // Generate signal
-        const signal = await modulator.modulateData(data);
-        log(`Generated signal: ${signal.length} samples`);
-        
-        // Get the worklet node for direct injection
-        const workletNode = demodulator.workletNode;
-        if (!workletNode) {
-            throw new Error('Demodulator worklet not available');
-        }
-        
-        // Create a buffer source and connect directly to worklet
-        const buffer = audioContext.createBuffer(1, signal.length, audioContext.sampleRate);
-        buffer.copyToChannel(signal, 0);
-        
-        const source = audioContext.createBufferSource();
-        source.buffer = buffer;
-        
-        // Connect directly to demodulator worklet (bypass microphone)
-        source.connect(workletNode);
-        
-        // Listen for results
-        let received = false;
-        const messageHandler = (event) => {
-            if (event.data.type === 'demodulated' && event.data.data.bytes.length > 0) {
-                const demodulated = new Uint8Array(event.data.data.bytes);
-                const decoder = new TextDecoder('utf-8', { fatal: false });
-                const receivedText = decoder.decode(demodulated).replace(/[\x00-\x1F\x7F-\x9F]/g, '');
-                
-                log(`Direct audio loopback result: "${receivedText}"`);
-                document.getElementById('receive-text').value = receivedText;
-                
-                if (receivedText === text) {
-                    updateStatus('send-status', '✓ Perfect direct audio loopback!', 'success');
-                } else {
-                    updateStatus('send-status', `⚠ Partial direct audio: "${receivedText}"`, 'info');
-                }
-                received = true;
-                workletNode.port.removeEventListener('message', messageHandler);
-            }
-        };
-        
-        workletNode.port.addEventListener('message', messageHandler);
-        
-        // Play the signal
-        source.start();
-        
-        // Wait for result or timeout
-        setTimeout(() => {
-            if (!received) {
-                updateStatus('send-status', '✗ Direct audio loopback timeout', 'error');
-                log('Direct audio loopback: TIMEOUT - No data received within 5 seconds');
-                workletNode.port.removeEventListener('message', messageHandler);
-            }
-        }, 5000);
-        
-        drawSignal('send-signal', signal.slice(0, 2000));
-        lastSignal = signal;
-        updateUI();
-        
-    } catch (error) {
-        log(`Direct audio loopback failed: ${error.message}`);
-        updateStatus('send-status', `Direct audio failed: ${error.message}`, 'error');
-    }
-}
-
-// Test loopback by sending text and immediately trying to decode it
-async function testLoopback() {
-    try {
-        const text = document.getElementById('send-text').value;
-        if (!text.trim()) {
-            updateStatus('send-status', 'Please enter text to test', 'error');
-            return;
-        }
-        
-        log(`Testing loopback with: "${text}"`);
-        updateStatus('send-status', 'Testing loopback...', 'info');
-        
-        // Convert text to bytes
-        const encoder = new TextEncoder();
-        const data = encoder.encode(text);
-        
-        // Modulate using FSKProcessor
-        const signal = await modulator.modulateData(data);
-        log(`Modulated signal: ${signal.length} samples`);
-        
-        // Display signal
-        drawSignal('send-signal', signal.slice(0, 2000));
-        lastSignal = signal;
-        
-        // Immediately demodulate the same signal using demodulator
-        const demodulated = await demodulator.demodulateData(signal);
-        log(`Demodulated: ${demodulated.length} bytes`);
-        
-        if (demodulated && demodulated.length > 0) {
-            // Convert back to text
-            const decoder = new TextDecoder('utf-8', { fatal: false });
-            const receivedText = decoder.decode(demodulated);
-            
-            log(`Loopback result: "${receivedText}"`);
-            
-            // Display in receive area
-            document.getElementById('receive-text').value = receivedText;
-            
-            if (receivedText === text) {
-                updateStatus('send-status', '✓ Perfect loopback test!', 'success');
-                log('Loopback test: PASSED - Perfect digital loopback');
-            } else {
-                updateStatus('send-status', `⚠ Partial loopback: "${receivedText}"`, 'info');
-                log(`Loopback test: PARTIAL - Expected: "${text}", Got: "${receivedText}"`);
-            }
-        } else {
-            updateStatus('send-status', '✗ Loopback failed - no data received', 'error');
-            log('Loopback test: FAILED - No data demodulated');
-        }
-        
-        updateUI();
-        
-    } catch (error) {
-        log(`Loopback test failed: ${error.message}`);
-        updateStatus('send-status', `Loopback failed: ${error.message}`, 'error');
-    }
 }
 
 // Export functions to global scope for HTML onclick handlers
 window.initializeSystem = initializeSystem;
-window.runSystemTest = runSystemTest;
-window.sendText = sendText;
-window.playLastSignal = playLastSignal;
-window.startReceiving = startReceiving;
-window.stopReceiving = stopReceiving;
-window.handleFileDrop = handleFileDrop;
-window.handleDragOver = handleDragOver;
-window.handleDragLeave = handleDragLeave;
-window.handleFileSelect = handleFileSelect;
-window.sendFile = sendFile;
-window.applySettings = applySettings;
-window.resetSettings = resetSettings;
-window.showTab = showTab;
+window.testDigitalLoopback = testDigitalLoopback;
+window.playAudio = playAudio;
+window.startListening = startListening;
+window.stopListening = stopListening;
 window.clearLog = clearLog;
-window.downloadLog = downloadLog;
-window.testLoopback = testLoopback;
-window.testDirectAudioLoopback = testDirectAudioLoopback;
+window.clearReceivedData = clearReceivedData;
