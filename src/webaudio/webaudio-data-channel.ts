@@ -9,7 +9,7 @@ import type { IDataChannel } from '../core.js';
 
 interface WorkletMessage {
   id: string;
-  type: 'configure' | 'modulate' | 'demodulate' | 'result' | 'error';
+  type: 'configure' | 'modulate' | 'demodulate' | 'status' | 'result' | 'error';
   data?: any;
 }
 
@@ -17,8 +17,17 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   private pendingOperations = new Map<string, { resolve: Function, reject: Function }>();
   private operationCounter = 0;
   
-  constructor(context: AudioContext, processorName: string, options?: AudioWorkletNodeOptions) {
-    super(context, processorName, options);
+  constructor(context: AudioContext, processorName: string, options: AudioWorkletNodeOptions = {}) {
+    console.log(`[WebAudioDataChannel] Initializing with processor: ${processorName} and options:`, options);
+    super(context, processorName, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'discrete',
+      outputChannelCount: [1],
+      ...options
+    });
     
     // Setup message handling
     this.port.onmessage = this.handleMessage.bind(this);
@@ -33,6 +42,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
+    console.log(`[WebAudioDataChannel] Received message: ${type} with id: ${id}`, data);
     const operation = this.pendingOperations.get(id);
     
     if (!operation) {
@@ -46,10 +56,14 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
       operation.resolve(data);
     } else if (type === 'error') {
       operation.reject(new Error(data.message));
+    } else {
+      console.warn(`Unhandled message type: ${type}`);
+      operation.reject(new Error(`Unhandled message type: ${type}`));
     }
   }
   
   private sendMessage(type: string, data?: any): Promise<any> {
+    console.log(`[WebAudioDataChannel] Sending message: ${type}`, data);
     const id = `op_${++this.operationCounter}`;
     
     return new Promise((resolve, reject) => {
@@ -81,9 +95,16 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    * 復調されたデータを取得（データが利用可能になるまで待機）
    */
   async demodulate(): Promise<Uint8Array> {
-    console.log(`[WebAudioDataChannel] Demodulating data...`);
+    // console.log(`[WebAudioDataChannel] Demodulating data...`);
     const result = await this.sendMessage('demodulate', {});
     return new Uint8Array(result.bytes || []);
+  }
+
+  /**
+   * 現在のステータスを取得
+   */
+  async getStatus(): Promise<any> {
+    return await this.sendMessage('status', {});
   }
   
   /**

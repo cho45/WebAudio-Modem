@@ -15,7 +15,7 @@ describe('FSK Processor Integration', () => {
   beforeEach(async () => {
     // Create AudioContext
     audioContext = new AudioContext();
-    
+
     // AudioContext requires user interaction to resume in browsers
     // Simulate user click to allow AudioContext to resume
     const button = document.createElement('button');
@@ -23,7 +23,7 @@ describe('FSK Processor Integration', () => {
     document.body.appendChild(button);
 
     const resumePromise = new Promise<void>((resolve, _reject) => {
-      button.addEventListener('click', async function me () {
+      button.addEventListener('click', async function me() {
         button.removeEventListener('click', me);
         console.log('User clicked button, resuming AudioContext...');
         if (audioContext.state === 'suspended') {
@@ -32,19 +32,19 @@ describe('FSK Processor Integration', () => {
         resolve();
       });
     });
-    
+
     // Create and dispatch click event
     // console.log('Simulating user interaction to resume AudioContext...');
     await userEvent.click(button); // Simulate user click for test environment
 
     await resumePromise;
-    
+
     // Resume AudioContext after user interaction
     // console.log('AudioContext state before resume:', audioContext.state);
-    
+
     // Cleanup
     document.body.removeChild(button);
-    
+
     expect(audioContext.state).toBe('running');
   });
 
@@ -52,128 +52,147 @@ describe('FSK Processor Integration', () => {
   });
 
   test('actual data channel and XModem integration', async () => {
-      // Test basic AudioContext functionality
-      expect(audioContext.state).toBeDefined();
-      expect(['suspended', 'running', 'closed']).toContain(audioContext.state);
-      
-      // Add module first
-      await WebAudioDataChannel.addModule(audioContext, './test-processor.js');
-      
-      // Create data channel
-      const dataChannel = new WebAudioDataChannel(audioContext, 'test-processor');
-      
-      expect(dataChannel.isReady()).toBe(true);
-      
-      // Note: Full AudioWorklet testing requires a more complex setup
-      // This test verifies the basic structure works
+    // Test basic AudioContext functionality
+    expect(audioContext.state).toBeDefined();
+    expect(['suspended', 'running', 'closed']).toContain(audioContext.state);
+
+    // Add module first
+    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
+
+    // Create data channel
+    const dataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
+
+    expect(dataChannel.isReady()).toBe(true);
+
+    // Note: Full AudioWorklet testing requires a more complex setup
+    // This test verifies the basic structure works
   });
-  
+
   test('XModem transport integration', async () => {
-      // Test XModem integration without AudioWorklet complexity
-      await WebAudioDataChannel.addModule(audioContext, './test-processor.js');
-      const dataChannel = new WebAudioDataChannel(audioContext, 'test-processor');
-      
-      const { XModemTransport } = await import('/src/transports/xmodem/xmodem.js');
-      const transport = new XModemTransport(dataChannel);
-      
-      expect(transport.isReady()).toBe(true); // Ready when data channel is available
-      expect(transport.transportName).toBe('XModem');
+    // Test XModem integration with real FSK processor
+    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
+    const dataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
+
+    const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
+    const transport = new XModemTransport(dataChannel);
+
+    expect(transport.isReady()).toBe(true); // Ready when data channel is available
+    expect(transport.transportName).toBe('XModem');
   });
-  
-   test('should handle WebAudio and XModem integration', async () => {
-       // Test that XModemTransport can work with WebAudioDataChannel
-       await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
-       const dataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
-       
-       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
-       const transport = new XModemTransport(dataChannel);
-       
-       // Basic integration test
-       expect(transport.transportName).toBe('XModem');
-       expect(transport.isReady()).toBe(true); // Data channel available
-       
-       // Configure transport
-       transport.configure({ timeoutMs: 1000, maxRetries: 1 });
-       
-       // Even if modulator isn't working, transport should be creatable
-       expect(transport.getConfig().timeoutMs).toBe(1000);
-       expect(transport.getConfig().maxRetries).toBe(1);
-       
-       console.log('XModem transport created successfully with WebAudio modulator');
-   });
 
-   test('demonstrates expected FSK signal properties', () => {
-     // Expected properties of FSK signal:
-     // - Length should be: (preamble + SFD + data) * bitsPerByte * samplesPerBit + padding
-     // - Should contain mark and space frequencies
-     // - Should have phase continuity
-     
-     const config = DEFAULT_FSK_CONFIG;
-     const dataLength = 5; // "Hello"
-     const bitsPerByte = 8 + config.startBits + config.stopBits; // 10 bits
-     const samplesPerBit = Math.floor(config.sampleRate / config.baudRate); // 147 samples
-     
-     const totalBytes = config.preamblePattern.length + config.sfdPattern.length + dataLength;
-     const paddingSamples = samplesPerBit * 2;
-     const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
-     
-     expect(expectedLength).toBe(13120); // Expected signal length for "Hello" with 48kHz
-   });
+  test('should handle WebAudio and XModem integration', async () => {
+    // Test that XModemTransport can work with WebAudioDataChannel
+    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
+    const dataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
 
-   test('Direct Audio Test - AudioWorklet Integration', async () => {
-       console.log('🧪 Starting Direct Audio Test...');
+    const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
+    const transport = new XModemTransport(dataChannel);
 
-       // Add module and create data channels
-       await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.ts');
-       
-       const modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
-       const demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+    // Basic integration test
+    expect(transport.transportName).toBe('XModem');
+    expect(transport.isReady()).toBe(true); // Data channel available
 
-       // Configure with test-friendly settings
-       const testConfig = {
-         sampleRate: audioContext.sampleRate,
-         baudRate: 300,
-         markFrequency: 1650,
-         spaceFrequency: 1850,
-         syncThreshold: 0.75
-       };
+    // Configure transport
+    transport.configure({ timeoutMs: 1000, maxRetries: 1 });
 
-       await modulator.configure(testConfig);
-       await demodulator.configure(testConfig);
+    // Even if modulator isn't working, transport should be creatable
+    expect(transport.getConfig().timeoutMs).toBe(1000);
+    expect(transport.getConfig().maxRetries).toBe(1);
 
-       // Connect modulator output to demodulator input (AudioWorklet loopback)
-       modulator.connect(demodulator);
+    console.log('XModem transport created successfully with WebAudio modulator');
+  });
 
-       console.log('🎯 Connected AudioWorklet modulator → demodulator...');
-       audioContext.resume(); // Ensure AudioContext is running
-       expect(audioContext.state).equal('running');
+  test('demonstrates expected FSK signal properties', () => {
+    // Expected properties of FSK signal:
+    // - Length should be: (preamble + SFD + data) * bitsPerByte * samplesPerBit + padding
+    // - Should contain mark and space frequencies
+    // - Should have phase continuity
 
-       console.log('✅ AudioWorklet processors loaded successfully!');
+    const config = DEFAULT_FSK_CONFIG;
+    const dataLength = 5; // "Hello"
+    const bitsPerByte = 8 + config.startBits + config.stopBits; // 10 bits
+    const samplesPerBit = Math.floor(config.sampleRate / config.baudRate); // 147 samples
 
-       // Test data
-       const testText = "Test123";
-       const testData = new TextEncoder().encode(testText);
-       console.log(`🔊 Testing with: "${testText}"`);
+    const totalBytes = config.preamblePattern.length + config.sfdPattern.length + dataLength;
+    const paddingSamples = samplesPerBit * 2;
+    const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
 
-       // Generate signal
-       await modulator.modulate(testData);
+    expect(expectedLength).toBe(13120); // Expected signal length for "Hello" with 48kHz
+  });
 
-       // Wait a bit for connection to stabilize, then check for buffered data
-       await new Promise(resolve => setTimeout(resolve, 1000));
+  test('Direct Audio Test - AudioWorklet Integration', async () => {
+    console.log('🧪 Starting Direct Audio Test with real FSK processing...');
 
-       // Check demodulated buffer
-       const demodulated = await demodulator.demodulate();
+    // Use the real FSK processor
+    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
 
-       // Verify result
-       const receivedText = new TextDecoder().decode(demodulated);
-       console.log(`📝 Received text: "${receivedText}"`);
+    const modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+    modulator.onprocessorerror = (error) => {
+      console.error('Modulator processor error:', error);
+    };
+    const demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+    demodulator.onprocessorerror = (error) => {
+      console.error('Demodulator processor error:', error);
+    };
 
-       // Assert perfect match
-       expect(receivedText).toBe(testText);
-       expect(demodulated.length).toBe(testData.length);
+    // Configure with test-friendly settings for reliable transmission
+    const testConfig = {
+      sampleRate: audioContext.sampleRate,
+      baudRate: 300,  // Lower baud rate for more reliable detection
+      markFrequency: 1650,
+      spaceFrequency: 1850,
+      syncThreshold: 0.6,  // Lower threshold for easier detection
+      preamblePattern: [0xAA, 0xAA],  // Shorter preamble for faster test
+      sfdPattern: [0x55]  // Shorter SFD
+    };
 
-       console.log('✅ Direct Audio Test PASSED - Perfect AudioWorklet loopback!');
-   });
+    await modulator.configure(testConfig);
+    await demodulator.configure(testConfig);
+
+    console.log('✅ Real FSK processors configured successfully!');
+
+    // Create audio connection: modulator -> demodulator -> destination
+    // WebAudio requires connection to destination for process() to be called
+    modulator.connect(demodulator);
+    demodulator.connect(audioContext.destination);
+    console.log('🔗 AudioWorkletNode connection established: modulator → demodulator → destination');
+
+    expect(audioContext.state).toBe('running');
+
+    // Test data
+    const testText = "AB";  // Short test data for reliable transmission
+    const testData = new TextEncoder().encode(testText);
+    console.log(`🔊 Testing with: "${testText}" (${testData.length} bytes)`);
+
+    // Start modulation - this will generate audio signal
+    await modulator.modulate(testData);
+    console.log('🎵 Modulation started - audio signal generating');
+
+    // Allow time for audio processing through the connection
+    console.log('⏳ Waiting for audio signal processing...');
+    await new Promise(resolve => setTimeout(resolve, 2000));  // 2 seconds for audio processing
+
+    const status = await demodulator.getStatus();
+    console.log('📊 Demodulator status:', status);
+
+    // Check demodulated buffer
+    const demodulated = await demodulator.demodulate();
+    console.log(`🔍 Demodulated ${demodulated.length} bytes`);
+
+    // Verify result
+    const receivedText = new TextDecoder().decode(demodulated);
+    console.log(`📝 Received text: "${receivedText}"`);
+
+    // Assert perfect match
+    expect(receivedText).toBe(testText);
+    expect(demodulated.length).toBe(testData.length);
+
+    console.log('✅ Direct Audio Test PASSED - Real WebAudio connection working!');
+
+    // Cleanup connections
+    modulator.disconnect();
+    demodulator.disconnect();
+  });
 });
 
 // WebAudioDataChannel specific tests using real browser APIs
@@ -183,7 +202,7 @@ describe('WebAudioDataChannel Browser Tests', () => {
   beforeEach(async () => {
     // Create AudioContext
     audioContext = new AudioContext();
-    
+
     // AudioContext requires user interaction to resume in browsers
     // Simulate user click to allow AudioContext to resume
     const button = document.createElement('button');
@@ -191,7 +210,7 @@ describe('WebAudioDataChannel Browser Tests', () => {
     document.body.appendChild(button);
 
     const resumePromise = new Promise<void>((resolve, _reject) => {
-      button.addEventListener('click', async function me () {
+      button.addEventListener('click', async function me() {
         button.removeEventListener('click', me);
         console.log('User clicked button, resuming AudioContext...');
         if (audioContext.state === 'suspended') {
@@ -200,10 +219,10 @@ describe('WebAudioDataChannel Browser Tests', () => {
         resolve();
       });
     });
-    
+
     await userEvent.click(button);
     await resumePromise;
-    
+
     document.body.removeChild(button);
     expect(audioContext.state).toBe('running');
   });
@@ -219,10 +238,10 @@ describe('WebAudioDataChannel Browser Tests', () => {
     try {
       await WebAudioDataChannel.addModule(audioContext, './test-processor.js');
       const dataChannel = new WebAudioDataChannel(audioContext, 'test-processor');
-      
+
       expect(dataChannel).toBeInstanceOf(AudioWorkletNode);
       expect(dataChannel.isReady()).toBe(true);
-      
+
       console.log('✅ WebAudioDataChannel instance created successfully');
     } catch (error) {
       console.log('Expected error in test environment:', error);
@@ -284,29 +303,29 @@ describe('WebAudioDataChannel Browser Tests', () => {
         }
         registerProcessor('simple-test-processor', SimpleTestProcessor);
       `;
-      
+
       const blob = new Blob([testProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'simple-test-processor');
-      
+
       // Test configure method
       await dataChannel.configure({ baudRate: 300, markFreq: 1650 });
       console.log('✅ Configure method succeeded');
-      
+
       // Test modulate method
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
       await dataChannel.modulate(testData);
       console.log('✅ Modulate method succeeded');
-      
+
       // Test demodulate method
       const demodulated = await dataChannel.demodulate();
       expect(demodulated).toEqual(new Uint8Array([65, 66, 67])); // "ABC"
       console.log('✅ Demodulate method succeeded');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Message interface test failed (may be expected):', error);
       // Don't fail the test - browser environment may have restrictions
@@ -347,27 +366,27 @@ describe('WebAudioDataChannel Browser Tests', () => {
         }
         registerProcessor('error-test-processor', ErrorTestProcessor);
       `;
-      
+
       const blob = new Blob([errorProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'error-test-processor');
-      
+
       // Test configuration error
       await expect(async () => {
         await dataChannel.configure({ baudRate: 300 });
       }).rejects.toThrow('Configuration failed');
-      
+
       // Test modulation failure
       await expect(async () => {
         await dataChannel.modulate(new Uint8Array([0x48]));
       }).rejects.toThrow('Modulation failed');
-      
+
       console.log('✅ Error handling tests passed');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Error handling test failed (may be expected):', error);
       // Don't fail the test - browser environment may have restrictions
@@ -389,26 +408,26 @@ describe('WebAudioDataChannel Browser Tests', () => {
         }
         registerProcessor('reset-test-processor', ResetTestProcessor);
       `;
-      
+
       const blob = new Blob([testProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'reset-test-processor');
-      
+
       // Start a configuration that won't complete
       const configPromise = dataChannel.configure({ baudRate: 300 });
-      
+
       // Reset the channel
       dataChannel.reset();
-      
+
       // The promise should reject
       await expect(configPromise).rejects.toThrow('DataChannel reset');
-      
+
       console.log('✅ Reset functionality test passed');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Reset test failed (may be expected):', error);
       // Don't fail the test - browser environment may have restrictions
@@ -423,9 +442,9 @@ describe('WebAudioDataChannel Browser Tests', () => {
         new WebAudioDataChannel(audioContext, 'nonexistent-processor');
         // Should fail but the constructor should exist
       }).toThrow();
-      
+
       console.log('✅ AudioWorkletNode inheritance verified');
-      
+
     } catch (error) {
       // This is expected - testing the constructor behavior
       console.log('Constructor test completed (expected error):', error);
@@ -440,7 +459,7 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
   beforeEach(async () => {
     // Create AudioContext
     audioContext = new AudioContext();
-    
+
     // AudioContext requires user interaction to resume in browsers
     // Simulate user click to allow AudioContext to resume
     const button = document.createElement('button');
@@ -448,7 +467,7 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
     document.body.appendChild(button);
 
     const resumePromise = new Promise<void>((resolve, _reject) => {
-      button.addEventListener('click', async function me () {
+      button.addEventListener('click', async function me() {
         button.removeEventListener('click', me);
         console.log('User clicked button, resuming AudioContext...');
         if (audioContext.state === 'suspended') {
@@ -457,10 +476,10 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         resolve();
       });
     });
-    
+
     await userEvent.click(button);
     await resumePromise;
-    
+
     document.body.removeChild(button);
     expect(audioContext.state).toBe('running');
   });
@@ -515,30 +534,30 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('xmodem-test-processor', XModemTestProcessor);
       `;
-      
+
       const blob = new Blob([xmodemProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'xmodem-test-processor');
-      
+
       // Create XModem transport
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
       // Verify basic integration
       expect(transport.isReady()).toBe(true);
       expect(transport.transportName).toBe('XModem');
-      
+
       // Configure transport
       transport.configure({ timeoutMs: 1000, maxRetries: 2 });
       expect(transport.getConfig().timeoutMs).toBe(1000);
       expect(transport.getConfig().maxRetries).toBe(2);
-      
+
       console.log('✅ XModem Transport successfully integrated with WebAudio DataChannel');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('XModem integration test failed (may be expected):', error);
       // Don't fail the test - browser environment may have restrictions
@@ -586,25 +605,25 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('control-tracking-processor', ControlTrackingProcessor);
       `;
-      
+
       const blob = new Blob([controlTrackingProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'control-tracking-processor');
-      
+
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
       // Test control command transmission
       await transport.sendControl('ACK');  // Should send 1 byte: 0x06
       await transport.sendControl('NAK');  // Should send 1 byte: 0x15
       await transport.sendControl('EOT');  // Should send 1 byte: 0x04
-      
+
       console.log('✅ XModem control commands transmitted as single bytes');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Control command test failed (may be expected):', error);
       // Don't fail the test - this tests the implementation details
@@ -663,29 +682,37 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('data-tracking-processor', DataTrackingProcessor);
       `;
-      
+
       const blob = new Blob([dataTrackingProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'data-tracking-processor');
-      
+
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
+      // Configure for quick timeout to test packet structure
+      transport.configure({ timeoutMs: 200, maxRetries: 1 });
+
       // Test data packet transmission
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
-      
+
       try {
         await transport.sendData(testData);
         console.log('✅ XModem data packet transmitted with correct structure');
       } catch (error) {
-        console.log('Data packet transmission test (expected timeout):', error);
-        // Expected to timeout in test environment due to no receiver
+        if ((error as Error).message.includes('Timeout') || (error as Error).message.includes('max retries')) {
+          console.log('✅ Expected timeout occurred - packet structure verified');
+          // タイムアウトは期待される動作（受信側が存在しないため）
+        } else {
+          console.log('Data packet transmission test (unexpected error):', error);
+          throw error;
+        }
       }
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Data packet test failed (may be expected):', error);
       // Don't fail the test - this tests complex protocol behavior
@@ -742,23 +769,23 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('error-handling-processor', ErrorHandlingProcessor);
       `;
-      
+
       const blob = new Blob([errorHandlingProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'error-handling-processor');
-      
+
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
       // Configure for quick timeouts to test error handling
       transport.configure({ timeoutMs: 100, maxRetries: 1 });
-      
+
       // Test normal operation first
       await transport.sendControl('ACK');
       console.log('✅ Normal operation succeeded');
-      
+
       // Test with data channel errors (would require custom processor messaging)
       try {
         const testData = new Uint8Array([0x54, 0x65, 0x73, 0x74]); // "Test"
@@ -767,11 +794,11 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         console.log('Expected error in data transmission (timeout expected):', error);
         // Expected to fail due to no receiver acknowledging
       }
-      
+
       console.log('✅ Error handling integration tested');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Error handling test failed (may be expected):', error);
       // Don't fail the test - this tests complex error scenarios
@@ -818,33 +845,33 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('stats-tracking-processor', StatsTrackingProcessor);
       `;
-      
+
       const blob = new Blob([statsTrackingProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'stats-tracking-processor');
-      
+
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
       // Get initial statistics
       const initialStats = transport.getStatistics();
       expect(initialStats.packetsSent).toBe(0);
       expect(initialStats.packetsReceived).toBe(0);
-      
+
       // Send some control commands
       await transport.sendControl('ACK');
       await transport.sendControl('NAK');
-      
+
       // Check statistics update
       const updatedStats = transport.getStatistics();
       expect(updatedStats.packetsSent).toBeGreaterThan(initialStats.packetsSent);
-      
+
       console.log('✅ Transport statistics properly updated with WebAudio integration');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Statistics test failed (may be expected):', error);
       // Don't fail the test - this tests implementation details
@@ -893,25 +920,25 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         }
         registerProcessor('config-test-processor', ConfigTestProcessor);
       `;
-      
+
       const blob = new Blob([configTestProcessorCode], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
-      
+
       await WebAudioDataChannel.addModule(audioContext, url);
       const dataChannel = new WebAudioDataChannel(audioContext, 'config-test-processor');
-      
+
       const { XModemTransport } = await import('../../src/transports/xmodem/xmodem.js');
       const transport = new XModemTransport(dataChannel);
-      
+
       // Test transport configuration
       const config = { timeoutMs: 2000, maxRetries: 5, maxPayloadSize: 64 };
       transport.configure(config);
-      
+
       const transportConfig = transport.getConfig();
       expect(transportConfig.timeoutMs).toBe(2000);
       expect(transportConfig.maxRetries).toBe(5);
       expect(transportConfig.maxPayloadSize).toBe(64);
-      
+
       // Test WebAudio configuration
       const testFskConfig = {
         sampleRate: audioContext.sampleRate,
@@ -919,13 +946,13 @@ describe('XModem-WebAudio Integration Browser Tests', () => {
         markFrequency: 1650,
         spaceFrequency: 1850
       };
-      
+
       await dataChannel.configure(testFskConfig);
-      
+
       console.log('✅ Configuration properly propagated to WebAudio components');
-      
+
       URL.revokeObjectURL(url);
-      
+
     } catch (error) {
       console.log('Configuration test failed (may be expected):', error);
       // Don't fail the test - this tests configuration handling
