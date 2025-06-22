@@ -43,7 +43,7 @@
 
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
-import { DataPacket, ControlPacket, ControlType } from './types';
+import { DataPacket, ControlType } from './types';
 
 export interface XModemConfig {
   timeoutMs: number;
@@ -138,8 +138,7 @@ export class XModemTransport extends BaseTransport {
 
   async sendControl(command: string): Promise<void> {
     const controlType = this.parseControlCommand(command);
-    const packet = XModemPacket.createControl(controlType);
-    const serialized = XModemPacket.serialize(packet);
+    const serialized = XModemPacket.serializeControl(controlType);
     await this.dataChannel.modulate(serialized);
     this.statistics.packetsSent++;
   }
@@ -217,6 +216,16 @@ export class XModemTransport extends BaseTransport {
       return; // 空データはスキップ
     }
     
+    // Check if it's a single control byte
+    if (data.length === 1) {
+      const controlResult = XModemPacket.parseControl(data);
+      if (controlResult.isControl && controlResult.controlType) {
+        await this.handleControlCommand(controlResult.controlType);
+        return;
+      }
+    }
+    
+    // Try to parse as data packet
     const result = XModemPacket.parse(data);
     if (result.error || !result.packet) {
       // Emit error event for invalid packets
@@ -224,20 +233,13 @@ export class XModemTransport extends BaseTransport {
       return;
     }
 
-    const packet = result.packet;
-    
-    if (packet.sequence === 0) {
-      // Control packet
-      await this.handleControlPacket(packet as ControlPacket);
-    } else {
-      // Data packet
-      await this.handleDataPacket(packet as DataPacket);
-    }
+    // Data packet
+    await this.handleDataPacket(result.packet);
   }
 
-  private async handleControlPacket(packet: ControlPacket): Promise<void> {
+  private async handleControlCommand(controlType: ControlType): Promise<void> {
     if (this.state === State.SENDING) {
-      switch (packet.control) {
+      switch (controlType) {
         case ControlType.ACK:
           this.fragmentIndex++;
           this.sequence = (this.sequence % 255) + 1;
@@ -264,7 +266,7 @@ export class XModemTransport extends BaseTransport {
           break;
       }
     } else if (this.state === State.RECEIVING) {
-      switch (packet.control) {
+      switch (controlType) {
         case ControlType.EOT:
           this.completeReceive();
           break;

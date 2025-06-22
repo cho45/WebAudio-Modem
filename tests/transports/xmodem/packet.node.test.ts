@@ -67,27 +67,42 @@ describe('XModem Packet', () => {
     });
   });
 
-  describe('Control Packet Creation', () => {
-    test('Create ACK control packet', () => {
-      const packet = XModemPacket.createControl(ControlType.ACK);
+  describe('Control Character Handling', () => {
+    test('Serialize control characters as single bytes', () => {
+      const ackBytes = XModemPacket.serializeControl(ControlType.ACK);
+      expect(ackBytes.length).toBe(1);
+      expect(ackBytes[0]).toBe(ControlType.ACK);
 
-      expect(packet.soh).toBe(0x01);
-      expect(packet.sequence).toBe(0x00);
-      expect(packet.invSequence).toBe(0xFF);
-      expect(packet.length).toBe(0x01);
-      expect(packet.control).toBe(ControlType.ACK);
-      expect(packet.checksum).toBeGreaterThan(0);
+      const nakBytes = XModemPacket.serializeControl(ControlType.NAK);
+      expect(nakBytes.length).toBe(1);
+      expect(nakBytes[0]).toBe(ControlType.NAK);
+
+      const eotBytes = XModemPacket.serializeControl(ControlType.EOT);
+      expect(eotBytes.length).toBe(1);
+      expect(eotBytes[0]).toBe(ControlType.EOT);
     });
 
-    test('Create all control packet types', () => {
-      const controlTypes = [ControlType.ACK, ControlType.NAK, ControlType.EOT, ControlType.ENQ, ControlType.CAN];
-      
-      controlTypes.forEach(controlType => {
-        const packet = XModemPacket.createControl(controlType);
-        expect(packet.control).toBe(controlType);
-        expect(packet.sequence).toBe(0x00);
-        expect(packet.length).toBe(0x01);
-      });
+    test('Parse control characters from single bytes', () => {
+      const ackResult = XModemPacket.parseControl(new Uint8Array([ControlType.ACK]));
+      expect(ackResult.isControl).toBe(true);
+      expect(ackResult.controlType).toBe(ControlType.ACK);
+
+      const nakResult = XModemPacket.parseControl(new Uint8Array([ControlType.NAK]));
+      expect(nakResult.isControl).toBe(true);
+      expect(nakResult.controlType).toBe(ControlType.NAK);
+
+      const eotResult = XModemPacket.parseControl(new Uint8Array([ControlType.EOT]));
+      expect(eotResult.isControl).toBe(true);
+      expect(eotResult.controlType).toBe(ControlType.EOT);
+    });
+
+    test('Reject invalid control bytes', () => {
+      const invalidResult = XModemPacket.parseControl(new Uint8Array([0xFF]));
+      expect(invalidResult.isControl).toBe(false);
+      expect(invalidResult.controlType).toBeUndefined();
+
+      const multiByteResult = XModemPacket.parseControl(new Uint8Array([ControlType.ACK, 0x00]));
+      expect(multiByteResult.isControl).toBe(false);
     });
   });
 
@@ -109,20 +124,7 @@ describe('XModem Packet', () => {
       expect(serialized.length).toBe(8); // 4 + 2 + 2
     });
 
-    test('Serialize control packet correctly', () => {
-      const packet = XModemPacket.createControl(ControlType.NAK);
-      const serialized = XModemPacket.serialize(packet);
-
-      expect(serialized[0]).toBe(0x01); // SOH
-      expect(serialized[1]).toBe(0x00); // SEQ
-      expect(serialized[2]).toBe(0xFF); // ~SEQ
-      expect(serialized[3]).toBe(0x01); // LEN
-      expect(serialized[4]).toBe(ControlType.NAK); // Control
-      expect(serialized[5]).toBe((packet.checksum >> 8) & 0xFF); // CRC high
-      expect(serialized[6]).toBe(packet.checksum & 0xFF);        // CRC low
-      
-      expect(serialized.length).toBe(7); // 4 + 1 + 2
-    });
+    // Control characters are now serialized as single bytes, not packets
 
     test('Serialize empty payload packet', () => {
       const packet = XModemPacket.createData(1, new Uint8Array([]));
@@ -152,19 +154,7 @@ describe('XModem Packet', () => {
       expect((parsedPacket as any).payload).toEqual(originalPayload);
     });
 
-    test('Parse valid control packet', () => {
-      const originalPacket = XModemPacket.createControl(ControlType.EOT);
-      const serialized = XModemPacket.serialize(originalPacket);
-
-      const result = XModemPacket.parse(serialized);
-
-      expect(result.error).toBeUndefined();
-      expect(result.packet).toBeDefined();
-      
-      const parsedPacket = result.packet!;
-      expect(parsedPacket.sequence).toBe(0x00);
-      expect((parsedPacket as any).control).toBe(ControlType.EOT);
-    });
+    // Control characters are now handled separately, not as packets
 
     test('Detect packet too short', () => {
       const tooShort = new Uint8Array([0x01, 0x05]); // Only 2 bytes
@@ -210,13 +200,13 @@ describe('XModem Packet', () => {
       expect(result.error).toContain('CRC error');
     });
 
-    test('Detect invalid control type', () => {
-      // Manually create packet with invalid control byte
-      const invalidControl = new Uint8Array([0x01, 0x00, 0xFF, 0x01, 0xFF, 0x00, 0x00]); // 0xFF is not valid control
-      const result = XModemPacket.parse(invalidControl);
+    test('Detect sequence 0 (reserved for old control packets)', () => {
+      // Sequence 0 is now invalid since control characters are sent as single bytes
+      const seq0packet = new Uint8Array([0x01, 0x00, 0xFF, 0x01, 0xFF, 0x00, 0x00]);
+      const result = XModemPacket.parse(seq0packet);
 
       expect(result.packet).toBeUndefined();
-      expect(result.error).toContain('Invalid control');
+      expect(result.error).toContain('Invalid sequence 0');
     });
   });
 
@@ -226,10 +216,7 @@ describe('XModem Packet', () => {
       expect(XModemPacket.verify(packet)).toBe(true);
     });
 
-    test('Verify valid control packet', () => {
-      const packet = XModemPacket.createControl(ControlType.ACK);
-      expect(XModemPacket.verify(packet)).toBe(true);
-    });
+    // Control characters don't use CRC verification - they are single bytes
 
     test('Reject packet with wrong CRC', () => {
       const packet = XModemPacket.createData(1, new Uint8Array([0x01]));
@@ -258,16 +245,15 @@ describe('XModem Packet', () => {
       });
     });
 
-    test('Control packet round-trip', () => {
+    test('Control character round-trip', () => {
       const controlTypes = [ControlType.ACK, ControlType.NAK, ControlType.EOT, ControlType.ENQ, ControlType.CAN];
 
       controlTypes.forEach(controlType => {
-        const packet = XModemPacket.createControl(controlType);
-        const serialized = XModemPacket.serialize(packet);
-        const result = XModemPacket.parse(serialized);
+        const serialized = XModemPacket.serializeControl(controlType);
+        const result = XModemPacket.parseControl(serialized);
 
-        expect(result.error).toBeUndefined();
-        expect((result.packet! as any).control).toBe(controlType);
+        expect(result.isControl).toBe(true);
+        expect(result.controlType).toBe(controlType);
       });
     });
   });

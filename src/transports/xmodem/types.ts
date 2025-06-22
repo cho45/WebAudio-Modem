@@ -18,18 +18,9 @@ export interface DataPacket {
 }
 
 /**
- * XModem control packet structure
- * Format: SOH | 0x00 | 0xFF | 0x01 | CONTROL | CRC-16
+ * Control characters are sent as single bytes (standard XModem protocol)
+ * No packet structure for control characters
  */
-export interface ControlPacket {
-  readonly soh: 0x01;           // Start of Header (fixed)
-  readonly sequence: 0x00;      // Control packet identifier
-  readonly invSequence: 0xFF;   // Complement of 0x00
-  readonly length: 0x01;        // Control data length (fixed 1 byte)
-  readonly control: ControlType; // Control command
-  readonly payload: Uint8Array; // Control type as single-byte payload
-  readonly checksum: number;    // CRC-16-CCITT checksum
-}
 
 /**
  * Control packet types based on ASCII control characters
@@ -43,28 +34,34 @@ export enum ControlType {
 }
 
 /**
- * Union type for all packet types
+ * Only data packets use packet structure
+ * Control characters are sent as single bytes
  */
-export type Packet = DataPacket | ControlPacket;
+export type Packet = DataPacket;
 
 /**
- * Packet parsing result
+ * Packet parsing result (for data packets only)
  */
 export interface PacketParseResult {
   readonly success: boolean;
-  readonly packet?: Packet;
+  readonly packet?: DataPacket;
   readonly error?: string;
   readonly bytesConsumed: number;
 }
 
 /**
- * Raw packet format constants
+ * Control character recognition result
+ */
+export interface ControlParseResult {
+  readonly isControl: boolean;
+  readonly controlType?: ControlType;
+}
+
+/**
+ * Data packet format constants
  */
 export const PacketConstants = {
   SOH: 0x01,
-  CONTROL_SEQUENCE: 0x00,
-  CONTROL_INV_SEQUENCE: 0xFF,
-  CONTROL_LENGTH: 0x01,
   
   // Size calculations
   HEADER_SIZE: 4,        // SOH + SEQ + ~SEQ + LEN

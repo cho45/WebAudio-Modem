@@ -6,7 +6,7 @@
  */
 
 import { CRC16 } from '../../utils/crc16';
-import { DataPacket, ControlPacket, ControlType, PacketConstants } from './types';
+import { DataPacket, ControlType, ControlParseResult, PacketConstants } from './types';
 
 /**
  * XModem packet handler - Simple and focused
@@ -47,66 +47,47 @@ export class XModemPacket {
   }
 
   /**
-   * Create a control packet
+   * Check if a single byte is a control character
    */
-  static createControl(controlType: ControlType): ControlPacket {
-    const packet: ControlPacket = {
-      soh: PacketConstants.SOH,
-      sequence: 0,
-      invSequence: 0xFF,
-      length: 1,
-      control: controlType,
-      payload: new Uint8Array([controlType]),
-      checksum: 0
-    };
-
-    // Calculate CRC
-    const crcData = new Uint8Array([
-      packet.soh,
-      packet.sequence,
-      packet.invSequence,
-      packet.length,
-      packet.control
-    ]);
-    
-    return { ...packet, checksum: CRC16.calculate(crcData) };
-  }
-
-  /**
-   * Serialize packet to bytes
-   */
-  static serialize(packet: DataPacket | ControlPacket): Uint8Array {
-    if (packet.sequence === 0) {
-      // Control packet
-      const cp = packet as ControlPacket;
-      return new Uint8Array([
-        cp.soh,
-        cp.sequence,
-        cp.invSequence,
-        cp.length,
-        cp.control,
-        (cp.checksum >> 8) & 0xFF,
-        cp.checksum & 0xFF
-      ]);
-    } else {
-      // Data packet
-      const dp = packet as DataPacket;
-      const result = new Uint8Array(4 + dp.payload.length + 2);
-      result[0] = dp.soh;
-      result[1] = dp.sequence;
-      result[2] = dp.invSequence;
-      result[3] = dp.length;
-      result.set(dp.payload, 4);
-      result[4 + dp.payload.length] = (dp.checksum >> 8) & 0xFF;
-      result[4 + dp.payload.length + 1] = dp.checksum & 0xFF;
-      return result;
+  static parseControl(data: Uint8Array): ControlParseResult {
+    if (data.length !== 1) {
+      return { isControl: false };
     }
+
+    const byte = data[0];
+    if (Object.values(ControlType).includes(byte as ControlType)) {
+      return { isControl: true, controlType: byte as ControlType };
+    }
+
+    return { isControl: false };
   }
 
   /**
-   * Parse packet from bytes
+   * Serialize data packet to bytes
    */
-  static parse(data: Uint8Array): { packet?: DataPacket | ControlPacket; error?: string } {
+  static serialize(packet: DataPacket): Uint8Array {
+    const result = new Uint8Array(4 + packet.payload.length + 2);
+    result[0] = packet.soh;
+    result[1] = packet.sequence;
+    result[2] = packet.invSequence;
+    result[3] = packet.length;
+    result.set(packet.payload, 4);
+    result[4 + packet.payload.length] = (packet.checksum >> 8) & 0xFF;
+    result[4 + packet.payload.length + 1] = packet.checksum & 0xFF;
+    return result;
+  }
+
+  /**
+   * Serialize control character to single byte
+   */
+  static serializeControl(controlType: ControlType): Uint8Array {
+    return new Uint8Array([controlType]);
+  }
+
+  /**
+   * Parse data packet from bytes
+   */
+  static parse(data: Uint8Array): { packet?: DataPacket; error?: string } {
     if (data.length < 6) {
       return { error: `Too short: ${data.length} bytes` };
     }
@@ -124,68 +105,39 @@ export class XModemPacket {
       return { error: `Bad sequence complement` };
     }
 
+    if (sequence === 0) {
+      return { error: `Invalid sequence 0 - reserved for control packets in old format` };
+    }
+
     const expectedSize = 4 + length + 2;
     if (data.length < expectedSize) {
       return { error: `Incomplete: need ${expectedSize}, got ${data.length}` };
     }
 
-    if (sequence === 0) {
-      // Control packet
-      const control = data[4] as ControlType;
-      const receivedCrc = (data[5] << 8) | data[6];
-      
-      if (!Object.values(ControlType).includes(control)) {
-        return { error: `Invalid control: 0x${control.toString(16)}` };
-      }
+    const payload = data.slice(4, 4 + length);
+    const receivedCrc = (data[4 + length] << 8) | data[4 + length + 1];
+    
+    const packet: DataPacket = {
+      soh, sequence, invSequence, length, payload, checksum: receivedCrc
+    };
 
-      const packet: ControlPacket = {
-        soh, sequence, invSequence, length, control, 
-        payload: new Uint8Array([control]), checksum: receivedCrc
-      };
-
-      if (!XModemPacket.verify(packet)) {
-        return { error: 'CRC error' };
-      }
-
-      return { packet };
-    } else {
-      // Data packet
-      const payload = data.slice(4, 4 + length);
-      const receivedCrc = (data[4 + length] << 8) | data[4 + length + 1];
-      
-      const packet: DataPacket = {
-        soh, sequence, invSequence, length, payload, checksum: receivedCrc
-      };
-
-      if (!XModemPacket.verify(packet)) {
-        return { error: 'CRC error' };
-      }
-
-      return { packet };
+    if (!XModemPacket.verify(packet)) {
+      return { error: 'CRC error' };
     }
+
+    return { packet };
   }
 
   /**
-   * Verify packet CRC
+   * Verify data packet CRC
    */
-  static verify(packet: DataPacket | ControlPacket): boolean {
-    if (packet.sequence === 0) {
-      // Control packet
-      const cp = packet as ControlPacket;
-      const crcData = new Uint8Array([
-        cp.soh, cp.sequence, cp.invSequence, cp.length, cp.control
-      ]);
-      return CRC16.calculate(crcData) === cp.checksum;
-    } else {
-      // Data packet
-      const dp = packet as DataPacket;
-      const crcData = new Uint8Array(4 + dp.payload.length);
-      crcData[0] = dp.soh;
-      crcData[1] = dp.sequence;
-      crcData[2] = dp.invSequence;
-      crcData[3] = dp.length;
-      crcData.set(dp.payload, 4);
-      return CRC16.calculate(crcData) === dp.checksum;
-    }
+  static verify(packet: DataPacket): boolean {
+    const crcData = new Uint8Array(4 + packet.payload.length);
+    crcData[0] = packet.soh;
+    crcData[1] = packet.sequence;
+    crcData[2] = packet.invSequence;
+    crcData[3] = packet.length;
+    crcData.set(packet.payload, 4);
+    return CRC16.calculate(crcData) === packet.checksum;
   }
 }
