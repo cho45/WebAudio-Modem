@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FSK False Positive Debug</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .log { background: #f0f0f0; padding: 10px; margin: 10px 0; max-height: 400px; overflow-y: auto; }
+        .controls { margin: 10px 0; }
+        button { margin: 5px; padding: 10px; }
+        .status { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>FSK False Positive Debug</h1>
+    
+    <div class="controls">
+        <button onclick="startTest()">Start AudioWorklet Test</button>
+    </div>
+
+    <div class="status" id="status">Status: Not started. Check browser console for detailed logs.</div>
+    
+    <div style="padding: 20px; background: #e8f4f8; margin: 10px 0;">
+        <h3>Instructions:</h3>
+        <ol>
+            <li>Open browser DevTools (F12)</li>
+            <li>Go to Console tab</li>
+            <li>Click "Start AudioWorklet Test" button</li>
+            <li>Watch for FSKProcessor logs in console</li>
+        </ol>
+        <p><strong>Key logs to watch for:</strong></p>
+        <ul>
+            <li><code>*** AUDIO OUTPUT STARTED ***</code> - Audio generation begins</li>
+            <li><code>*** AUDIO INPUT DETECTED ***</code> - Audio reception begins</li>
+            <li><code>*** DEMODULATION RESULT ***</code> - Actual bytes demodulated</li>
+        </ul>
+    </div>
+
+    <script type="module">
+        let audioContext;
+        let modulator;
+        let demodulator;
+
+        window.startTest = async function() {
+            try {
+                await setupAudio();
+                await runDebugTest();
+            } catch (error) {
+                console.error('ERROR:', error.message);
+                setStatus(`ERROR: ${error.message}`);
+            }
+        };
+
+        function setStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+
+        async function setupAudio() {
+            setStatus('Setting up AudioContext...');
+            
+            // Create AudioContext
+            audioContext = new AudioContext();
+            console.log('AudioContext created');
+            
+            // Resume AudioContext (requires user interaction)
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+                console.log('AudioContext resumed');
+            }
+            
+            // Load AudioWorklet module and create WebAudioDataChannels
+            const { WebAudioDataChannel } = await import('/src/webaudio/webaudio-data-channel.js');
+            
+            const processorUrl = '/src/webaudio/processors/fsk-processor.js';
+            await WebAudioDataChannel.addModule(audioContext, processorUrl);
+            console.log('FSK processor module loaded');
+            
+            modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+            demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+            
+            console.log('AudioWorkletNodes created');
+            
+            // Connect: modulator -> demodulator -> destination
+            modulator.connect(demodulator);
+            demodulator.connect(audioContext.destination);
+            console.log('Audio nodes connected: modulator → demodulator → destination');
+            
+            // Configure both with FSK settings
+            const config = {
+                sampleRate: audioContext.sampleRate,
+                baudRate: 300,
+                markFrequency: 1650,
+                spaceFrequency: 1850,
+                preamblePattern: [0x55, 0x55],
+                sfdPattern: [0x7E],
+                startBits: 1,
+                stopBits: 1,
+                parity: 'none',
+                syncThreshold: 0.8,
+                agcEnabled: true,
+                preFilterBandwidth: 800,
+                adaptiveThreshold: true
+            };
+            
+            console.log('Configuring with:', config);
+            
+            try {
+                await modulator.configure(config);
+                console.log('Modulator configured successfully');
+                
+                await demodulator.configure(config);
+                console.log('Demodulator configured successfully');
+                
+                console.log('FSK processors configured successfully');
+            } catch (error) {
+                console.error('Configuration error:', error.message);
+                throw error;
+            }
+            
+            setStatus('Audio setup complete');
+        }
+
+        async function runDebugTest() {
+            setStatus('Running debug test...');
+            
+            // Test data: "AB"
+            const testData = new TextEncoder().encode("AB");
+            console.log(`=== STARTING TEST ===`);
+            console.log(`Testing with data: "${new TextDecoder().decode(testData)}" (${testData.length} bytes)`);
+            console.log(`Test data bytes: [${Array.from(testData).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+            
+            // Start modulation
+            await modulator.modulate(testData);
+            console.log('Modulation started');
+            
+            // Wait for audio processing
+            console.log('Waiting for audio signal processing...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Check demodulator status before demodulation
+            const statusBefore = await demodulator.getStatus();
+            console.log('Demodulator status before demodulation:', statusBefore);
+            
+            // Check if any data was already demodulated
+            if (statusBefore.demodulatedBufferLength > 0) {
+                console.warn(`⚠️ Buffer already contains ${statusBefore.demodulatedBufferLength} bytes before demodulation!`);
+            }
+            
+            // Get demodulated data
+            const demodulatedBytes = await demodulator.demodulate();
+            const demodulatedText = new TextDecoder().decode(demodulatedBytes);
+            
+            // Check status after demodulation
+            const statusAfter = await demodulator.getStatus();
+            console.log('Demodulator status after demodulation:', statusAfter);
+            
+            console.log(`=== DEMODULATION RESULT ===`);
+            console.log(`Demodulated ${demodulatedBytes.length} bytes`);
+            console.log(`Demodulated bytes: [${Array.from(demodulatedBytes).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+            console.log(`Demodulated text: "${demodulatedText}"`);
+            
+            // Analysis
+            console.log(`=== ANALYSIS ===`);
+            if (demodulatedText === "AB") {
+                console.log('✅ Perfect match!');
+                setStatus('✅ Perfect match!');
+            } else if (demodulatedText.includes("AB")) {
+                console.warn(`⚠️ Contains expected data but has extra bytes: "${demodulatedText}"`);
+                
+                if (demodulatedBytes.length > 2) {
+                    const extraBytes = demodulatedBytes.slice(0, demodulatedBytes.length - 2);
+                    console.log(`Extra byte analysis:`);
+                    extraBytes.forEach((byte, i) => {
+                        console.log(`  Extra[${i}]: 0x${byte.toString(16).padStart(2, '0')} = ${byte} = binary ${byte.toString(2).padStart(8, '0')}`);
+                    });
+                    
+                    console.log(`Expected patterns:`);
+                    console.log(`  Preamble: 0x55 = 01010101`);
+                    console.log(`  SFD: 0x7E = 01111110`);
+                }
+                
+                setStatus(`⚠️ Extra ${demodulatedBytes.length - 2} bytes found`);
+            } else {
+                console.error(`❌ Completely different result: "${demodulatedText}"`);
+                setStatus(`❌ Wrong result: "${demodulatedText}"`);
+            }
+            
+            console.log(`=== SUMMARY ===`);
+            console.log(`Expected: "AB" (2 bytes)`);
+            console.log(`Received: "${demodulatedText}" (${demodulatedBytes.length} bytes)`);
+            console.log(`FSKCore processDemodulation calls: ${statusAfter.processDemodulationCallCount || 'unknown'}`);
+            
+            // Display detailed debug information
+            if (statusAfter.syncDetections > 0) {
+                console.log(`=== DEBUG INFO ===`);
+                console.log(`Sync detections: ${statusAfter.syncDetections}`);
+                console.log(`Total bytes produced: ${statusAfter.totalBytesProduced}`);
+                console.log(`Sync details:`, statusAfter.syncDetails);
+            }
+            
+            if (!setStatus.textContent.includes('✅') && !setStatus.textContent.includes('⚠️') && !setStatus.textContent.includes('❌')) {
+                setStatus('Debug test complete - check console for details');
+            }
+        }
+    </script>
+</body>
+</html>

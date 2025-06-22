@@ -20,7 +20,6 @@ interface WorkletMessage {
 
 export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
   private fskCore: FSKCore;
-  private inputBuffer: RingBuffer<Float32Array>;
   private outputBuffer: RingBuffer<Float32Array>;
   private demodulatedBuffer: RingBuffer<Uint8Array>;
   private pendingModulation: ChunkedModulator | null = null;
@@ -33,8 +32,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     // Initialize FSK core (will be configured via message)
     this.fskCore = new FSKCore();
     
-    // Create simple buffers for audio streaming
-    this.inputBuffer = new RingBuffer(Float32Array, 8192);
+    // Create buffers for audio streaming
+    // inputBuffer: minimal buffering for frame sync detection
+    this.inputBuffer = new RingBuffer(Float32Array, 16384);
     this.outputBuffer = new RingBuffer(Float32Array, 8192);
 
     // 復調されたデータを保持するリングバッファ
@@ -58,7 +58,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     
     console.log(`[FSKProcessor] Queuing modulation of ${data.length} bytes`);
     this.pendingModulation = new ChunkedModulator(this.fskCore);
-    this.pendingModulation.startModulation(data);
+    await this.pendingModulation.startModulation(data);
   }
 
   async demodulate(): Promise<Uint8Array> {
@@ -146,7 +146,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             id,
             type: 'result',
             data: {
-              inputBufferLength: this.inputBuffer.length,
               outputBufferLength: this.outputBuffer.length,
               demodulatedBufferLength: this.demodulatedBuffer.length,
               pendingModulation: !!this.pendingModulation,
@@ -170,29 +169,29 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     }
   }
   
-  private chunksProcessed = 0;
+  private samplesGenerated = 0;
   
-  private async processChunk(): Promise<void> {
+  private getNextModulationSamples(sampleCount: number): void {
     if (!this.pendingModulation) return;
     
-    const result = await this.pendingModulation.processNextChunk();
+    const result = this.pendingModulation.getNextSamples(sampleCount);
     
     if (result) {
-      this.chunksProcessed++;
+      this.samplesGenerated += result.signal.length;
       
       // Add modulated signal to output buffer
       this.outputBuffer.writeArray(result.signal);
       
-      // Log first chunk and completion
-      if (this.chunksProcessed === 1) {
-        console.log(`[FSKProcessor] *** MODULATION CHUNKS STARTED *** First chunk: ${result.signal.length} samples`);
+      // Log modulation start and completion
+      if (this.samplesGenerated === result.signal.length) {
+        console.log(`[FSKProcessor] *** MODULATION STARTED *** Total signal: ${result.totalSamples} samples`);
       }
       
       // Check if modulation is complete
       if (result.isComplete) {
-        console.log(`[FSKProcessor] *** MODULATION COMPLETE *** Processed ${this.chunksProcessed} chunks total`);
+        console.log(`[FSKProcessor] *** MODULATION COMPLETE *** Generated ${result.totalSamples} samples total`);
         this.pendingModulation = null;
-        this.chunksProcessed = 0; // Reset for next modulation
+        this.samplesGenerated = 0; // Reset for next modulation
       }
     }
   }
@@ -211,9 +210,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       this.hasLoggedAudioInput = true;
     }
     
-    // Simply buffer incoming samples - FSKCore handles the complex processing
-    this.inputBuffer.writeArray(inputSamples);
-    this.processDemodulation();
+    // Direct processing: pass audio samples directly to FSKCore
+    // FSKCore handles all buffering and stream processing internally
+    this.processDemodulation(inputSamples);
   }
 
   private hasLoggedAudioOutput = false;
@@ -228,9 +227,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     
     // Continue processing queued modulation if available
     if (this.pendingModulation) {
-      this.processChunk().catch(error => {
-        console.error('[FSKProcessor] Chunk processing error:', error);
-      });
+      this.getNextModulationSamples(outputSamples.length);
     }
     
     // Stream modulated audio data to output (128 samples at a time)
@@ -252,65 +249,47 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   
   private processDemodulationCallCount = 0;
   
-  private async processDemodulation(): Promise<void> {
+  private async processDemodulation(inputSamples: Float32Array): Promise<void> {
     // Check if FSKCore is ready before processing
     if (!this.fskCore.isReady()) {
       return; // Skip processing if not configured yet
     }
     
-    // Simple demodulation: delegate to FSKCore when enough samples are available
-    const minSamples = 4000;
+    this.processDemodulationCallCount++;
     
-    if (this.inputBuffer.length >= minSamples) {
-      this.processDemodulationCallCount++;
+    // Only log significant calls (first few, or when we actually get results)
+    const shouldLog = this.processDemodulationCallCount <= 3;
+    
+    if (shouldLog) {
+      console.log(`[FSKProcessor] processDemodulation call #${this.processDemodulationCallCount}, processing ${inputSamples.length} samples directly`);
+    }
+    
+    try {
+      // Direct processing: pass samples directly to FSKCore
+      // FSKCore handles all internal buffering and stream processing
+      const demodulated = await this.fskCore.demodulateData(inputSamples);
       
-      // Only log significant calls (first few, or when we actually get results)
-      const shouldLog = this.processDemodulationCallCount <= 3;
-      
-      if (shouldLog) {
-        console.log(`[FSKProcessor] processDemodulation call #${this.processDemodulationCallCount}, inputBuffer: ${this.inputBuffer.length} samples`);
-      }
-      
-      try {
-        const samples = this.inputBuffer.toArray();
-        const demodulated = await this.fskCore.demodulateData(samples);
+      // Always log when we get actual demodulation results
+      if (demodulated && demodulated.length > 0) {
+        console.log(`[FSKProcessor] *** DEMODULATION RESULT *** Call #${this.processDemodulationCallCount}`);
+        console.log(`[FSKProcessor] Input samples processed: ${inputSamples.length}`);
+        console.log(`[FSKProcessor] FSKCore returned ${demodulated.length} bytes: [${Array.from(demodulated).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        console.log(`[FSKProcessor] Current demodulatedBuffer length: ${this.demodulatedBuffer.length}`);
         
-        // Always log when we get actual demodulation results
-        if (demodulated && demodulated.length > 0) {
-          console.log(`[FSKProcessor] *** DEMODULATION RESULT *** Call #${this.processDemodulationCallCount}`);
-          console.log(`[FSKProcessor] Input samples processed: ${samples.length}`);
-          console.log(`[FSKProcessor] FSKCore returned ${demodulated.length} bytes: [${Array.from(demodulated).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
-          console.log(`[FSKProcessor] Current demodulatedBuffer length: ${this.demodulatedBuffer.length}`);
+        // Store demodulated data
+        for (const byte of demodulated) {
+          this.demodulatedBuffer.put(byte);
+          console.log(`[FSKProcessor] Added byte 0x${byte.toString(16).padStart(2, '0')} to buffer, new length: ${this.demodulatedBuffer.length}`);
           
-          // Store demodulated data
-          for (const byte of demodulated) {
-            this.demodulatedBuffer.put(byte);
-            console.log(`[FSKProcessor] Added byte 0x${byte.toString(16).padStart(2, '0')} to buffer, new length: ${this.demodulatedBuffer.length}`);
-            
-            if (this.awaitingCallback) {
-              console.log(`[FSKProcessor] Triggering awaiting callback`);
-              this.awaitingCallback();
-              this.awaitingCallback = null;
-            }
+          if (this.awaitingCallback) {
+            console.log(`[FSKProcessor] Triggering awaiting callback`);
+            this.awaitingCallback();
+            this.awaitingCallback = null;
           }
-          
-          // Clear processed samples completely - FSKCore maintains its own internal state
-          // No overlap needed as FSKCore handles continuity internally
-          this.inputBuffer.clear();
-          console.log(`[FSKProcessor] Cleared input buffer after successful demodulation`);
-        } else if (this.inputBuffer.length > 12000) {
-          if (shouldLog) {
-            console.log(`[FSKProcessor] No demodulation result, managing buffer size (${this.inputBuffer.length} -> 8000)`);
-          }
-          
-          // Manage buffer size
-          const keepSamples = samples.slice(-8000);
-          this.inputBuffer.clear();
-          this.inputBuffer.writeArray(keepSamples);
         }
-      } catch (error) {
-        console.error('[FSKProcessor] Demodulation error:', error);
       }
+    } catch (error) {
+      console.error('[FSKProcessor] Demodulation error:', error);
     }
   }
 
