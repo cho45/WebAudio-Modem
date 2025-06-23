@@ -110,7 +110,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private bitSampleCounter = 0;     // Samples within current bit period
   private bitAccumulator = 0;
   private bitAccumCount = 0;
-  private bitBoundaryLearned = false;
   private nextBitSampleIndex = 0;
   
   // Frame detection state
@@ -135,7 +134,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private syncDetectionCount = 0;
   private demodulationCallCount = 0;
   private totalSamplesProcessed = 0;
-  private lastSyncAttemptGlobalCounter = 0;
 
   configure(config: FSKConfig): void {
     this.config = { ...DEFAULT_FSK_CONFIG, ...config } as FSKConfig;
@@ -237,7 +235,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.bitSampleCounter = 0;
     this.bitAccumulator = 0;
     this.bitAccumCount = 0;
-    this.bitBoundaryLearned = false;
     this.nextBitSampleIndex = 0;
     
     this.frameStarted = false;
@@ -371,16 +368,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
 
         // Calculate match ratio
         const matchRatio = total > 0 ? matched / total : 0;
-        if (matchRatio> 0.5) {
-          // console.log(`[FSK] Frame sync attempt: matched=${matched}, total=${total}(${sampleCount}), ratio=${matchRatio.toFixed(2)}`);
-        }
         if (matchRatio > this.config.syncThreshold) {
           // console.log(`[FSK] Frame sync detected with ratio: ${matchRatio}`);
           this.frameStarted = true;
           this.currentByte = 0;
           this.bitPosition = 0;
           this.syncDetectionCount++;
-          this.bitBoundaryLearned = true;
           this.bitAccumulator = 0;
           this.bitAccumCount = 0;
           this.bitSampleCounter = 0;
@@ -450,7 +443,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         // Invalid stop bit, reset frame and bit boundary
         //console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
         this.frameStarted = false;
-        this.bitBoundaryLearned = false;
         return;
       }
       
@@ -464,7 +456,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     
     // Should not reach here
     this.frameStarted = false;
-    this.bitBoundaryLearned = false;
   }
 
   async modulateData(data: Uint8Array): Promise<Float32Array> {
@@ -571,7 +562,6 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.syncDetectionCount = 0;
     this.demodulationCallCount = 0;
     this.totalSamplesProcessed = 0;
-    this.lastSyncAttemptGlobalCounter = 0;
   }
 
   getSignalQuality() {
@@ -588,14 +578,12 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     return {
       ready: this.ready,
       frameStarted: this.frameStarted,
-      bitBoundaryLearned: this.bitBoundaryLearned,
       globalSampleCounter: this.globalSampleCounter,
       receivedBitsLength: this.syncSamplesBuffer ? this.syncSamplesBuffer.length : 0,
       byteBufferLength: this.byteBuffer.length,
       demodulationCalls: this.demodulationCallCount,
       syncDetections: this.syncDetectionCount,
       totalSamplesProcessed: this.totalSamplesProcessed,
-      lastSyncAttemptGlobalCounter: this.lastSyncAttemptGlobalCounter
     };
   }
 }

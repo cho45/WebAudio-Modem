@@ -21,9 +21,9 @@
   "rules": {
     "prefer-const": "error",
     "no-var": "error",
-    "no-console": "warn",
+    "no-console": "off",
     "eqeqeq": "error",
-    "curly": "error",
+    "curly": "off",
     "no-async-promise-executor": "error",
     "no-unused-vars": ["error", { 
       "argsIgnorePattern": "^_", 

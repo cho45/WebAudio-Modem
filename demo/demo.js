@@ -67,6 +67,7 @@ async function initializeSystem() {
         // Configure both with FSK settings
         const config = {
             ...DEFAULT_FSK_CONFIG,
+            // baudRate: 1200,
             sampleRate: audioContext.sampleRate
         };
         
