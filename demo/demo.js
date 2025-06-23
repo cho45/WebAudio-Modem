@@ -45,8 +45,16 @@ async function initializeSystem() {
         log('FSK processor module loaded');
         
         // Create sender and receiver data channels
-        senderDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
-        receiverDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
+        senderDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
+            processorOptions: {
+                name: 'sender',
+            }
+        });
+        receiverDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
+            processorOptions: {
+                name: 'receiver',
+            }
+        });
         log('AudioWorkletNodes created');
         
         // Configure both with FSK settings
@@ -178,11 +186,14 @@ async function testXModemLoopback() {
         receiverDataChannel.disconnect();
         
 
-        senderDataChannel.connect(audioContext.destination);
-        receiverDataChannel.connect(audioContext.destination);
+        const hub = audioContext.createGain();
+        hub.gain.value = 1.0; // Set gain to 1.0
+        senderDataChannel.connect(hub);
+        receiverDataChannel.connect(hub);
+        hub.connect(audioContext.destination);
 
-        senderDataChannel.connect(receiverDataChannel);
-        receiverDataChannel.connect(senderDataChannel);
+        hub.connect(senderDataChannel);
+        hub.connect(receiverDataChannel);
        
         // Connect: sender -> receiver (internal loopback)
         log('Connected: sender → receiver (internal loopback)');

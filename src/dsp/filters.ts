@@ -22,6 +22,8 @@ export class IIRFilter {
     
     this.b = [...b];
     this.a = [...a];
+    this.x = [];
+    this.y = [];
     this.order = Math.max(b.length, a.length) - 1;
     
     // Normalize coefficients (a[0] should be 1)

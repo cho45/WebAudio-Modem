@@ -40,7 +40,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
 
     // 復調されたデータを保持するリングバッファ
     this.demodulatedBuffer = new RingBuffer(Uint8Array, 1024);
-    console.log(`[FSKProcessor:${this.instanceName}] Buffers initialized - demodulatedBuffer length:`, this.demodulatedBuffer.length);
+    // console.log(`[FSKProcessor:${this.instanceName}] Buffers initialized - demodulatedBuffer length:`, this.demodulatedBuffer.length);
     
     this.port.onmessage = this.handleMessage.bind(this);
   }
@@ -72,13 +72,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       // Return currently buffered demodulated data
       const availableBytes = this.demodulatedBuffer.length;
       if (availableBytes === 0) {
-        console.log(`[FSKProcessor:${this.instanceName}] *** BUFFER EMPTY *** Setting up callback wait...`);
-        console.log(`[FSKProcessor:${this.instanceName}] Previous awaitingCallback state: ${!!this.awaitingCallback}`);
         await new Promise<void>((resolve) => {
           this.awaitingCallback = resolve;
-          console.log(`[FSKProcessor:${this.instanceName}] *** CALLBACK SET *** New awaitingCallback assigned`);
         });
-        console.log(`[FSKProcessor:${this.instanceName}] *** CALLBACK TRIGGERED *** Buffer length now: ${this.demodulatedBuffer.length}`);
       } else {
         console.log(`[FSKProcessor:${this.instanceName}] *** BUFFER HAS DATA *** ${availableBytes} bytes available`);
       }
@@ -86,11 +82,9 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       const finalAvailableBytes = this.demodulatedBuffer.length;
       const demodulatedBytes = new Uint8Array(finalAvailableBytes);
       
-      console.log(`[FSKProcessor:${this.instanceName}] Removing ${finalAvailableBytes} bytes from buffer:`);
       for (let i = 0; i < finalAvailableBytes; i++) {
         const byte = this.demodulatedBuffer.remove();
         demodulatedBytes[i] = byte;
-        console.log(`[FSKProcessor:${this.instanceName}] Removed byte ${i}: 0x${byte.toString(16).padStart(2, '0')}`);
       }
       
       console.log(`[FSKProcessor:${this.instanceName}] === demodulate() RETURN === bytes: [${Array.from(demodulatedBytes).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
@@ -122,7 +116,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       switch (type) {
         case 'configure':
           try {
-            console.log(`[FSKProcessor:${this.instanceName}] Configuring FSKCore with:`, data.config);
             this.fskCore.configure(data.config);
             console.log(`[FSKProcessor:${this.instanceName}] FSKCore configured successfully, ready:`, this.fskCore.isReady());
             this.port.postMessage({ id, type: 'result', data: { success: true } });
@@ -139,10 +132,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
         }
           
         case 'demodulate': {
-          console.log(`[FSKProcessor:${this.instanceName}] === DEMODULATE MESSAGE RECEIVED === ID: ${id}`);
-          console.log(`[FSKProcessor:${this.instanceName}] Current buffer length: ${this.demodulatedBuffer.length}, awaitingCallback: ${!!this.awaitingCallback}`);
           const demodulatedBytes = await this.demodulate();
-          console.log(`[FSKProcessor:${this.instanceName}] === DEMODULATE COMPLETED === ID: ${id}, bytes: ${demodulatedBytes.length}`);
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
           break;
         }
@@ -214,14 +204,8 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
         // Copy signal directly to output buffer
         outputSamples.set(result.signal);
         
-        // Log modulation start and completion
-        if (this.samplesGenerated === result.signal.length) {
-          console.log(`[FSKProcessor:${this.instanceName}] *** MODULATION STARTED *** Total signal: ${result.totalSamples} samples`);
-        }
-        
         // Check if modulation is complete
         if (result.isComplete) {
-          console.log(`[FSKProcessor:${this.instanceName}] *** MODULATION COMPLETE *** Generated ${result.totalSamples} samples total`);
           this.pendingModulation = null;
           this.samplesGenerated = 0; // Reset for next modulation
         }
@@ -246,21 +230,13 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       
       // Always log when we get actual demodulation results
       if (demodulated && demodulated.length > 0) {
-        console.log(`[FSKProcessor:${this.instanceName}] *** DEMODULATION SUCCESS *** Got ${demodulated.length} bytes`);
-        console.log(`[FSKProcessor:${this.instanceName}] *** CALLBACK STATUS *** awaitingCallback: ${!!this.awaitingCallback}`);
-        
         // Store demodulated data
         for (const byte of demodulated) {
           this.demodulatedBuffer.put(byte);
-          console.log(`[FSKProcessor:${this.instanceName}] Added byte 0x${byte.toString(16).padStart(2, '0')} to buffer, new length: ${this.demodulatedBuffer.length}`);
           
           if (this.awaitingCallback) {
-            console.log(`[FSKProcessor:${this.instanceName}] *** TRIGGERING CALLBACK *** Resolving awaiting promise`);
             this.awaitingCallback();
             this.awaitingCallback = null;
-            console.log(`[FSKProcessor:${this.instanceName}] *** CALLBACK COMPLETED *** awaitingCallback reset to null`);
-          } else {
-            console.log(`[FSKProcessor:${this.instanceName}] *** NO CALLBACK *** No one waiting for this data`);
           }
         }
       }
