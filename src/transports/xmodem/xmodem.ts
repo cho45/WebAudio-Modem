@@ -8,7 +8,6 @@
  * - Proper CRC16 and sequence number validation
  */
 
-import { clear } from 'console';
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlType } from './types';
