@@ -7,6 +7,7 @@
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
+// import { send } from 'vite';
 
 // Global state
 let audioContext = null;
@@ -28,7 +29,7 @@ async function initializeSystem() {
     try {
         log('Initializing audio system...');
         updateStatus('system-status', 'Initializing...', 'info');
-        
+       
         // Create AudioContext
         audioContext = new AudioContext();
         log(`AudioContext created: ${audioContext.sampleRate}Hz`);
@@ -104,11 +105,29 @@ async function sendTextViaXModem() {
         
         log(`Sending text via XModem: "${text}"`);
         updateStatus('send-status', 'Preparing XModem transmission...', 'info');
+
+        // Get microphone input
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                sampleRate: audioContext.sampleRate,
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false
+            } 
+        });
+        
+        log(`Microphone access granted: ${audioContext.sampleRate}Hz, 1 channel`);
         
         // Connect sender to audio output for transmission
         senderDataChannel.disconnect();
         senderDataChannel.connect(audioContext.destination);
         log('Connected sender to audio output');
+
+        // Connect: microphone -> sender
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(senderDataChannel);
+        log('Connected: microphone → sender');
         
         // Convert text to bytes and send via XModem
         const data = new TextEncoder().encode(text);
@@ -158,8 +177,14 @@ async function testXModemLoopback() {
         senderDataChannel.disconnect();
         receiverDataChannel.disconnect();
         
-        // Connect: sender -> receiver (internal loopback)
+
+        senderDataChannel.connect(audioContext.destination);
+        receiverDataChannel.connect(audioContext.destination);
+
         senderDataChannel.connect(receiverDataChannel);
+        receiverDataChannel.connect(senderDataChannel);
+       
+        // Connect: sender -> receiver (internal loopback)
         log('Connected: sender → receiver (internal loopback)');
         
         // Convert text to bytes
@@ -170,16 +195,15 @@ async function testXModemLoopback() {
         log(`Sender state before test: ready=${senderTransport.isReady()}`);
         log(`Receiver state before test: ready=${receiverTransport.isReady()}`);
         
-        // Start receiver first (sequential, not concurrent)
-        log('Starting receiver...');
-        const receivePromise = receiverTransport.receiveData();
+        log('Starting sender...');
+        const sendPromise = senderTransport.sendData(data);
         
         // Wait a bit for receiver to be ready
         await new Promise(resolve => setTimeout(resolve, 500));
+
+        log('Starting receiver...');
+        const receivePromise = receiverTransport.receiveData()
         
-        // Then start sender
-        log('Starting sender...');
-        const sendPromise = senderTransport.sendData(data);
         
         // Wait for both to complete
         const [_, receivedData] = await Promise.all([sendPromise, receivePromise]);
@@ -237,6 +261,7 @@ async function startReceiving() {
         
         // Disconnect previous connections
         receiverDataChannel.disconnect();
+        receiverDataChannel.connect(audioContext.destination);
         
         // Connect: microphone -> receiver
         const source = audioContext.createMediaStreamSource(stream);

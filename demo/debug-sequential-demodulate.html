@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Sequential Demodulate Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #0d7377; color: white; }
+        .error { background-color: #d32f2f; color: white; }
+        .info { background-color: #1976d2; color: white; }
+        .warning { background-color: #f57c00; color: white; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #0d7377;
+            color: white;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        #log {
+            width: 100%;
+            height: 400px;
+            background-color: #262626;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-y: auto;
+        }
+        .test-section {
+            border: 1px solid #555;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .test-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Debug: Sequential Demodulate Test</h1>
+        <p>This page reproduces the exact test case that fails in the browser test suite.</p>
+        
+        <div class="test-section">
+            <div class="test-title">Test Controls</div>
+            <button id="run-test-btn" onclick="runSequentialTest()">Run Sequential Demodulate Test</button>
+            <button id="clear-log-btn" onclick="clearLog()">Clear Log</button>
+            <div id="test-status" class="status info">Ready to run test</div>
+        </div>
+
+        <div class="test-section">
+            <div class="test-title">Console Log</div>
+            <textarea id="log" readonly></textarea>
+        </div>
+    </div>
+
+    <script type="module">
+        import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
+        import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
+
+        // Global variables
+        let audioContext = null;
+        let testRunning = false;
+
+        // Make functions available globally
+        window.runSequentialTest = runSequentialTest;
+        window.clearLog = clearLog;
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            log('🚀 Debug page loaded');
+            await initializeAudioContext();
+        });
+
+        async function initializeAudioContext() {
+            try {
+                log('🔧 Initializing AudioContext...');
+                audioContext = new AudioContext();
+                
+                if (audioContext.state === 'suspended') {
+                    // Add click listener to resume AudioContext
+                    document.addEventListener('click', async () => {
+                        if (audioContext.state === 'suspended') {
+                            await audioContext.resume();
+                            log('🎵 AudioContext resumed after user interaction');
+                            updateStatus('AudioContext initialized and ready', 'success');
+                        }
+                    }, { once: true });
+                    
+                    updateStatus('Click anywhere to activate AudioContext', 'warning');
+                } else {
+                    updateStatus('AudioContext initialized and ready', 'success');
+                }
+                
+                log(`✅ AudioContext created: ${audioContext.sampleRate}Hz, state: ${audioContext.state}`);
+            } catch (error) {
+                log(`❌ Failed to initialize AudioContext: ${error.message}`);
+                updateStatus('AudioContext initialization failed', 'error');
+            }
+        }
+
+        async function runSequentialTest() {
+            if (testRunning) {
+                log('⚠️ Test already running');
+                return;
+            }
+
+            if (!audioContext || audioContext.state !== 'running') {
+                log('❌ AudioContext not ready');
+                updateStatus('AudioContext not ready - click to activate first', 'error');
+                return;
+            }
+
+            testRunning = true;
+            updateStatus('Running sequential demodulate test...', 'info');
+            
+            try {
+                log('🧪 === STARTING SEQUENTIAL DEMODULATE TEST ===');
+                log('🧪 Testing sequential demodulate() calls (XModem pattern)...');
+
+                // Setup sender and receiver channels with instance names
+                await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.js');
+                
+                const senderChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
+                    processorOptions: { name: 'sender' }
+                });
+                const receiverChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
+                    processorOptions: { name: 'receiver' }
+                });
+
+                log('✅ Sender and receiver channels created');
+
+                // Configure both processors
+                const testConfig = {
+                    ...DEFAULT_FSK_CONFIG,
+                    sampleRate: audioContext.sampleRate,
+                };
+
+                await senderChannel.configure(testConfig);
+                await receiverChannel.configure(testConfig);
+                log('✅ Both processors configured');
+
+                // Setup bidirectional connection
+                senderChannel.connect(receiverChannel);
+                receiverChannel.connect(senderChannel);
+                senderChannel.connect(audioContext.destination);
+                receiverChannel.connect(audioContext.destination);
+                log('✅ Bidirectional audio connection established: sender ↔ receiver → destination');
+
+                // Test data for sequential operations
+                const testData1 = new Uint8Array([0x41]); // 'A'
+                const testData2 = new Uint8Array([0x42]); // 'B'
+
+                // First operation: sender → receiver
+                log('🔄 First operation: sending data1 via sender');
+                await senderChannel.modulate(testData1);
+                
+                log('📡 Waiting for first demodulation...');
+                const result1 = await Promise.race([
+                    receiverChannel.demodulate(),
+                    new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('First demodulation timeout after 5000ms')), 5000);
+                    })
+                ]);
+                
+                if (result1.length !== testData1.length || result1[0] !== testData1[0]) {
+                    throw new Error(`First operation data mismatch: expected [${testData1[0]}], got [${result1[0]}]`);
+                }
+                
+                log(`✅ First operation completed: [${result1[0]}]`);
+
+                // Wait a bit between operations
+                await new Promise(resolve => setTimeout(resolve, 200));
+                log('⏳ Waiting 200ms between operations...');
+
+                // Second operation: sender → receiver
+                log('🔄 Second operation: sending data2 via sender');
+                await senderChannel.modulate(testData2);
+                
+                log('📡 Waiting for second demodulation...');
+                log('⚠️ THIS IS WHERE THE TEST USUALLY FAILS ⚠️');
+                
+                const result2 = await Promise.race([
+                    receiverChannel.demodulate(),
+                    new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Second demodulation timeout after 5000ms')), 5000);
+                    })
+                ]);
+                
+                if (result2.length !== testData2.length || result2[0] !== testData2[0]) {
+                    throw new Error(`Second operation data mismatch: expected [${testData2[0]}], got [${result2[0]}]`);
+                }
+                
+                log(`✅ Second operation completed: [${result2[0]}]`);
+
+                // Verify both operations worked correctly
+                if (result1[0] === result2[0]) {
+                    throw new Error('Sequential operations returned same data - should be different');
+                }
+                
+                log('✅ Sequential operations verified - different data received correctly');
+
+                // Cleanup
+                senderChannel.disconnect();
+                receiverChannel.disconnect();
+                log('🧹 Cleanup completed');
+
+                log('🎉 === TEST PASSED === 🎉');
+                updateStatus('Sequential demodulate test PASSED!', 'success');
+
+            } catch (error) {
+                log(`❌ === TEST FAILED === ${error.message}`);
+                updateStatus(`Test failed: ${error.message}`, 'error');
+            } finally {
+                testRunning = false;
+            }
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusElement = document.getElementById('test-status');
+            if (statusElement) {
+                statusElement.textContent = message;
+                statusElement.className = `status ${type}`;
+            }
+        }
+
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}\n`;
+            
+            const logElement = document.getElementById('log');
+            logElement.value += logEntry;
+            logElement.scrollTop = logElement.scrollHeight;
+            
+            console.log(logEntry.trim());
+        }
+
+        function clearLog() {
+            document.getElementById('log').value = '';
+            log('Log cleared');
+        }
+
+        // Override console.log to capture FSKProcessor logs if they appear
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            // Also add to our log display
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            
+            if (message.includes('[FSKProcessor') || message.includes('[WebAudioDataChannel')) {
+                const logElement = document.getElementById('log');
+                if (logElement) {
+                    logElement.value += `[CONSOLE] ${message}\n`;
+                    logElement.scrollTop = logElement.scrollHeight;
+                }
+            }
+        };
+    </script>
+</body>
+</html>

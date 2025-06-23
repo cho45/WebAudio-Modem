@@ -414,10 +414,10 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private processByte(bit: number): void {
     // Start bit
     if (this.bitPosition === 0) {
-      console.log(`[FSK] Start bit: ${bit} (expected: 0)`);
+      // console.log(`[FSK] Start bit: ${bit} (expected: 0)`);
       if (bit !== 0) {
         // Invalid start bit, reset frame and bit boundary
-        console.log(`[FSK] Invalid start bit ${bit}, resetting frame`);
+        // console.log(`[FSK] Invalid start bit ${bit}, resetting frame`);
         this.resetState();
         return;
       }
@@ -445,17 +445,17 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Stop bit
     const stopBitPosition = this.config.parity === 'none' ? 9 : 10;
     if (this.bitPosition === stopBitPosition) {
-      console.log(`[FSK] Stop bit: ${bit} (expected: 1)`);
+      //console.log(`[FSK] Stop bit: ${bit} (expected: 1)`);
       if (bit !== 1) {
         // Invalid stop bit, reset frame and bit boundary
-        console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
+        //console.log(`[FSK] Invalid stop bit ${bit}, resetting frame`);
         this.frameStarted = false;
         this.bitBoundaryLearned = false;
         return;
       }
       
       // Complete byte received
-      console.log(`[FSK] Complete byte: 0x${this.currentByte.toString(16).padStart(2, '0')} (${this.currentByte}), buffer length: ${this.byteBuffer.length + 1}`);
+      // console.log(`[FSK] Complete byte: 0x${this.currentByte.toString(16).padStart(2, '0')} (${this.currentByte}), buffer length: ${this.byteBuffer.length + 1}`);
       this.byteBuffer.push(this.currentByte);
       this.currentByte = 0;
       this.bitPosition = 0;

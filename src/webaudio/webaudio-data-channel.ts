@@ -16,9 +16,13 @@ interface WorkletMessage {
 export class WebAudioDataChannel extends AudioWorkletNode implements IDataChannel {
   private pendingOperations = new Map<string, { resolve: Function, reject: Function }>();
   private operationCounter = 0;
+  private instanceName: string;
   
   constructor(context: AudioContext, processorName: string, options: AudioWorkletNodeOptions = {}) {
-    console.log(`[WebAudioDataChannel] Initializing with processor: ${processorName} and options:`, options);
+    // Extract instance name from processorOptions
+    const instanceName = options.processorOptions?.name || 'unnamed';
+    
+    console.log(`[WebAudioDataChannel:${instanceName}] Initializing with processor: ${processorName} and options:`, options);
     super(context, processorName, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -26,8 +30,14 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
       channelCountMode: 'explicit',
       channelInterpretation: 'discrete',
       outputChannelCount: [1],
-      ...options
+      ...options,
+      processorOptions: {
+        ...options.processorOptions,
+        name: instanceName
+      }
     });
+    
+    this.instanceName = instanceName;
     
     // Setup message handling
     this.port.onmessage = this.handleMessage.bind(this);
@@ -42,29 +52,33 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
-    console.log(`[WebAudioDataChannel] Received message: ${type} with id: ${id}`, data);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] Received message: ${type} with id: ${id}`, data);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] Pending operations before processing: ${this.pendingOperations.size}`);
     const operation = this.pendingOperations.get(id);
     
     if (!operation) {
-      console.warn(`Received message for unknown operation: ${id}`);
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] *** CRITICAL *** Received message for unknown operation: ${id}`);
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] Available operations:`, Array.from(this.pendingOperations.keys()));
       return;
     }
     
     this.pendingOperations.delete(id);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] Removed operation ${id}, remaining: ${this.pendingOperations.size}`);
     
     if (type === 'result') {
+      console.log(`[WebAudioDataChannel:${this.instanceName}] Resolving operation ${id} with result:`, data);
       operation.resolve(data);
     } else if (type === 'error') {
+      console.log(`[WebAudioDataChannel:${this.instanceName}] Rejecting operation ${id} with error:`, data.message);
       operation.reject(new Error(data.message));
     } else {
-      console.warn(`Unhandled message type: ${type}`);
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] Unhandled message type: ${type}`);
       operation.reject(new Error(`Unhandled message type: ${type}`));
     }
   }
   
   private sendMessage(type: string, data?: any): Promise<any> {
-    console.log(`[WebAudioDataChannel] Sending message: ${type}`, data);
-    const id = `op_${++this.operationCounter}`;
+    const id = `${this.instanceName}_op_${++this.operationCounter}`;
     
     return new Promise((resolve, reject) => {
       this.pendingOperations.set(id, { resolve, reject });
@@ -83,7 +97,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    * データを変調してオーディオ出力に送信
    */
   async modulate(data: Uint8Array): Promise<void> {
-    console.log(`[WebAudioDataChannel] Modulating ${data.length} bytes`);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] Modulating ${data.length} bytes`);
     const result = await this.sendMessage('modulate', { bytes: Array.from(data) });
     
     if (!result.success) {
@@ -95,8 +109,9 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    * 復調されたデータを取得（データが利用可能になるまで待機）
    */
   async demodulate(): Promise<Uint8Array> {
-    // console.log(`[WebAudioDataChannel] Demodulating data...`);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] === DEMODULATE START === pending operations: ${this.pendingOperations.size}`);
     const result = await this.sendMessage('demodulate', {});
+    console.log(`[WebAudioDataChannel:${this.instanceName}] === DEMODULATE COMPLETE === received bytes:`, result.bytes);
     return new Uint8Array(result.bytes || []);
   }
 
