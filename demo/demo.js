@@ -58,6 +58,14 @@ const app = createApp({
       isReceiving: false
     });
     
+    // 受信中の画像データ
+    const currentImageData = ref({
+      fragments: [],
+      isReceiving: false,
+      previewUrl: null,
+      totalSize: 0
+    });
+    
     // デバッグ情報
     const senderDebugInfo = ref('No debug info');
     const receiverDebugInfo = ref('No debug info');
@@ -141,6 +149,7 @@ const app = createApp({
         // FSK設定
         const config = {
           ...DEFAULT_FSK_CONFIG,
+          baudRate: 1200,
           sampleRate: audioContext.value.sampleRate
         };
         
@@ -157,7 +166,7 @@ const app = createApp({
         const xmodemConfig = {
           timeoutMs: 5000,
           maxRetries: 3,
-          maxPayloadSize: 64
+          maxPayloadSize: 255
         };
         senderTransport.value.configure(xmodemConfig);
         receiverTransport.value.configure(xmodemConfig);
@@ -409,13 +418,28 @@ const app = createApp({
     
     // フラグメント受信リスナー
     const onFragmentReceived = (event) => {
-        console.log('Fragment received:', event.data);
+      console.log('Fragment received:', event.data);
       const data = event.data;
       const now = Date.now();
       
       // 受信開始時刻を記録
       if (!receivingProgress.value.startTime) {
         receivingProgress.value.startTime = now;
+        
+        // 最初のフラグメントでデータ種別を判定
+        const dataType = detectDataType(data.fragment);
+        
+        if (dataType === 'image') {
+          // 画像受信開始
+          currentImageData.value = {
+            fragments: [],
+            isReceiving: true,
+            previewUrl: null,
+            totalSize: 0,
+            dataType: 'image'
+          };
+          log('🖼️ Image reception started');
+        }
       }
       
       // フラグメント情報を追加
@@ -425,6 +449,13 @@ const app = createApp({
         timestamp: new Date(data.timestamp).toLocaleTimeString(),
         data: data.fragment
       });
+      
+      // 画像データの場合は逐次更新
+      if (currentImageData.value.isReceiving) {
+        currentImageData.value.fragments.push(data.fragment);
+        updateImagePreview();
+        log(`🖼️ Image fragment #${data.seqNum}: ${data.fragment.length}B (total: ${currentImageData.value.totalSize}B)`);
+      }
       
       // 受信レートを計算
       const elapsedMs = now - receivingProgress.value.startTime;
@@ -444,8 +475,10 @@ const app = createApp({
       // 詳細ログ出力
       log(`📦 Fragment #${data.seqNum}: ${data.fragment.length}B, total: ${data.totalBytesReceived}B (${receivingProgress.value.bytesPerSecond}B/s)`);
       
-      // テキストの場合は部分的に表示
-      if (isTextData(data.fragment)) {
+      // ステータス表示を更新
+      if (currentImageData.value.isReceiving) {
+        updateStatus(receiveStatus, `🖼️ Image Fragment #${data.seqNum}: ${data.fragment.length}B (${data.totalBytesReceived}B @ ${receivingProgress.value.bytesPerSecond}B/s)`, 'info');
+      } else if (isTextData(data.fragment)) {
         const partialText = new TextDecoder().decode(data.fragment);
         updateStatus(receiveStatus, `📦 Fragment #${data.seqNum}: "${partialText}" (${data.totalBytesReceived}B @ ${receivingProgress.value.bytesPerSecond}B/s)`, 'info');
       } else {
@@ -471,6 +504,17 @@ const app = createApp({
           lastFragmentTime: null,
           bytesPerSecond: 0,
           isReceiving: false
+        };
+        
+        // 画像受信状態をリセット
+        if (currentImageData.value.previewUrl) {
+          URL.revokeObjectURL(currentImageData.value.previewUrl);
+        }
+        currentImageData.value = {
+          fragments: [],
+          isReceiving: false,
+          previewUrl: null,
+          totalSize: 0
         };
         
         // フラグメント受信リスナーを登録
@@ -516,27 +560,41 @@ const app = createApp({
                 // 受信完了後の処理
                 receivingProgress.value.isReceiving = false;
                 
-                // データ種別判定（簡易的）
-                const isText = isTextData(receivedBytes);
-                
-                if (isText) {
+                if (currentImageData.value.isReceiving) {
+                  // 画像受信完了
+                  currentImageData.value.isReceiving = false;
+                  log(`✅ XModem completed - received image: ${receivedBytes.length} bytes`);
+                  
+                  // 最終画像を受信データに追加
+                  const blob = new Blob([receivedBytes], { type: 'image/jpeg' });
+                  const finalUrl = URL.createObjectURL(blob);
+                  addReceivedData('image', finalUrl);
+                  
+                  updateStatus(receiveStatus, `📡 XModem completed - image: ${receivedBytes.length} bytes`, 'success');
+                } else {
+                  // テキスト受信完了
                   const text = new TextDecoder().decode(receivedBytes);
                   log(`✅ XModem completed - received text: ${receivedBytes.length} bytes → "${text}"`);
                   addReceivedData('text', text);
                   updateStatus(receiveStatus, `📡 XModem completed: "${text}"`, 'success');
-                } else {
-                  // 画像として処理
-                  const blob = new Blob([receivedBytes], { type: 'image/jpeg' });
-                  const url = URL.createObjectURL(blob);
-                  log(`✅ XModem completed - received image: ${receivedBytes.length} bytes`);
-                  addReceivedData('image', url);
-                  updateStatus(receiveStatus, `📡 XModem completed - image: ${receivedBytes.length} bytes`, 'success');
                 }
                 
                 // 次の送信待機状態に戻る
                 setTimeout(() => {
                   if (isReceiving.value) {
                     receivingFragments.value = []; // フラグメントリストをクリア
+                    
+                    // 画像プレビューをクリア（完了した画像は受信データに保存済み）
+                    if (currentImageData.value.previewUrl) {
+                      URL.revokeObjectURL(currentImageData.value.previewUrl);
+                    }
+                    currentImageData.value = {
+                      fragments: [],
+                      isReceiving: false,
+                      previewUrl: null,
+                      totalSize: 0
+                    };
+                    
                     updateStatus(receiveStatus, '🎤 Listening for next XModem transmission...', 'info');
                   }
                 }, 2000);
@@ -612,6 +670,63 @@ const app = createApp({
       }
       
       return textChars / sampleSize > 0.7;
+    };
+    
+    // 受信開始時のデータ種別を判定
+    const detectDataType = (firstFragment) => {
+      // 画像ファイルのマジックナンバーをチェック
+      if (firstFragment.length >= 4) {
+        const bytes = Array.from(firstFragment.slice(0, 4));
+        
+        // JPEG: FF D8 FF
+        if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+          return 'image';
+        }
+        
+        // PNG: 89 50 4E 47
+        if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+          return 'image';
+        }
+        
+        // GIF: 47 49 46
+        if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+          return 'image';
+        }
+      }
+      
+      // テキストかどうかを判定
+      return isTextData(firstFragment) ? 'text' : 'image';
+    };
+    
+    // 画像フラグメントを結合してプレビューを更新
+    const updateImagePreview = () => {
+      if (currentImageData.value.fragments.length === 0) return;
+      
+      try {
+        // フラグメントを結合
+        const totalSize = currentImageData.value.fragments.reduce((sum, frag) => sum + frag.length, 0);
+        const combined = new Uint8Array(totalSize);
+        let offset = 0;
+        
+        for (const fragment of currentImageData.value.fragments) {
+          combined.set(fragment, offset);
+          offset += fragment.length;
+        }
+        
+        // Blobを作成してプレビュー用URLを生成
+        const blob = new Blob([combined], { type: 'image/jpeg' });
+        
+        // 古いURLを削除
+        if (currentImageData.value.previewUrl) {
+          URL.revokeObjectURL(currentImageData.value.previewUrl);
+        }
+        
+        currentImageData.value.previewUrl = URL.createObjectURL(blob);
+        currentImageData.value.totalSize = totalSize;
+        
+      } catch (error) {
+        log(`Image preview update failed: ${error.message}`);
+      }
     };
     
     // 画像選択
@@ -773,6 +888,18 @@ const app = createApp({
         bytesPerSecond: 0,
         isReceiving: false
       };
+      
+      // 画像プレビューをクリア
+      if (currentImageData.value.previewUrl) {
+        URL.revokeObjectURL(currentImageData.value.previewUrl);
+      }
+      currentImageData.value = {
+        fragments: [],
+        isReceiving: false,
+        previewUrl: null,
+        totalSize: 0
+      };
+      
       systemLog.value = '';
       log('All data and logs cleared');
     };
@@ -811,6 +938,7 @@ const app = createApp({
       receivedData,
       receivingFragments,
       receivingProgress,
+      currentImageData,
       senderDebugInfo,
       receiverDebugInfo,
       

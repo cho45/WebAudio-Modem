@@ -558,7 +558,24 @@
                             </div>
                         </div>
 
-                        <!-- Received Data -->
+                        <!-- Received Image (Live Preview) -->
+                        <div v-if="currentImageData.isReceiving || currentImageData.previewUrl" class="section">
+                            <h3>🖼️ Received Image</h3>
+                            <div class="received-data">
+                                <div v-if="currentImageData.previewUrl">
+                                    <img :src="currentImageData.previewUrl" alt="Receiving image" class="received-image">
+                                    <p><strong>Size:</strong> {{ currentImageData.totalSize }} bytes 
+                                       <span v-if="currentImageData.isReceiving">(receiving...)</span>
+                                       <span v-else>(completed)</span>
+                                    </p>
+                                </div>
+                                <div v-else-if="currentImageData.isReceiving">
+                                    <p>🔄 Receiving image data...</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Received Text/Completed Data -->
                         <div class="section">
                             <h3>📥 Completed Receptions</h3>
                             <div class="received-data">
@@ -568,7 +585,7 @@
                                         <strong>Text:</strong> {{ data.content }}
                                     </div>
                                     <div v-if="data.type === 'image'">
-                                        <strong>Image:</strong><br>
+                                        <strong>Final Image:</strong><br>
                                         <img :src="data.content" alt="Received image" class="received-image">
                                     </div>
                                 </div>
