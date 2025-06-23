@@ -56,7 +56,14 @@ async function initializeSystem() {
             }
         });
         log('AudioWorkletNodes created');
-        
+
+        setInterval(async () => {
+            const senderInfo = await senderDataChannel.getStatus();
+            document.getElementById('send-info').textContent = JSON.stringify(senderInfo, null, 2);
+            const receiverInfo = await receiverDataChannel.getStatus();
+            document.getElementById('receive-info').textContent = JSON.stringify(receiverInfo, null, 2);
+        }, 500);
+       
         // Configure both with FSK settings
         const config = {
             ...DEFAULT_FSK_CONFIG,
