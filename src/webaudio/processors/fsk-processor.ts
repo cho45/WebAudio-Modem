@@ -20,7 +20,6 @@ interface WorkletMessage {
 
 export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
   private fskCore: FSKCore;
-  private outputBuffer: RingBuffer<Float32Array>;
   private demodulatedBuffer: RingBuffer<Uint8Array>;
   private pendingModulation: ChunkedModulator | null = null;
   private awaitingCallback: (() => void) | null = null;
@@ -37,9 +36,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     // Initialize FSK core (will be configured via message)
     this.fskCore = new FSKCore();
     
-    // Create buffers for audio streaming
-    // inputBuffer: minimal buffering for frame sync detection
-    this.outputBuffer = new RingBuffer(Float32Array, 8192);
+    // Create buffer for demodulated data storage
 
     // 復調されたデータを保持するリングバッファ
     this.demodulatedBuffer = new RingBuffer(Uint8Array, 1024);
@@ -157,7 +154,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             id,
             type: 'result',
             data: {
-              outputBufferLength: this.outputBuffer.length,
               demodulatedBufferLength: this.demodulatedBuffer.length,
               pendingModulation: !!this.pendingModulation,
               fskCoreReady: this.fskCore.isReady(),
@@ -181,31 +177,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   }
   
   private samplesGenerated = 0;
-  
-  private getNextModulationSamples(sampleCount: number): void {
-    if (!this.pendingModulation) return;
-    
-    const result = this.pendingModulation.getNextSamples(sampleCount);
-    
-    if (result) {
-      this.samplesGenerated += result.signal.length;
-      
-      // Add modulated signal to output buffer
-      this.outputBuffer.writeArray(result.signal);
-      
-      // Log modulation start and completion
-      if (this.samplesGenerated === result.signal.length) {
-        console.log(`[FSKProcessor] *** MODULATION STARTED *** Total signal: ${result.totalSamples} samples`);
-      }
-      
-      // Check if modulation is complete
-      if (result.isComplete) {
-        console.log(`[FSKProcessor] *** MODULATION COMPLETE *** Generated ${result.totalSamples} samples total`);
-        this.pendingModulation = null;
-        this.samplesGenerated = 0; // Reset for next modulation
-      }
-    }
-  }
   
 
   private hasLoggedAudioInput = false;
@@ -233,13 +204,29 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     // Fill output with zeros first
     outputSamples.fill(0);
     
-    // Continue processing queued modulation if available
+    // Generate modulated signal directly to output
     if (this.pendingModulation) {
-      this.getNextModulationSamples(outputSamples.length);
+      const result = this.pendingModulation.getNextSamples(outputSamples.length);
+      
+      if (result) {
+        this.samplesGenerated += result.signal.length;
+        
+        // Copy signal directly to output buffer
+        outputSamples.set(result.signal);
+        
+        // Log modulation start and completion
+        if (this.samplesGenerated === result.signal.length) {
+          console.log(`[FSKProcessor:${this.instanceName}] *** MODULATION STARTED *** Total signal: ${result.totalSamples} samples`);
+        }
+        
+        // Check if modulation is complete
+        if (result.isComplete) {
+          console.log(`[FSKProcessor:${this.instanceName}] *** MODULATION COMPLETE *** Generated ${result.totalSamples} samples total`);
+          this.pendingModulation = null;
+          this.samplesGenerated = 0; // Reset for next modulation
+        }
+      }
     }
-    
-    // Stream modulated audio data to output (128 samples at a time)
-    this.outputBuffer.readArray(outputSamples);
   }
   
   private processDemodulationCallCount = 0;
