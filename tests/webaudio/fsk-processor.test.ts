@@ -174,7 +174,7 @@ describe('FSKProcessor', () => {
     });
 
     // Start modulation
-    await sendMessage({
+    sendMessage({
       id: 'modulate-test',
       type: 'modulate',
       data: { bytes: new Uint8Array([0x48]) } // Single byte "H"
@@ -257,7 +257,7 @@ describe('FSKProcessor', () => {
     });
 
     // Modulate
-    await sendMessage({
+    sendMessage({
       id: 'msg-2',
       type: 'modulate',
       data: { bytes: new Uint8Array([0x41, 0x42]) }

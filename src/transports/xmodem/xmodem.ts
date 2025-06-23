@@ -8,6 +8,7 @@
  * - Proper CRC16 and sequence number validation
  */
 
+import { clear } from 'console';
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlType } from './types';
@@ -46,6 +47,7 @@ export class XModemTransport extends BaseTransport {
   private retries = 0;
   private receivedData: Uint8Array[] = [];
   private expectedSequence = 1;
+  private ackTimeout?: ReturnType<typeof setTimeout>;
   
   // Simple receive buffer for byte-by-byte assembly
   private receiveBuffer: number[] = [];
@@ -225,6 +227,7 @@ export class XModemTransport extends BaseTransport {
     const completePacket = this.extractCompletePacket();
     if (completePacket) {
       const result = XModemPacket.parse(completePacket);
+      console.log(`[XModemTransport] Received packet:`, result);
       if (result.error || !result.packet) {
         this.emit('error', new Event(result.error || 'Invalid packet data'));
         return;
@@ -373,12 +376,17 @@ export class XModemTransport extends BaseTransport {
       const packet = XModemPacket.createData(this.sequence, fragment);
       const serialized = XModemPacket.serialize(packet);
       
+      console.log(`[XModemTransport] Sending fragment ${this.fragmentIndex + 1}/${this.fragments.length}, sequence: ${this.sequence}`);
       await this.dataChannel.modulate(serialized);
       this.statistics.packetsSent++;
       
       // Set timeout for ACK
-      setTimeout(() => {
+      if (this.ackTimeout) {
+        clearTimeout(this.ackTimeout);
+      }
+      this.ackTimeout = setTimeout(() => {
         if (this.state === State.SENDING_WAIT_ACK && this.fragmentIndex < this.fragments.length) {
+          console.warn(`[XModemTransport] Timeout waiting for ACK for fragment ${this.fragmentIndex + 1}`);
           this.retries++;
           if (this.retries > this.config.maxRetries) {
             this.failSend(new Error('Timeout - max retries exceeded'));
