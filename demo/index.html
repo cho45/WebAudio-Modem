@@ -383,6 +383,52 @@
             text-align: right;
         }
         
+        .image-source-section {
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #ecf0f1;
+            border-radius: 6px;
+            background: #f8f9fa;
+        }
+        
+        .image-source-section label {
+            display: block;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .image-source-section select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            background: white;
+            font-size: 14px;
+        }
+        
+        .sample-description {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin: 5px 0 0 0;
+            font-style: italic;
+        }
+        
+        .source-badge {
+            display: inline-block;
+            background: #3498db;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .source-badge:first-of-type {
+            background: #27ae60;
+        }
+        
         .system-log {
             grid-column: 1 / -1;
         }
@@ -497,10 +543,35 @@
                         
                         <!-- Image Input -->
                         <div v-show="sendDataType === 'image'">
-                            <input type="file" @change="onImageSelect" accept="image/*">
+                            <h4>📷 Image Source</h4>
+                            
+                            <!-- Sample Images Selection -->
+                            <div class="image-source-section">
+                                <label for="sample-select">Sample Images:</label>
+                                <select v-model="sampleImageSelection" @change="onSampleImageSelect" id="sample-select">
+                                    <option v-for="sample in sampleImages" :key="sample.value" :value="sample.value">
+                                        {{ sample.name }}
+                                    </option>
+                                </select>
+                                <p v-if="sampleImageSelection" class="sample-description">
+                                    {{ sampleImages.find(s => s.value === sampleImageSelection)?.description }}
+                                </p>
+                            </div>
+                            
+                            <!-- Custom File Upload -->
+                            <div class="image-source-section">
+                                <label for="custom-file">Or upload your own:</label>
+                                <input type="file" @change="onImageSelect" accept="image/*" id="custom-file">
+                            </div>
+                            
+                            <!-- Image Preview -->
                             <div v-if="selectedImage" class="image-preview">
                                 <img :src="selectedImage.preview" alt="Selected image">
-                                <p>{{ selectedImage.name }} ({{ selectedImage.size }} bytes)</p>
+                                <p>
+                                    <strong>{{ selectedImage.name }}</strong> ({{ selectedImage.size }} bytes)
+                                    <span v-if="selectedImage.source === 'sample'" class="source-badge">📁 Sample</span>
+                                    <span v-if="selectedImage.source === 'custom'" class="source-badge">📤 Custom</span>
+                                </p>
                             </div>
                         </div>
                     </div>

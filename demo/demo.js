@@ -38,6 +38,15 @@ const app = createApp({
     const sendDataType = ref('text');
     const inputText = ref('Hello World');
     const selectedImage = ref(null);
+    const sampleImageSelection = ref('');
+    
+    // サンプル画像ファイル定義
+    const sampleImages = ref([
+      { value: '', name: 'Custom file...', description: 'Upload your own file' },
+      { value: 'jpg-interlaced.jpg', name: 'JPEG Interlaced', description: 'Interlaced JPEG image' },
+      { value: 'png-8.png', name: 'PNG 8-bit', description: '8-bit PNG image' },
+      { value: 'png-interlaced.png', name: 'PNG Interlaced', description: 'Interlaced PNG image' }
+    ]);
     const systemLog = ref('');
     const currentSendStream = ref(null);
     
@@ -729,7 +738,7 @@ const app = createApp({
       }
     };
     
-    // 画像選択
+    // カスタムファイル選択
     const onImageSelect = async (event) => {
       const file = event.target.files[0];
       if (!file) {
@@ -751,13 +760,59 @@ const app = createApp({
           size: file.size,
           type: file.type,
           data: new Uint8Array(arrayBuffer),
-          preview
+          preview,
+          source: 'custom'
         };
         
-        log(`Image selected: ${file.name} (${file.size} bytes)`);
+        // サンプル選択をリセット
+        sampleImageSelection.value = '';
+        
+        log(`Custom image selected: ${file.name} (${file.size} bytes)`);
       } catch (error) {
-        log(`Failed to load image: ${error.message}`);
+        log(`Failed to load custom image: ${error.message}`);
         selectedImage.value = null;
+      }
+    };
+    
+    // サンプル画像選択
+    const onSampleImageSelect = async () => {
+      if (!sampleImageSelection.value) {
+        selectedImage.value = null;
+        return;
+      }
+      
+      try {
+        const sampleFile = sampleImages.value.find(img => img.value === sampleImageSelection.value);
+        if (!sampleFile || !sampleFile.value) return;
+        
+        // サンプルファイルをfetchで取得
+        const response = await fetch(`./assets/sample-files/${sampleFile.value}`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const blob = new Blob([arrayBuffer]);
+        const preview = URL.createObjectURL(blob);
+        
+        // ファイル名から拡張子を取得してMIMEタイプを推定
+        const extension = sampleFile.value.split('.').pop().toLowerCase();
+        const mimeType = extension === 'png' ? 'image/png' : 'image/jpeg';
+        
+        selectedImage.value = {
+          name: sampleFile.value,
+          size: arrayBuffer.byteLength,
+          type: mimeType,
+          data: new Uint8Array(arrayBuffer),
+          preview,
+          source: 'sample'
+        };
+        
+        log(`Sample image selected: ${sampleFile.name} (${arrayBuffer.byteLength} bytes)`);
+      } catch (error) {
+        log(`Failed to load sample image: ${error.message}`);
+        selectedImage.value = null;
+        sampleImageSelection.value = '';
       }
     };
     
@@ -931,6 +986,8 @@ const app = createApp({
       sendDataType,
       inputText,
       selectedImage,
+      sampleImageSelection,
+      sampleImages,
       systemLog,
       systemStatus,
       sendStatus,
@@ -959,6 +1016,7 @@ const app = createApp({
       startReceiving,
       stopReceiving,
       onImageSelect,
+      onSampleImageSelect,
       toggleDebug,
       clearAll,
       cleanup
