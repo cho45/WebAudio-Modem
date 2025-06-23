@@ -46,7 +46,7 @@ export class XModemTransport extends BaseTransport {
   private retries = 0;
   private receivedData: Uint8Array[] = [];
   private expectedSequence = 1;
-  private ackTimeout?: ReturnType<typeof setTimeout>;
+  private timeout?: ReturnType<typeof setTimeout>;
   
   // Simple receive buffer for byte-by-byte assembly
   private receiveBuffer: number[] = [];
@@ -116,6 +116,7 @@ export class XModemTransport extends BaseTransport {
     try {
       await this.sendControl('NAK');
       this.state = State.RECEIVING_WAIT_BLOCK;
+      this.setTimeout();
     } catch (error) {
       this.failReceive(new Error(`Failed to send initial NAK: ${error}`));
     }
@@ -143,6 +144,9 @@ export class XModemTransport extends BaseTransport {
     this.expectedSequence = 1;
     this.receiveBuffer = [];
     
+    // Clear any pending timeout
+    this.clearTimeout();
+    
     if (this.sendReject) {
       this.sendReject(new Error('Transport reset'));
       this.sendResolve = undefined;
@@ -161,6 +165,10 @@ export class XModemTransport extends BaseTransport {
   dispose(): void {
     this.state = State.IDLE;
     this.loopRunning = false;
+    
+    // Clear any pending timeout
+    this.clearTimeout();
+    
     this.sendResolve = undefined;
     this.sendReject = undefined;
     this.receiveResolve = undefined;
@@ -308,6 +316,7 @@ export class XModemTransport extends BaseTransport {
             // All fragments sent, send EOT
             this.state = State.SENDING_WAIT_FINAL_ACK;
             await this.sendControl('EOT');
+            this.setTimeout(); // Set timeout for final ACK
           } else {
             // Send next fragment
             await this.sendCurrentFragment();
@@ -366,6 +375,7 @@ export class XModemTransport extends BaseTransport {
       this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('ACK');
       this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
+      this.setTimeout(); // Set timeout for next block
       this.statistics.bytesTransferred += packet.payload.length;
     } else {
       // Unexpected sequence - reject it
@@ -373,6 +383,7 @@ export class XModemTransport extends BaseTransport {
       this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('NAK');
       this.state = State.RECEIVING_WAIT_BLOCK; // Wait for retransmission
+      this.setTimeout(); // Set timeout for retransmission
     }
   }
 
@@ -391,27 +402,58 @@ export class XModemTransport extends BaseTransport {
       this.statistics.packetsSent++;
       
       // Set timeout for ACK
-      if (this.ackTimeout) {
-        clearTimeout(this.ackTimeout);
-      }
-      this.ackTimeout = setTimeout(() => {
-        if (this.state === State.SENDING_WAIT_ACK && this.fragmentIndex < this.fragments.length) {
-          console.warn(`[XModemTransport] Timeout waiting for ACK for fragment ${this.fragmentIndex + 1}`);
-          this.retries++;
-          if (this.retries > this.config.maxRetries) {
-            this.failSend(new Error('Timeout - max retries exceeded'));
-          } else {
-            this.sendCurrentFragment();
-            this.statistics.packetsRetransmitted++;
-          }
-        }
-      }, this.config.timeoutMs);
+      this.setTimeout();
     } catch (error) {
       // Handle modulation errors
       this.failSend(new Error(`Send failed: ${error}`));
     }
   }
 
+  private setTimeout(): void {
+    this.clearTimeout();
+    this.timeout = setTimeout(() => {
+      this.handleTimeout();
+    }, this.config.timeoutMs);
+  }
+  
+  private clearTimeout(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = undefined;
+    }
+  }
+  
+  private handleTimeout(): void {
+    switch (this.state) {
+      case State.SENDING_WAIT_ACK:
+        if (this.fragmentIndex < this.fragments.length) {
+          console.warn(`[XModemTransport] Timeout waiting for ACK for fragment ${this.fragmentIndex + 1}`);
+          this.retries++;
+          if (this.retries > this.config.maxRetries) {
+            this.failSend(new Error('Timeout - max retries exceeded'));
+          } else {
+            this.statistics.packetsRetransmitted++;
+            this.sendCurrentFragment();
+          }
+        }
+        break;
+        
+      case State.SENDING_WAIT_FINAL_ACK:
+        console.warn(`[XModemTransport] Timeout waiting for final ACK`);
+        this.failSend(new Error('Timeout waiting for final ACK'));
+        break;
+        
+      case State.RECEIVING_WAIT_BLOCK:
+        console.warn(`[XModemTransport] Receive timeout waiting for block ${this.expectedSequence}`);
+        this.failReceive(new Error('Receive timeout - no block received'));
+        break;
+        
+      default:
+        console.warn(`[XModemTransport] Unexpected timeout in state: ${this.state}`);
+        break;
+    }
+  }
+  
   private createFragments(data: Uint8Array): Uint8Array[] {
     const fragments: Uint8Array[] = [];
     const { maxPayloadSize } = this.config;
@@ -435,37 +477,53 @@ export class XModemTransport extends BaseTransport {
 
   private completeSend(): void {
     this.state = State.IDLE;
+    this.loopRunning = false;
+    
+    // Clear any pending timeout
+    this.clearTimeout();
+    
     this.statistics.bytesTransferred += this.fragments.reduce((sum, f) => sum + f.length, 0);
     if (this.sendResolve) {
       this.sendResolve();
       this.sendResolve = undefined;
       this.sendReject = undefined;
     }
-    this.loopRunning = false;
   }
 
   private failSend(error: Error): void {
     this.state = State.IDLE;
+    this.loopRunning = false;
+    
+    // Clear any pending timeout
+    this.clearTimeout();
+    
     if (this.sendReject) {
       this.sendReject(error);
       this.sendResolve = undefined;
       this.sendReject = undefined;
     }
-    this.loopRunning = false;
   }
   
   private failReceive(error: Error): void {
     this.state = State.IDLE;
+    this.loopRunning = false;
+    
+    // Clear any pending timeout
+    this.clearTimeout();
+    
     if (this.receiveReject) {
       this.receiveReject(error);
       this.receiveResolve = undefined;
       this.receiveReject = undefined;
     }
-    this.loopRunning = false;
   }
 
   private completeReceive(): void {
     this.state = State.IDLE;
+    this.loopRunning = false;
+    
+    // Clear any pending timeout
+    this.clearTimeout();
     
     // Reassemble data
     const totalLength = this.receivedData.reduce((sum, d) => sum + d.length, 0);
@@ -482,6 +540,5 @@ export class XModemTransport extends BaseTransport {
       this.receiveResolve = undefined;
       this.receiveReject = undefined;
     }
-    this.loopRunning = false;
   }
 }

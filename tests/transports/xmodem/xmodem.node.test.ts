@@ -603,6 +603,47 @@ describe('XModem Transport', () => {
       // Restore original method
       mockDataChannel.modulate = originalModulate;
     });
+
+    test('Receive timeout', async () => {
+      // Start receiving
+      const receivePromise = transport.receiveData();
+      
+      // Should send NAK to initiate
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // NAK sent
+      
+      // Wait for receive timeout (100ms + buffer)
+      await expect(receivePromise).rejects.toThrow('Receive timeout - no block received');
+      
+      // Transport should be reset after timeout
+      expect(transport.isReady()).toBe(true);
+    });
+
+    test('Final ACK timeout', async () => {
+      const testData = new Uint8Array([0x42]);
+      
+      const sendPromise = transport.sendData(testData);
+      
+      // Send NAK to initiate
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
+      // Wait for data packet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1);
+      
+      // Send ACK to complete data phase (should trigger EOT)
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      // Wait for EOT to be sent
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // Data packet + EOT
+      
+      // No final ACK - should timeout
+      await expect(sendPromise).rejects.toThrow('Timeout waiting for final ACK');
+      
+      // Transport should be reset after timeout
+      expect(transport.isReady()).toBe(true);
+    });
   });
 
   describe('Data Reception', () => {
