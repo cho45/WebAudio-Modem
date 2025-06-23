@@ -48,6 +48,15 @@ const app = createApp({
     
     // 受信データ
     const receivedData = ref([]);
+    const receivingFragments = ref([]);
+    const receivingProgress = ref({
+      totalFragments: 0,
+      totalBytes: 0,
+      estimatedTotal: 0,
+      startTime: null,
+      lastFragmentTime: null,
+      isReceiving: false
+    });
     
     // デバッグ情報
     const senderDebugInfo = ref('No debug info');
@@ -339,6 +348,8 @@ const app = createApp({
         
         log('Connected: sender → receiver (internal loopback)');
         log(`Testing ${data.length} bytes via XModem protocol`);
+
+        receiverTransport.value.on('fragmentReceived', onFragmentReceived);
         
         // 送受信開始
         log('Starting sender...');
@@ -396,6 +407,52 @@ const app = createApp({
       });
     };
     
+    // フラグメント受信リスナー
+    const onFragmentReceived = (event) => {
+        console.log('Fragment received:', event.data);
+      const data = event.data;
+      const now = Date.now();
+      
+      // 受信開始時刻を記録
+      if (!receivingProgress.value.startTime) {
+        receivingProgress.value.startTime = now;
+      }
+      
+      // フラグメント情報を追加
+      receivingFragments.value.push({
+        seqNum: data.seqNum,
+        size: data.fragment.length,
+        timestamp: new Date(data.timestamp).toLocaleTimeString(),
+        data: data.fragment
+      });
+      
+      // 受信レートを計算
+      const elapsedMs = now - receivingProgress.value.startTime;
+      const bytesPerSecond = elapsedMs > 0 ? (data.totalBytesReceived * 1000) / elapsedMs : 0;
+      
+      // プログレス情報を更新
+      receivingProgress.value = {
+        totalFragments: data.totalFragments,
+        totalBytes: data.totalBytesReceived,
+        estimatedTotal: 0, // 終了時に分かる
+        startTime: receivingProgress.value.startTime,
+        lastFragmentTime: now,
+        bytesPerSecond: Math.round(bytesPerSecond),
+        isReceiving: true
+      };
+      
+      // 詳細ログ出力
+      log(`📦 Fragment #${data.seqNum}: ${data.fragment.length}B, total: ${data.totalBytesReceived}B (${receivingProgress.value.bytesPerSecond}B/s)`);
+      
+      // テキストの場合は部分的に表示
+      if (isTextData(data.fragment)) {
+        const partialText = new TextDecoder().decode(data.fragment);
+        updateStatus(receiveStatus, `📦 Fragment #${data.seqNum}: "${partialText}" (${data.totalBytesReceived}B @ ${receivingProgress.value.bytesPerSecond}B/s)`, 'info');
+      } else {
+        updateStatus(receiveStatus, `📦 Fragment #${data.seqNum}: ${data.fragment.length}B (${data.totalBytesReceived}B @ ${receivingProgress.value.bytesPerSecond}B/s)`, 'info');
+      }
+    };
+    
     // 受信開始
     const startReceiving = async () => {
       if (isReceiving.value || !systemReady.value) return;
@@ -403,6 +460,21 @@ const app = createApp({
       try {
         log('Starting XModem reception...');
         updateStatus(receiveStatus, 'Starting microphone input...', 'info');
+        
+        // フラグメント状態をリセット
+        receivingFragments.value = [];
+        receivingProgress.value = {
+          totalFragments: 0,
+          totalBytes: 0,
+          estimatedTotal: 0,
+          startTime: null,
+          lastFragmentTime: null,
+          bytesPerSecond: 0,
+          isReceiving: false
+        };
+        
+        // フラグメント受信リスナーを登録
+        receiverTransport.value.on('fragmentReceived', onFragmentReceived);
         
         // マイク入力取得
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -441,26 +513,30 @@ const app = createApp({
               const receivedBytes = await receiverTransport.value.receiveData();
               
               if (receivedBytes.length > 0) {
+                // 受信完了後の処理
+                receivingProgress.value.isReceiving = false;
+                
                 // データ種別判定（簡易的）
                 const isText = isTextData(receivedBytes);
                 
                 if (isText) {
                   const text = new TextDecoder().decode(receivedBytes);
-                  log(`XModem received text: ${receivedBytes.length} bytes → "${text}"`);
+                  log(`✅ XModem completed - received text: ${receivedBytes.length} bytes → "${text}"`);
                   addReceivedData('text', text);
-                  updateStatus(receiveStatus, `📡 XModem received: "${text}"`, 'success');
+                  updateStatus(receiveStatus, `📡 XModem completed: "${text}"`, 'success');
                 } else {
                   // 画像として処理
                   const blob = new Blob([receivedBytes], { type: 'image/jpeg' });
                   const url = URL.createObjectURL(blob);
-                  log(`XModem received image: ${receivedBytes.length} bytes`);
+                  log(`✅ XModem completed - received image: ${receivedBytes.length} bytes`);
                   addReceivedData('image', url);
-                  updateStatus(receiveStatus, `📡 XModem received image: ${receivedBytes.length} bytes`, 'success');
+                  updateStatus(receiveStatus, `📡 XModem completed - image: ${receivedBytes.length} bytes`, 'success');
                 }
                 
                 // 次の送信待機状態に戻る
                 setTimeout(() => {
                   if (isReceiving.value) {
+                    receivingFragments.value = []; // フラグメントリストをクリア
                     updateStatus(receiveStatus, '🎤 Listening for next XModem transmission...', 'info');
                   }
                 }, 2000);
@@ -488,6 +564,7 @@ const app = createApp({
         log(errorMsg);
         updateStatus(receiveStatus, errorMsg, 'error');
         isReceiving.value = false;
+        receivingProgress.value.isReceiving = false;
       }
     };
     
@@ -496,6 +573,12 @@ const app = createApp({
       if (!isReceiving.value) return;
       
       isReceiving.value = false;
+      receivingProgress.value.isReceiving = false;
+      
+      // フラグメント受信リスナーを削除
+      if (receiverTransport.value) {
+        receiverTransport.value.off('fragmentReceived', onFragmentReceived);
+      }
       
       if (currentStream.value) {
         currentStream.value.getTracks().forEach(track => {
@@ -680,6 +763,16 @@ const app = createApp({
     // 全クリア
     const clearAll = () => {
       receivedData.value = [];
+      receivingFragments.value = [];
+      receivingProgress.value = {
+        totalFragments: 0,
+        totalBytes: 0,
+        estimatedTotal: 0,
+        startTime: null,
+        lastFragmentTime: null,
+        bytesPerSecond: 0,
+        isReceiving: false
+      };
       systemLog.value = '';
       log('All data and logs cleared');
     };
@@ -716,6 +809,8 @@ const app = createApp({
       sendStatus,
       receiveStatus,
       receivedData,
+      receivingFragments,
+      receivingProgress,
       senderDebugInfo,
       receiverDebugInfo,
       

@@ -348,9 +348,20 @@ export class XModemTransport extends BaseTransport {
     }
 
     if (packet.sequence === this.expectedSequence) {
+      console.log(`[XModemTransport] Received expected packet: seq=${packet.sequence}, length=${packet.payload.length}`);
       // Expected packet - accept it
       this.statistics.packetsReceived++;
       this.receivedData.push(packet.payload);
+      
+      // フラグメント受信イベントを発行
+      this.emit('fragmentReceived', new Event({
+        seqNum: packet.sequence,
+        fragment: packet.payload,
+        totalFragments: this.receivedData.length,
+        totalBytesReceived: this.receivedData.reduce((sum, data) => sum + data.length, 0),
+        timestamp: Date.now()
+      }));
+      
       this.expectedSequence = (this.expectedSequence % 255) + 1;
       this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('ACK');
