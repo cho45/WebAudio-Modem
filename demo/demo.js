@@ -1,455 +1,746 @@
 /**
- * WebAudio-Modem Simple Demo
+ * WebAudio-Modem Vue3 Demo
  * 
- * シンプルなテキスト送受信デモ（音声入力対応）
+ * Vue3 Composition APIを使用したテキスト・画像送受信デモ
  */
 
+import { createApp, ref, reactive, computed, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
-// import { send } from 'vite';
 
-// Global state
-let audioContext = null;
-let senderDataChannel = null;
-let receiverDataChannel = null;
-let senderTransport = null;
-let receiverTransport = null;
-let isReceiving = false;
-let currentStream = null;
 
-// Initialize the demo application
-window.addEventListener('DOMContentLoaded', () => {
-    log('WebAudio-Modem Demo loaded');
-    updateUI();
-});
-
-// System initialization
-async function initializeSystem() {
-    try {
+const app = createApp({
+  setup() {
+    // システム状態
+    const audioContext = ref(null);
+    const senderDataChannel = ref(null);
+    const receiverDataChannel = ref(null);
+    const senderTransport = ref(null);
+    const receiverTransport = ref(null);
+    const currentStream = ref(null);
+    
+    // Analyser nodes for visualization
+    const senderAnalyser = ref(null);
+    const receiverAnalyser = ref(null);
+    
+    // Canvas references
+    const senderWaveformCanvas = ref(null);
+    const senderSpectrumCanvas = ref(null);
+    const receiverWaveformCanvas = ref(null);
+    const receiverSpectrumCanvas = ref(null);
+    
+    // UI状態
+    const systemReady = ref(false);
+    const isReceiving = ref(false);
+    const isSending = ref(false);
+    const showDebug = ref(false);
+    const sendDataType = ref('text');
+    const inputText = ref('Hello World');
+    const selectedImage = ref(null);
+    const systemLog = ref('');
+    const currentSendStream = ref(null);
+    
+    // ステータス管理
+    const systemStatus = reactive({ message: 'Click Initialize to start', type: 'info' });
+    const sendStatus = reactive({ message: 'Initialize system first', type: 'info' });
+    const receiveStatus = reactive({ message: 'Initialize system first', type: 'info' });
+    
+    // 受信データ
+    const receivedData = ref([]);
+    
+    // デバッグ情報
+    const senderDebugInfo = ref('No debug info');
+    const receiverDebugInfo = ref('No debug info');
+    
+    // Computed properties
+    const canSend = computed(() => {
+      if (!systemReady.value || isSending.value) return false;
+      if (sendDataType.value === 'text') return inputText.value.trim().length > 0;
+      if (sendDataType.value === 'image') return selectedImage.value !== null;
+      return false;
+    });
+    
+    // Visualization variables
+    let animationId = null;
+    let senderWaveformData = null;
+    let senderSpectrumData = null;
+    let receiverWaveformData = null;
+    let receiverSpectrumData = null;
+    
+    // ログ出力
+    const log = (message) => {
+      const timestamp = new Date().toLocaleTimeString();
+      const logEntry = `[${timestamp}] ${message}`;
+      systemLog.value += logEntry + '\n';
+      console.log(logEntry);
+      
+      // Auto-scroll to bottom
+      nextTick(() => {
+        const textarea = document.querySelector('.system-log textarea');
+        if (textarea) {
+          textarea.scrollTop = textarea.scrollHeight;
+        }
+      });
+    };
+    
+    // ステータス更新
+    const updateStatus = (statusObj, message, type = 'info') => {
+      statusObj.message = message;
+      statusObj.type = type;
+    };
+    
+    // システム初期化
+    const initializeSystem = async () => {
+      try {
         log('Initializing audio system...');
-        updateStatus('system-status', 'Initializing...', 'info');
-       
-        // Create AudioContext
-        audioContext = new AudioContext();
-        log(`AudioContext created: ${audioContext.sampleRate}Hz`);
+        updateStatus(systemStatus, 'Initializing...', 'info');
         
-        // Resume AudioContext (requires user interaction)
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-            log('AudioContext resumed');
+        // AudioContext作成
+        audioContext.value = new AudioContext();
+        log(`AudioContext created: ${audioContext.value.sampleRate}Hz`);
+        
+        // AudioContextの再開
+        if (audioContext.value.state === 'suspended') {
+          await audioContext.value.resume();
+          log('AudioContext resumed');
         }
         
-        // Add AudioWorklet module
-        await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.js');
+        // AudioWorkletモジュール追加
+        await WebAudioDataChannel.addModule(audioContext.value, '../src/webaudio/processors/fsk-processor.js');
         log('FSK processor module loaded');
         
-        // Create sender and receiver data channels
-        senderDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-            processorOptions: {
-                name: 'sender',
-            }
+        // データチャネル作成
+        senderDataChannel.value = new WebAudioDataChannel(audioContext.value, 'fsk-processor', {
+          processorOptions: { name: 'sender' }
         });
-        receiverDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-            processorOptions: {
-                name: 'receiver',
-            }
+        receiverDataChannel.value = new WebAudioDataChannel(audioContext.value, 'fsk-processor', {
+          processorOptions: { name: 'receiver' }
         });
         log('AudioWorkletNodes created');
-
-//         setInterval(async () => {
-//             const senderInfo = await senderDataChannel.getStatus();
-//             document.getElementById('send-info').textContent = JSON.stringify(senderInfo, null, 2);
-//             const receiverInfo = await receiverDataChannel.getStatus();
-//             document.getElementById('receive-info').textContent = JSON.stringify(receiverInfo, null, 2);
-//         }, 500);
-       
-        // Configure both with FSK settings
+        
+        // Analyser nodes作成
+        senderAnalyser.value = audioContext.value.createAnalyser();
+        receiverAnalyser.value = audioContext.value.createAnalyser();
+        senderAnalyser.value.fftSize = 2048;
+        receiverAnalyser.value.fftSize = 2048;
+        
+        // Analyser nodesを接続
+        senderDataChannel.value.connect(senderAnalyser.value);
+        receiverDataChannel.value.connect(receiverAnalyser.value);
+        
+        // FSK設定
         const config = {
-            ...DEFAULT_FSK_CONFIG,
-            // baudRate: 1200,
-            sampleRate: audioContext.sampleRate
+          ...DEFAULT_FSK_CONFIG,
+          sampleRate: audioContext.value.sampleRate
         };
         
         log('Configuring FSK processors with settings:', config);
-        await senderDataChannel.configure(config);
-        await receiverDataChannel.configure(config);
+        await senderDataChannel.value.configure(config);
+        await receiverDataChannel.value.configure(config);
         log('FSK processors configured successfully');
         
-        // Create XModem transports
-        senderTransport = new XModemTransport(senderDataChannel);
-        receiverTransport = new XModemTransport(receiverDataChannel);
+        // XModemトランスポート作成
+        senderTransport.value = new XModemTransport(senderDataChannel.value);
+        receiverTransport.value = new XModemTransport(receiverDataChannel.value);
         
-        // Configure XModem settings
+        // XModem設定
         const xmodemConfig = {
-            timeoutMs: 5000,
-            maxRetries: 3,
-            maxPayloadSize: 64  // Smaller packets for audio transmission
+          timeoutMs: 5000,
+          maxRetries: 3,
+          maxPayloadSize: 64
         };
-        senderTransport.configure(xmodemConfig);
-        receiverTransport.configure(xmodemConfig);
+        senderTransport.value.configure(xmodemConfig);
+        receiverTransport.value.configure(xmodemConfig);
         log('XModem transports configured successfully');
-        log(`Sender transport ready: ${senderTransport.isReady()}`);
-        log(`Receiver transport ready: ${receiverTransport.isReady()}`);
         
-        updateStatus('system-status', 'System initialized successfully ✓', 'success');
-        updateStatus('test-status', 'Ready for testing', 'success');
+        systemReady.value = true;
+        updateStatus(systemStatus, 'System initialized successfully ✓', 'success');
+        updateStatus(sendStatus, 'Ready to send', 'success');
+        updateStatus(receiveStatus, 'Ready to receive', 'success');
         log('System initialization complete');
-        updateUI();
         
-    } catch (error) {
+        // デバッグ情報の定期更新開始
+        startDebugUpdates();
+        
+        // 可視化開始
+        startVisualization();
+        
+      } catch (error) {
         const errorMsg = `Initialization failed: ${error.message}`;
         log(errorMsg);
-        updateStatus('system-status', errorMsg, 'error');
-        updateStatus('test-status', 'System initialization required', 'error');
-    }
-}
-
-// Send text using XModem protocol
-async function sendTextViaXModem() {
-    if (!audioContext || !senderTransport) {
-        updateStatus('send-status', 'System not initialized', 'error');
-        return;
-    }
+        updateStatus(systemStatus, errorMsg, 'error');
+        updateStatus(sendStatus, 'System initialization required', 'error');
+        updateStatus(receiveStatus, 'System initialization required', 'error');
+      }
+    };
     
-    try {
-        const text = document.getElementById('input-text').value.trim();
-        if (!text) {
-            updateStatus('send-status', 'Please enter text to send', 'error');
+    // データ送信
+    const sendData = async () => {
+      if (!systemReady.value || isSending.value) {
+        updateStatus(sendStatus, 'System not initialized or already sending', 'error');
+        return;
+      }
+      
+      try {
+        let data;
+        let description;
+        
+        if (sendDataType.value === 'text') {
+          const text = inputText.value.trim();
+          if (!text) {
+            updateStatus(sendStatus, 'Please enter text to send', 'error');
             return;
+          }
+          data = new TextEncoder().encode(text);
+          description = `text: "${text}"`;
+        } else if (sendDataType.value === 'image' && selectedImage.value) {
+          data = selectedImage.value.data;
+          description = `image: ${selectedImage.value.name} (${selectedImage.value.size} bytes)`;
+        } else {
+          updateStatus(sendStatus, 'Please select data to send', 'error');
+          return;
         }
         
-        log(`Sending text via XModem: "${text}"`);
-        updateStatus('send-status', 'Preparing XModem transmission...', 'info');
-
-        // Get microphone input
+        isSending.value = true;
+        log(`Sending ${description}`);
+        updateStatus(sendStatus, 'Preparing XModem transmission...', 'info');
+        
+        // マイク入力取得
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                sampleRate: audioContext.sampleRate,
-                channelCount: 1,
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false
-            } 
+          audio: {
+            sampleRate: audioContext.value.sampleRate,
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          } 
         });
         
-        log(`Microphone access granted: ${audioContext.sampleRate}Hz, 1 channel`);
+        currentSendStream.value = stream;
+        log(`Microphone access granted: ${audioContext.value.sampleRate}Hz, 1 channel`);
         
-        // Connect sender to audio output for transmission
-        senderDataChannel.disconnect();
-        senderDataChannel.connect(audioContext.destination);
+        // 送信者を音声出力に接続
+        senderDataChannel.value.disconnect();
+        senderDataChannel.value.connect(audioContext.value.destination);
+        senderDataChannel.value.connect(senderAnalyser.value);
         log('Connected sender to audio output');
-
-        // Connect: microphone -> sender
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(senderDataChannel);
+        
+        // マイクを送信者に接続
+        const source = audioContext.value.createMediaStreamSource(stream);
+        source.connect(senderDataChannel.value);
         log('Connected: microphone → sender');
         
-        // Convert text to bytes and send via XModem
-        const data = new TextEncoder().encode(text);
         log(`Sending ${data.length} bytes via XModem protocol`);
+        updateStatus(sendStatus, '🎤 Sending via XModem...', 'info');
         
-        updateStatus('send-status', 'Sending via XModem...', 'info');
-        await senderTransport.sendData(data);
+        await senderTransport.value.sendData(data);
         
-        updateStatus('send-status', `✓ XModem send completed: "${text}"`, 'success');
-        log('XModem transmission completed successfully');
+        if (isSending.value) {
+          updateStatus(sendStatus, `✓ XModem send completed: ${description}`, 'success');
+          log('XModem transmission completed successfully');
+        }
         
-    } catch (error) {
-        let errorMsg = `XModem send failed: ${error.message}`;
-        
-        // Handle specific error cases
-        if (error.message.includes('Transport busy')) {
+      } catch (error) {
+        if (isSending.value) {
+          let errorMsg = `XModem send failed: ${error.message}`;
+          
+          if (error.message.includes('Transport busy')) {
             errorMsg = 'Sender is busy. Please wait and try again.';
             log('Sender transport is currently busy');
-        } else if (error.message.includes('timeout')) {
+          } else if (error.message.includes('timeout')) {
             errorMsg = 'Send timeout. No receiver found or connection failed.';
             log('XModem send timed out - no receiver response');
+          }
+          
+          log(errorMsg);
+          updateStatus(sendStatus, errorMsg, 'error');
         }
-        
-        log(errorMsg);
-        updateStatus('send-status', errorMsg, 'error');
-    }
-}
-
-// XModem loopback test: sender -> receiver (internal)
-async function testXModemLoopback() {
-    if (!audioContext || !senderTransport || !receiverTransport) {
-        updateStatus('test-status', 'System not initialized', 'error');
-        return;
-    }
+      } finally {
+        // Clean up
+        if (currentSendStream.value) {
+          currentSendStream.value.getTracks().forEach(track => track.stop());
+          currentSendStream.value = null;
+        }
+        isSending.value = false;
+      }
+    };
     
-    try {
-        const text = document.getElementById('input-text').value.trim();
-        if (!text) {
-            updateStatus('test-status', 'Please enter text to test', 'error');
+    // 送信停止
+    const stopSending = () => {
+      if (!isSending.value) return;
+      
+      isSending.value = false;
+      
+      if (currentSendStream.value) {
+        currentSendStream.value.getTracks().forEach(track => {
+          track.stop();
+          log(`Stopped microphone track: ${track.kind}`);
+        });
+        currentSendStream.value = null;
+      }
+      
+      if (senderDataChannel.value) {
+        senderDataChannel.value.disconnect();
+        senderDataChannel.value.connect(senderAnalyser.value);
+        log('Disconnected sender from microphone');
+      }
+      
+      updateStatus(sendStatus, 'Sending stopped', 'info');
+      log('XModem sending stopped');
+    };
+    
+    // XModemループバックテスト
+    const testXModemLoopback = async () => {
+      if (!systemReady.value) {
+        updateStatus(systemStatus, 'System not initialized', 'error');
+        return;
+      }
+      
+      try {
+        let data;
+        let description;
+        
+        if (sendDataType.value === 'text') {
+          const text = inputText.value.trim();
+          if (!text) {
+            updateStatus(systemStatus, 'Please enter text to test', 'error');
             return;
+          }
+          data = new TextEncoder().encode(text);
+          description = text;
+        } else if (sendDataType.value === 'image' && selectedImage.value) {
+          data = selectedImage.value.data;
+          description = selectedImage.value.name;
+        } else {
+          updateStatus(systemStatus, 'Please select data to test', 'error');
+          return;
         }
         
-        log(`Starting XModem loopback test with: "${text}"`);
-        updateStatus('test-status', 'Running XModem loopback test...', 'info');
+        log(`Starting XModem loopback test with: ${description}`);
+        updateStatus(systemStatus, 'Running XModem loopback test...', 'info');
         
-        // Disconnect any previous connections
-        senderDataChannel.disconnect();
-        receiverDataChannel.disconnect();
+        // 接続リセット
+        senderDataChannel.value.disconnect();
+        receiverDataChannel.value.disconnect();
         
-
-        const hub = audioContext.createGain();
-        hub.gain.value = 1.0; // Set gain to 1.0
-        senderDataChannel.connect(hub);
-        receiverDataChannel.connect(hub);
-        hub.connect(audioContext.destination);
-
-        hub.connect(senderDataChannel);
-        hub.connect(receiverDataChannel);
-       
-        // Connect: sender -> receiver (internal loopback)
+        // ハブ作成してループバック接続
+        const hub = audioContext.value.createGain();
+        hub.gain.value = 1.0;
+        senderDataChannel.value.connect(hub);
+        receiverDataChannel.value.connect(hub);
+        hub.connect(audioContext.value.destination);
+        hub.connect(senderDataChannel.value);
+        hub.connect(receiverDataChannel.value);
+        
+        // Analyser接続も復旧
+        senderDataChannel.value.connect(senderAnalyser.value);
+        receiverDataChannel.value.connect(receiverAnalyser.value);
+        
         log('Connected: sender → receiver (internal loopback)');
-        
-        // Convert text to bytes
-        const data = new TextEncoder().encode(text);
         log(`Testing ${data.length} bytes via XModem protocol`);
         
-        // Check transport states before starting
-        log(`Sender state before test: ready=${senderTransport.isReady()}`);
-        log(`Receiver state before test: ready=${receiverTransport.isReady()}`);
-        
+        // 送受信開始
         log('Starting sender...');
-        const sendPromise = senderTransport.sendData(data);
+        const sendPromise = senderTransport.value.sendData(data);
         
-        // Wait a bit for receiver to be ready
         await new Promise(resolve => setTimeout(resolve, 500));
-
+        
         log('Starting receiver...');
-        const receivePromise = receiverTransport.receiveData()
+        const receivePromise = receiverTransport.value.receiveData();
         
-        
-        // Wait for both to complete
         const [_, receivedData] = await Promise.all([sendPromise, receivePromise]);
         
-        // Process result
-        const receivedText = new TextDecoder().decode(receivedData);
-        log(`XModem loopback result: "${receivedText}"`);
-        
-        // Update UI
-        updateOutput(receivedText);
-        
-        if (receivedText === text) {
-            updateStatus('test-status', '✓ Perfect XModem loopback!', 'success');
+        // 結果処理
+        if (sendDataType.value === 'text') {
+          const receivedText = new TextDecoder().decode(receivedData);
+          log(`XModem loopback result: "${receivedText}"`);
+          
+          addReceivedData('text', receivedText);
+          
+          if (receivedText === description) {
+            updateStatus(systemStatus, '✓ Perfect XModem loopback!', 'success');
             log('XModem loopback test: PASSED - Perfect match');
+          } else {
+            updateStatus(systemStatus, `⚠ Partial match: "${receivedText}"`, 'info');
+            log(`XModem loopback test: PARTIAL - Expected: "${description}", Got: "${receivedText}"`);
+          }
         } else {
-            updateStatus('test-status', `⚠ Partial match: "${receivedText}"`, 'info');
-            log(`XModem loopback test: PARTIAL - Expected: "${text}", Got: "${receivedText}"`);
+          // 画像の場合
+          const blob = new Blob([receivedData], { type: selectedImage.value.type });
+          const url = URL.createObjectURL(blob);
+          addReceivedData('image', url);
+          
+          if (receivedData.length === data.length) {
+            updateStatus(systemStatus, '✓ Perfect XModem image loopback!', 'success');
+            log('XModem image loopback test: PASSED - Size match');
+          } else {
+            updateStatus(systemStatus, `⚠ Size mismatch: expected ${data.length}, got ${receivedData.length}`, 'info');
+            log(`XModem image loopback test: PARTIAL - Size mismatch`);
+          }
         }
         
-    } catch (error) {
+      } catch (error) {
         const errorMsg = `XModem loopback test failed: ${error.message}`;
         log(errorMsg);
-        updateStatus('test-status', errorMsg, 'error');
-    }
-}
-
-// Start receiving text via XModem protocol
-async function startReceiving() {
-    if (isReceiving) {
-        log('Already receiving XModem data');
-        return;
-    }
+        updateStatus(systemStatus, errorMsg, 'error');
+      }
+    };
     
-    if (!audioContext || !receiverTransport) {
-        updateStatus('receive-status', 'System not initialized', 'error');
-        return;
-    }
+    // 受信データ追加
+    const addReceivedData = (type, content) => {
+      receivedData.value.push({
+        type,
+        content,
+        timestamp: new Date().toLocaleTimeString()
+      });
+    };
     
-    try {
+    // 受信開始
+    const startReceiving = async () => {
+      if (isReceiving.value || !systemReady.value) return;
+      
+      try {
         log('Starting XModem reception...');
-        updateStatus('receive-status', 'Starting microphone input...', 'info');
+        updateStatus(receiveStatus, 'Starting microphone input...', 'info');
         
-        // Get microphone input
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                sampleRate: audioContext.sampleRate,
-                channelCount: 1,
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false
-            } 
+        // マイク入力取得
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: audioContext.value.sampleRate,
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
         });
         
-        log(`Microphone access granted: ${audioContext.sampleRate}Hz, 1 channel`);
+        log(`Microphone access granted: ${audioContext.value.sampleRate}Hz, 1 channel`);
         
-        // Disconnect previous connections
-        receiverDataChannel.disconnect();
-        receiverDataChannel.connect(audioContext.destination);
+        // 受信者接続
+        receiverDataChannel.value.disconnect();
+        receiverDataChannel.value.connect(audioContext.value.destination);
+        receiverDataChannel.value.connect(receiverAnalyser.value);
         
-        // Connect: microphone -> receiver
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(receiverDataChannel);
+        const source = audioContext.value.createMediaStreamSource(stream);
+        source.connect(receiverDataChannel.value);
         log('Connected: microphone → receiver');
         
-        isReceiving = true;
-        currentStream = stream;
-        updateStatus('receive-status', '🎤 Listening for XModem transmission...', 'success');
+        isReceiving.value = true;
+        currentStream.value = stream;
+        updateStatus(receiveStatus, '🎤 Listening for XModem transmission...', 'success');
         log('XModem reception started - waiting for data...');
-        updateUI();
         
-        // XModem reception loop
+        // 受信ループ
         const receiveLoop = async () => {
-            while (isReceiving) {
-                try {
-                    log('Waiting for XModem data...');
-                    updateStatus('receive-status', '🎤 Waiting for XModem transmission...', 'info');
-                    
-                    const receivedData = await receiverTransport.receiveData();
-                    
-                    if (receivedData.length > 0) {
-                        const text = new TextDecoder().decode(receivedData);
-                        log(`XModem received: ${receivedData.length} bytes → "${text}"`);
-                        
-                        updateOutput(text);
-                        updateStatus('receive-status', `📡 XModem received: "${text}"`, 'success');
-                        
-                        // Reset status for next transmission after a delay
-                        setTimeout(() => {
-                            if (isReceiving) {
-                                updateStatus('receive-status', '🎤 Listening for next XModem transmission...', 'info');
-                            }
-                        }, 2000);
-                    }
-                } catch (error) {
-                    if (isReceiving) {
-                        log(`XModem reception error: ${error.message}`);
-                        
-                        // Check if it's a "Transport busy" error
-                        if (error.message.includes('Transport busy')) {
-                            log('Receiver is busy, waiting before retry...');
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                        } else {
-                            updateStatus('receive-status', `Reception error: ${error.message}`, 'error');
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                        }
-                    }
+          while (isReceiving.value) {
+            try {
+              log('Waiting for XModem data...');
+              updateStatus(receiveStatus, '🎤 Waiting for XModem transmission...', 'info');
+              
+              const receivedBytes = await receiverTransport.value.receiveData();
+              
+              if (receivedBytes.length > 0) {
+                // データ種別判定（簡易的）
+                const isText = isTextData(receivedBytes);
+                
+                if (isText) {
+                  const text = new TextDecoder().decode(receivedBytes);
+                  log(`XModem received text: ${receivedBytes.length} bytes → "${text}"`);
+                  addReceivedData('text', text);
+                  updateStatus(receiveStatus, `📡 XModem received: "${text}"`, 'success');
+                } else {
+                  // 画像として処理
+                  const blob = new Blob([receivedBytes], { type: 'image/jpeg' });
+                  const url = URL.createObjectURL(blob);
+                  log(`XModem received image: ${receivedBytes.length} bytes`);
+                  addReceivedData('image', url);
+                  updateStatus(receiveStatus, `📡 XModem received image: ${receivedBytes.length} bytes`, 'success');
                 }
+                
+                // 次の送信待機状態に戻る
+                setTimeout(() => {
+                  if (isReceiving.value) {
+                    updateStatus(receiveStatus, '🎤 Listening for next XModem transmission...', 'info');
+                  }
+                }, 2000);
+              }
+            } catch (error) {
+              if (isReceiving.value) {
+                log(`XModem reception error: ${error.message}`);
+                
+                if (error.message.includes('Transport busy')) {
+                  log('Receiver is busy, waiting before retry...');
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                  updateStatus(receiveStatus, `Reception error: ${error.message}`, 'error');
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+              }
             }
+          }
         };
         
         receiveLoop();
         
-    } catch (error) {
+      } catch (error) {
         const errorMsg = `Failed to start XModem reception: ${error.message}`;
         log(errorMsg);
-        updateStatus('receive-status', errorMsg, 'error');
-        isReceiving = false;
-        updateUI();
-    }
-}
-
-// Stop receiving XModem data
-function stopReceiving() {
-    if (!isReceiving) {
-        log('Not currently receiving');
-        return;
-    }
+        updateStatus(receiveStatus, errorMsg, 'error');
+        isReceiving.value = false;
+      }
+    };
     
-    isReceiving = false;
-    
-    // Clean up audio resources
-    if (currentStream) {
-        currentStream.getTracks().forEach(track => {
-            track.stop();
-            log(`Stopped microphone track: ${track.kind}`);
+    // 受信停止
+    const stopReceiving = () => {
+      if (!isReceiving.value) return;
+      
+      isReceiving.value = false;
+      
+      if (currentStream.value) {
+        currentStream.value.getTracks().forEach(track => {
+          track.stop();
+          log(`Stopped microphone track: ${track.kind}`);
         });
-        currentStream = null;
-    }
-    
-    // Disconnect receiver
-    if (receiverDataChannel) {
-        receiverDataChannel.disconnect();
+        currentStream.value = null;
+      }
+      
+      if (receiverDataChannel.value) {
+        receiverDataChannel.value.disconnect();
+        receiverDataChannel.value.connect(receiverAnalyser.value);
         log('Disconnected receiver from microphone');
-    }
+      }
+      
+      updateStatus(receiveStatus, 'Stopped receiving', 'info');
+      log('XModem reception stopped');
+    };
     
-    updateStatus('receive-status', 'Stopped receiving', 'info');
-    log('XModem reception stopped');
-    updateUI();
-}
-
-// UI management
-function updateUI() {
-    const systemReady = audioContext && senderTransport && receiverTransport && 
-                       senderTransport.isReady() && receiverTransport.isReady();
-    
-    // Update button states
-    document.getElementById('init-btn').disabled = systemReady;
-    document.getElementById('send-btn').disabled = !systemReady;
-    document.getElementById('loopback-btn').disabled = !systemReady;
-    document.getElementById('receive-btn').disabled = !systemReady || isReceiving;
-    
-    // Show/hide Stop Receiving button based on receiving state
-    const stopBtn = document.getElementById('stop-btn');
-    if (isReceiving) {
-        stopBtn.style.display = 'inline-block';
-        stopBtn.disabled = false;
-    } else {
-        stopBtn.style.display = 'none';
-        stopBtn.disabled = true;
-    }
-    
-    // Update init button text
-    if (systemReady) {
-        document.getElementById('init-btn').textContent = 'System Ready ✓';
-    }
-}
-
-function updateStatus(elementId, message, type = 'info') {
-    const element = document.getElementById(elementId);
-    if (element) {
-        element.textContent = message;
-        element.className = `status ${type}`;
-    }
-}
-
-function updateOutput(text) {
-    const outputElement = document.getElementById('output-text');
-    if (outputElement) {
-        const currentContent = outputElement.textContent;
-        
-        if (currentContent === 'No data received') {
-            outputElement.textContent = text;
-        } else {
-            outputElement.textContent = currentContent + '\n' + text;
+    // データがテキストかどうかの簡易判定
+    const isTextData = (data) => {
+      // ASCII範囲内の文字が多い場合はテキストと判定
+      let textChars = 0;
+      const sampleSize = Math.min(100, data.length);
+      
+      for (let i = 0; i < sampleSize; i++) {
+        const byte = data[i];
+        if ((byte >= 32 && byte <= 126) || byte === 10 || byte === 13 || byte === 9) {
+          textChars++;
         }
-    }
-}
+      }
+      
+      return textChars / sampleSize > 0.7;
+    };
+    
+    // 画像選択
+    const onImageSelect = async (event) => {
+      const file = event.target.files[0];
+      if (!file) {
+        selectedImage.value = null;
+        return;
+      }
+      
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+      
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const preview = URL.createObjectURL(file);
+        
+        selectedImage.value = {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          data: new Uint8Array(arrayBuffer),
+          preview
+        };
+        
+        log(`Image selected: ${file.name} (${file.size} bytes)`);
+      } catch (error) {
+        log(`Failed to load image: ${error.message}`);
+        selectedImage.value = null;
+      }
+    };
+    
+    // デバッグ切り替え
+    const toggleDebug = () => {
+      showDebug.value = !showDebug.value;
+    };
+    
+    // デバッグ情報更新開始
+    const startDebugUpdates = () => {
+      setInterval(async () => {
+        if (showDebug.value && systemReady.value) {
+          try {
+            if (senderDataChannel.value) {
+              const senderInfo = await senderDataChannel.value.getStatus();
+              senderDebugInfo.value = JSON.stringify(senderInfo, null, 2);
+            }
+            if (receiverDataChannel.value) {
+              const receiverInfo = await receiverDataChannel.value.getStatus();
+              receiverDebugInfo.value = JSON.stringify(receiverInfo, null, 2);
+            }
+          } catch (error) {
+            // デバッグ情報取得エラーは無視
+          }
+        }
+      }, 500);
+    };
+    
+    // 可視化開始
+    const startVisualization = () => {
+      if (!senderAnalyser.value || !receiverAnalyser.value) return;
+      
+      const bufferLength = senderAnalyser.value.frequencyBinCount;
+      senderWaveformData = new Uint8Array(bufferLength);
+      senderSpectrumData = new Uint8Array(bufferLength);
+      receiverWaveformData = new Uint8Array(bufferLength);
+      receiverSpectrumData = new Uint8Array(bufferLength);
+      
+      const animate = () => {
+        if (!systemReady.value) return;
+        
+        // データ取得
+        senderAnalyser.value.getByteTimeDomainData(senderWaveformData);
+        senderAnalyser.value.getByteFrequencyData(senderSpectrumData);
+        receiverAnalyser.value.getByteTimeDomainData(receiverWaveformData);
+        receiverAnalyser.value.getByteFrequencyData(receiverSpectrumData);
+        
+        // 描画
+        drawWaveform(senderWaveformCanvas.value, senderWaveformData);
+        drawSpectrum(senderSpectrumCanvas.value, senderSpectrumData);
+        drawWaveform(receiverWaveformCanvas.value, receiverWaveformData);
+        drawSpectrum(receiverSpectrumCanvas.value, receiverSpectrumData);
+        
+        animationId = requestAnimationFrame(animate);
+      };
+      
+      animate();
+    };
+    
+    // 波形描画
+    const drawWaveform = (canvas, data) => {
+      if (!canvas || !data) return;
+      
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+      
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#0f0';
+      ctx.beginPath();
+      
+      const sliceWidth = width / data.length;
+      let x = 0;
+      
+      for (let i = 0; i < data.length; i++) {
+        const v = data[i] / 128.0;
+        const y = v * height / 2;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        
+        x += sliceWidth;
+      }
+      
+      ctx.stroke();
+    };
+    
+    // スペクトラム描画
+    const drawSpectrum = (canvas, data) => {
+      if (!canvas || !data) return;
+      
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+      
+      const barWidth = width / data.length;
+      let x = 0;
+      
+      for (let i = 0; i < data.length; i++) {
+        const barHeight = (data[i] / 255) * height;
+        
+        ctx.fillStyle = `hsl(${i / data.length * 360}, 100%, 50%)`;
+        ctx.fillRect(x, height - barHeight, barWidth, barHeight);
+        
+        x += barWidth;
+      }
+    };
+    
+    // 全クリア
+    const clearAll = () => {
+      receivedData.value = [];
+      systemLog.value = '';
+      log('All data and logs cleared');
+    };
+    
+    // マウント時の処理
+    onMounted(() => {
+      log('WebAudio-Modem Vue3 Demo loaded');
+    });
+    
+    // コンポーネント破棄時の処理
+    const cleanup = () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      if (isReceiving.value) {
+        stopReceiving();
+      }
+      if (isSending.value) {
+        stopSending();
+      }
+    };
+    
+    return {
+      // State
+      systemReady,
+      isReceiving,
+      isSending,
+      showDebug,
+      sendDataType,
+      inputText,
+      selectedImage,
+      systemLog,
+      systemStatus,
+      sendStatus,
+      receiveStatus,
+      receivedData,
+      senderDebugInfo,
+      receiverDebugInfo,
+      
+      // Computed
+      canSend,
+      
+      // Canvas refs
+      senderWaveformCanvas,
+      senderSpectrumCanvas,
+      receiverWaveformCanvas,
+      receiverSpectrumCanvas,
+      
+      // Methods
+      initializeSystem,
+      sendData,
+      stopSending,
+      testXModemLoopback,
+      startReceiving,
+      stopReceiving,
+      onImageSelect,
+      toggleDebug,
+      clearAll,
+      cleanup
+    };
+  }
+});
 
-function clearAll() {
-    // Clear received data
-    const outputElement = document.getElementById('output-text');
-    if (outputElement) {
-        outputElement.textContent = 'No data received';
-    }
-    
-    // Clear log
-    document.getElementById('log').value = '';
-    
-    log('All data and logs cleared');
-}
-
-// Logging
-function log(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${message}\n`;
-    
-    const logElement = document.getElementById('log');
-    logElement.value += logEntry;
-    logElement.scrollTop = logElement.scrollHeight;
-    
-    console.log(logEntry.trim());
-}
-
-// Export functions to global scope for HTML onclick handlers
-window.initializeSystem = initializeSystem;
-window.sendTextViaXModem = sendTextViaXModem;
-window.testXModemLoopback = testXModemLoopback;
-window.startReceiving = startReceiving;
-window.stopReceiving = stopReceiving;
-window.clearAll = clearAll;
+app.mount('#app');

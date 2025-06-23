@@ -4,64 +4,135 @@
     <title>WebAudio-Modem Demo</title>
     <style>
         body { 
-            font-family: Arial, sans-serif; 
-            max-width: 800px; 
-            margin: 0 auto; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0;
             padding: 20px; 
-            background-color: #f5f5f5;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
         
         .section { 
-            margin: 20px 0; 
-            padding: 15px; 
-            background: white;
-            border: 1px solid #ddd; 
-            border-radius: 5px; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px; 
+            background: rgba(255, 255, 255, 0.95);
+            border: none; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
         
         h1 {
             text-align: center;
-            color: #333;
+            color: white;
             margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 300;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         
         h2 {
-            color: #555;
+            color: #2c3e50;
             margin-top: 0;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 12px;
+            font-size: 1.4em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        h3 {
+            color: #34495e;
+            margin-top: 0;
+            font-size: 1.1em;
+            font-weight: 600;
         }
         
         button { 
-            padding: 10px 15px; 
+            padding: 12px 20px; 
             margin: 5px; 
-            background: #007cba; 
+            background: linear-gradient(135deg, #3498db, #2980b9); 
             color: white; 
             border: none; 
-            border-radius: 3px; 
+            border-radius: 8px; 
             cursor: pointer; 
             font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
         }
         
         button:disabled { 
-            background: #ccc; 
-            cursor: not-allowed; 
+            background: #bdc3c7; 
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+            opacity: 0.4;
+            filter: grayscale(50%);
         }
         
         button:hover:not(:disabled) { 
-            background: #005a8b; 
+            background: linear-gradient(135deg, #2980b9, #3498db);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
         }
         
         button.danger {
-            background: #dc3545;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
         }
         
         button.danger:hover:not(:disabled) {
-            background: #c82333;
+            background: linear-gradient(135deg, #c0392b, #e74c3c);
+            box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
         }
         
-        input { 
+        button.secondary {
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
+        }
+        
+        button.secondary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #7f8c8d, #95a5a6);
+            box-shadow: 0 4px 12px rgba(149, 165, 166, 0.4);
+        }
+        
+        button.success {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+        }
+        
+        button.success:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+        }
+        
+        input, select { 
             padding: 8px; 
             margin: 5px; 
             border: 1px solid #ddd; 
@@ -69,29 +140,12 @@
             font-size: 14px;
         }
         
-        #input-text { 
+        input[type="text"] { 
             width: 200px; 
         }
         
-        #output-text { 
-            font-weight: bold; 
-            color: #007cba; 
-            margin: 10px 0; 
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 3px;
-            min-height: 20px;
-        }
-        
-        #log { 
-            width: 100%; 
-            height: 200px; 
-            font-family: monospace; 
-            font-size: 12px; 
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            resize: vertical;
+        input[type="file"] {
+            margin: 10px 0;
         }
         
         .status { 
@@ -123,90 +177,321 @@
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            margin: 10px 0;
+            margin: 15px 0;
         }
 
         .controls button {
             margin: 0;
+            flex: 1;
+            min-width: 120px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        
+        .button-group button {
+            flex: 1;
+            margin: 0;
         }
 
         .instructions {
-            background: #e8f4f8;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 20px 0;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
         }
 
         .instructions h3 {
             margin-top: 0;
-            color: #007cba;
+            color: #2c3e50;
+            font-size: 1.3em;
         }
 
         .instructions ol {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+        
+        .instructions li {
+            margin: 8px 0;
+            line-height: 1.6;
+        }
+        
+        .visualizer {
+            margin: 20px 0;
+            border: 2px solid #34495e;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+        
+        .visualizer canvas {
+            width: 100%;
+            height: 120px;
+            display: block;
+            background: #000;
+        }
+        
+        .visualizer-label {
+            background: #34495e;
+            color: white;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .debug-panel {
+            margin-top: 20px;
+        }
+        
+        .debug-content {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #34495e;
+        }
+        
+        .received-data {
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 8px;
+            min-height: 120px;
+            margin: 15px 0;
+            border: 2px solid #bdc3c7;
+        }
+        
+        .received-text {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 12px;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .received-image {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #95a5a6;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .image-preview {
+            margin: 15px 0;
+            text-align: center;
+        }
+        
+        .image-preview img {
+            max-width: 200px;
+            height: auto;
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .image-preview p {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #7f8c8d;
+            font-weight: 500;
+        }
+        
+        .system-log {
+            grid-column: 1 / -1;
+        }
+        
+        .system-log textarea {
+            width: 100%; 
+            height: 200px; 
+            font-family: 'Courier New', monospace; 
+            font-size: 12px; 
+            padding: 15px;
+            border: 2px solid #34495e;
+            border-radius: 8px;
+            resize: vertical;
+            box-sizing: border-box;
+            background: #2c3e50;
+            color: #ecf0f1;
+        }
+        
+        .data-type-selector {
+            background: #ecf0f1;
+            padding: 10px;
+            border-radius: 8px;
             margin: 10px 0;
-            padding-left: 20px;
+        }
+        
+        .data-type-selector label {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 20px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        
+        .data-type-selector input[type="radio"] {
+            margin-right: 8px;
+            transform: scale(1.2);
         }
     </style>
 </head>
 <body>
-    <h1>WebAudio-Modem Demo</h1>
-    
-    <div class="instructions">
-        <h3>使用方法 (XModem Protocol)</h3>
-        <ol>
-            <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
-            <li><strong>XModem Loopback Test</strong> で内部ループバックテスト</li>
-            <li><strong>Send Text</strong> でスピーカーからXModem送信</li>
-            <li><strong>Start Receiving</strong> でマイクからのXModem受信開始</li>
-        </ol>
-        <p><strong>XModem特徴:</strong> エラー検出・訂正、自動再送、確実なデータ転送</p>
-    </div>
-    
-    <div class="section">
-        <h2>System</h2>
-        <button id="init-btn" onclick="initializeSystem()">Initialize System</button>
-        <div id="system-status" class="status info">Click Initialize to start</div>
-    </div>
-    
-    <div class="section">
-        <h2>Send Text (XModem)</h2>
-        <label for="input-text">送信テキスト:</label>
-        <input type="text" id="input-text" value="Hello World" placeholder="Enter text to send">
-        <div class="controls">
-            <button id="send-btn" onclick="sendTextViaXModem()" disabled>Send Text</button>
+    <div id="app">
+        <div class="container">
+            <h1>WebAudio-Modem Demo</h1>
+            
+            <div class="instructions">
+                <h3>使用方法 (XModem Protocol)</h3>
+                <ol>
+                    <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
+                    <li><strong>XModem Loopback Test</strong> で内部ループバックテスト</li>
+                    <li><strong>Send Text/Image</strong> でスピーカーからXModem送信</li>
+                    <li><strong>Start Receiving</strong> でマイクからのXModem受信開始</li>
+                </ol>
+                <p><strong>XModem特徴:</strong> エラー検出・訂正、自動再送、確実なデータ転送</p>
+            </div>
+            
+            <div class="section">
+                <h2>System Control</h2>
+                <div class="controls">
+                    <button @click="initializeSystem" :disabled="systemReady">{{ systemReady ? 'System Ready ✓' : 'Initialize System' }}</button>
+                    <button @click="testXModemLoopback" :disabled="!systemReady" class="secondary">XModem Loopback Test</button>
+                    <button @click="toggleDebug" class="secondary">{{ showDebug ? 'Hide Debug' : 'Show Debug' }}</button>
+                </div>
+                <div :class="['status', systemStatus.type]">{{ systemStatus.message }}</div>
+            </div>
+            
+            <div class="main-grid">
+                <!-- Sender Column -->
+                <div class="column">
+                    <div class="section">
+                        <h2>📤 Sender</h2>
+                        
+                        <!-- Sender Visualizer -->
+                        <div class="visualizer">
+                            <div class="visualizer-label">📊 Waveform</div>
+                            <canvas ref="senderWaveformCanvas" width="400" height="100"></canvas>
+                            <div class="visualizer-label">🌈 Spectrum</div>
+                            <canvas ref="senderSpectrumCanvas" width="400" height="100"></canvas>
+                        </div>
+                        
+                        <!-- Sender Debug Info -->
+                        <div v-show="showDebug" class="debug-panel">
+                            <h4>Sender Debug Info</h4>
+                            <div class="debug-content">{{ senderDebugInfo }}</div>
+                        </div>
+                        
+                        <div :class="['status', sendStatus.type]">{{ sendStatus.message }}</div>
+                        
+                        <div class="button-group">
+                            <button @click="sendData" :disabled="!canSend" class="success">
+                                📡 Send {{ sendDataType === 'text' ? 'Text' : 'Image' }}
+                            </button>
+                            <button @click="stopSending" :disabled="!isSending" class="danger">
+                                ⏹️ Stop
+                            </button>
+                        </div>
+                        
+                        <!-- Data Type Selection -->
+                        <div class="data-type-selector">
+                            <label>
+                                <input type="radio" v-model="sendDataType" value="text"> 📝 Text
+                            </label>
+                            <label>
+                                <input type="radio" v-model="sendDataType" value="image"> 🖼️ Image
+                            </label>
+                        </div>
+                        
+                        <!-- Text Input -->
+                        <div v-show="sendDataType === 'text'">
+                            <label for="input-text">送信テキスト:</label>
+                            <input type="text" v-model="inputText" placeholder="Enter text to send">
+                        </div>
+                        
+                        <!-- Image Input -->
+                        <div v-show="sendDataType === 'image'">
+                            <input type="file" @change="onImageSelect" accept="image/*">
+                            <div v-if="selectedImage" class="image-preview">
+                                <img :src="selectedImage.preview" alt="Selected image">
+                                <p>{{ selectedImage.name }} ({{ selectedImage.size }} bytes)</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Receiver Column -->
+                <div class="column">
+                    <div class="section">
+                        <h2>📥 Receiver</h2>
+                        
+                        <!-- Receiver Visualizer -->
+                        <div class="visualizer">
+                            <div class="visualizer-label">📊 Waveform</div>
+                            <canvas ref="receiverWaveformCanvas" width="400" height="100"></canvas>
+                            <div class="visualizer-label">🌈 Spectrum</div>
+                            <canvas ref="receiverSpectrumCanvas" width="400" height="100"></canvas>
+                        </div>
+                        
+                        <!-- Receiver Debug Info -->
+                        <div v-show="showDebug" class="debug-panel">
+                            <h4>Receiver Debug Info</h4>
+                            <div class="debug-content">{{ receiverDebugInfo }}</div>
+                        </div>
+                        
+                        <div :class="['status', receiveStatus.type]">{{ receiveStatus.message }}</div>
+                        
+                        <div class="button-group">
+                            <button @click="startReceiving" :disabled="!systemReady || isReceiving" class="success">
+                                🎤 Start Receiving
+                            </button>
+                            <button @click="stopReceiving" :disabled="!isReceiving" class="danger">
+                                ⏹️ Stop
+                            </button>
+                        </div>
+
+                        <!-- Received Data -->
+                        <div class="section">
+                            <h3>Received Data</h3>
+                            <div class="received-data">
+                                <div v-if="!receivedData.length">No data received</div>
+                                <div v-for="(data, index) in receivedData" :key="index">
+                                    <div v-if="data.type === 'text'" class="received-text">
+                                        {{ data.content }}
+                                    </div>
+                                    <div v-if="data.type === 'image'">
+                                        <img :src="data.content" alt="Received image" class="received-image">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+            
+            <!-- System Log (Full Width) -->
+            <div class="section system-log">
+                <h2>System Log</h2>
+                <textarea v-model="systemLog" readonly placeholder="System logs will appear here..."></textarea>
+                <div class="controls">
+                    <button @click="clearAll">Clear All</button>
+                </div>
+            </div>
         </div>
-        <div id="send-status" class="status info">Initialize system first</div>
-        <div id="send-info" class="status info" style="white-space: pre;"></div>
-    </div>
-    
-    <div class="section">
-        <h2>Receive Text (XModem)</h2>
-        <div class="controls">
-            <button id="receive-btn" onclick="startReceiving()" disabled>Start Receiving</button>
-            <button id="stop-btn" onclick="stopReceiving()" disabled class="danger" style="display: none;">Stop Receiving</button>
-        </div>
-        <div id="receive-status" class="status info">Initialize system first</div>
-        <div id="receive-info" class="status info" style="white-space: pre;"></div>
-    </div>
-    
-    <div class="section">
-        <h2>Test Options</h2>
-        <div class="controls">
-            <button id="loopback-btn" onclick="testXModemLoopback()" disabled>XModem Loopback Test</button>
-        </div>
-        <div id="test-status" class="status info">Initialize system first</div>
-    </div>
-    
-    <div class="section">
-        <h2>Received Data</h2>
-        <div id="output-text">No data received</div>
-    </div>
-    
-    <div class="section">
-        <h2>System Log</h2>
-        <textarea id="log" readonly placeholder="System logs will appear here..."></textarea>
-        <br>
-        <button onclick="clearAll()">Clear All</button>
     </div>
     
     <script type="module" src="demo.js"></script>
