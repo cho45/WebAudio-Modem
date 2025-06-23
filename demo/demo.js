@@ -6,12 +6,15 @@
 
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
+import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
 
 // Global state
 let audioContext = null;
-let modulator = null;
-let demodulator = null;
-let isListening = false;
+let senderDataChannel = null;
+let receiverDataChannel = null;
+let senderTransport = null;
+let receiverTransport = null;
+let isReceiving = false;
 let currentStream = null;
 
 // Initialize the demo application
@@ -40,9 +43,9 @@ async function initializeSystem() {
         await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/fsk-processor.js');
         log('FSK processor module loaded');
         
-        // Create modulator and demodulator
-        modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
-        demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+        // Create sender and receiver data channels
+        senderDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
+        receiverDataChannel = new WebAudioDataChannel(audioContext, 'fsk-processor');
         log('AudioWorkletNodes created');
         
         // Configure both with FSK settings
@@ -52,9 +55,25 @@ async function initializeSystem() {
         };
         
         log('Configuring FSK processors with settings:', config);
-        await modulator.configure(config);
-        await demodulator.configure(config);
+        await senderDataChannel.configure(config);
+        await receiverDataChannel.configure(config);
         log('FSK processors configured successfully');
+        
+        // Create XModem transports
+        senderTransport = new XModemTransport(senderDataChannel);
+        receiverTransport = new XModemTransport(receiverDataChannel);
+        
+        // Configure XModem settings
+        const xmodemConfig = {
+            timeoutMs: 5000,
+            maxRetries: 3,
+            maxPayloadSize: 64  // Smaller packets for audio transmission
+        };
+        senderTransport.configure(xmodemConfig);
+        receiverTransport.configure(xmodemConfig);
+        log('XModem transports configured successfully');
+        log(`Sender transport ready: ${senderTransport.isReady()}`);
+        log(`Receiver transport ready: ${receiverTransport.isReady()}`);
         
         updateStatus('system-status', 'System initialized successfully ✓', 'success');
         updateStatus('test-status', 'Ready for testing', 'success');
@@ -69,9 +88,58 @@ async function initializeSystem() {
     }
 }
 
-// Digital loopback test: modulator -> [demodulator, destination]
-async function testDigitalLoopback() {
-    if (!audioContext || !modulator || !demodulator) {
+// Send text using XModem protocol
+async function sendTextViaXModem() {
+    if (!audioContext || !senderTransport) {
+        updateStatus('send-status', 'System not initialized', 'error');
+        return;
+    }
+    
+    try {
+        const text = document.getElementById('input-text').value.trim();
+        if (!text) {
+            updateStatus('send-status', 'Please enter text to send', 'error');
+            return;
+        }
+        
+        log(`Sending text via XModem: "${text}"`);
+        updateStatus('send-status', 'Preparing XModem transmission...', 'info');
+        
+        // Connect sender to audio output for transmission
+        senderDataChannel.disconnect();
+        senderDataChannel.connect(audioContext.destination);
+        log('Connected sender to audio output');
+        
+        // Convert text to bytes and send via XModem
+        const data = new TextEncoder().encode(text);
+        log(`Sending ${data.length} bytes via XModem protocol`);
+        
+        updateStatus('send-status', 'Sending via XModem...', 'info');
+        await senderTransport.sendData(data);
+        
+        updateStatus('send-status', `✓ XModem send completed: "${text}"`, 'success');
+        log('XModem transmission completed successfully');
+        
+    } catch (error) {
+        let errorMsg = `XModem send failed: ${error.message}`;
+        
+        // Handle specific error cases
+        if (error.message.includes('Transport busy')) {
+            errorMsg = 'Sender is busy. Please wait and try again.';
+            log('Sender transport is currently busy');
+        } else if (error.message.includes('timeout')) {
+            errorMsg = 'Send timeout. No receiver found or connection failed.';
+            log('XModem send timed out - no receiver response');
+        }
+        
+        log(errorMsg);
+        updateStatus('send-status', errorMsg, 'error');
+    }
+}
+
+// XModem loopback test: sender -> receiver (internal)
+async function testXModemLoopback() {
+    if (!audioContext || !senderTransport || !receiverTransport) {
         updateStatus('test-status', 'System not initialized', 'error');
         return;
     }
@@ -83,105 +151,76 @@ async function testDigitalLoopback() {
             return;
         }
         
-        log(`Starting digital loopback test with: "${text}"`);
-        updateStatus('test-status', 'Running digital loopback test...', 'info');
+        log(`Starting XModem loopback test with: "${text}"`);
+        updateStatus('test-status', 'Running XModem loopback test...', 'info');
         
         // Disconnect any previous connections
-        modulator.disconnect();
-        demodulator.disconnect();
+        senderDataChannel.disconnect();
+        receiverDataChannel.disconnect();
         
-        // Connect: modulator -> [demodulator, destination] (分岐)
-        modulator.connect(demodulator);
-        modulator.connect(audioContext.destination);
-        log('Connected: modulator → [demodulator, destination]');
+        // Connect: sender -> receiver (internal loopback)
+        senderDataChannel.connect(receiverDataChannel);
+        log('Connected: sender → receiver (internal loopback)');
         
-        // Convert text to bytes and modulate
+        // Convert text to bytes
         const data = new TextEncoder().encode(text);
-        log(`Modulating ${data.length} bytes: [${Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+        log(`Testing ${data.length} bytes via XModem protocol`);
         
-        await modulator.modulate(data);
-        log('Modulation started');
+        // Check transport states before starting
+        log(`Sender state before test: ready=${senderTransport.isReady()}`);
+        log(`Receiver state before test: ready=${receiverTransport.isReady()}`);
         
-        // IDataChannel.demodulate() blocks until data is available
-        log('Waiting for demodulation (blocking call)...');
-        const received = await demodulator.demodulate();
+        // Start receiver first (sequential, not concurrent)
+        log('Starting receiver...');
+        const receivePromise = receiverTransport.receiveData();
+        
+        // Wait a bit for receiver to be ready
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Then start sender
+        log('Starting sender...');
+        const sendPromise = senderTransport.sendData(data);
+        
+        // Wait for both to complete
+        const [_, receivedData] = await Promise.all([sendPromise, receivePromise]);
         
         // Process result
-        const receivedText = new TextDecoder().decode(received);
-        log(`Demodulated ${received.length} bytes: [${Array.from(received).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
-        log(`Demodulated text: "${receivedText}"`);
+        const receivedText = new TextDecoder().decode(receivedData);
+        log(`XModem loopback result: "${receivedText}"`);
         
         // Update UI
         updateOutput(receivedText);
         
         if (receivedText === text) {
-            updateStatus('test-status', '✓ Perfect digital loopback!', 'success');
-            log('Digital loopback test: PASSED - Perfect match');
+            updateStatus('test-status', '✓ Perfect XModem loopback!', 'success');
+            log('XModem loopback test: PASSED - Perfect match');
         } else {
             updateStatus('test-status', `⚠ Partial match: "${receivedText}"`, 'info');
-            log(`Digital loopback test: PARTIAL - Expected: "${text}", Got: "${receivedText}"`);
+            log(`XModem loopback test: PARTIAL - Expected: "${text}", Got: "${receivedText}"`);
         }
         
     } catch (error) {
-        const errorMsg = `Digital loopback test failed: ${error.message}`;
+        const errorMsg = `XModem loopback test failed: ${error.message}`;
         log(errorMsg);
         updateStatus('test-status', errorMsg, 'error');
     }
 }
 
-// Play audio signal: modulator -> destination
-async function playAudio() {
-    if (!audioContext || !modulator) {
-        updateStatus('test-status', 'System not initialized', 'error');
+// Start receiving text via XModem protocol
+async function startReceiving() {
+    if (isReceiving) {
+        log('Already receiving XModem data');
+        return;
+    }
+    
+    if (!audioContext || !receiverTransport) {
+        updateStatus('receive-status', 'System not initialized', 'error');
         return;
     }
     
     try {
-        const text = document.getElementById('input-text').value.trim();
-        if (!text) {
-            updateStatus('test-status', 'Please enter text to play', 'error');
-            return;
-        }
-        
-        log(`Playing audio signal for: "${text}"`);
-        updateStatus('test-status', 'Playing audio signal...', 'info');
-        
-        // Disconnect previous connections
-        modulator.disconnect();
-        
-        // Connect: modulator -> destination (audio output)
-        modulator.connect(audioContext.destination);
-        log('Connected: modulator → destination (speakers)');
-        
-        // Convert and modulate
-        const data = new TextEncoder().encode(text);
-        await modulator.modulate(data);
-        
-        updateStatus('test-status', `✓ Audio signal played for: "${text}"`, 'success');
-        log('Audio signal generation complete');
-        
-    } catch (error) {
-        const errorMsg = `Audio playback failed: ${error.message}`;
-        log(errorMsg);
-        updateStatus('test-status', errorMsg, 'error');
-    }
-}
-
-// Start listening for audio input: microphone -> demodulator
-async function startListening() {
-    if (isListening) {
-        log('Already listening for audio input');
-        return;
-    }
-    
-    if (!audioContext || !demodulator) {
-        updateStatus('test-status', 'System not initialized', 'error');
-        return;
-    }
-    
-    try {
-        log('Starting audio listening...');
-        updateStatus('test-status', 'Starting microphone input...', 'info');
+        log('Starting XModem reception...');
+        updateStatus('receive-status', 'Starting microphone input...', 'info');
         
         // Get microphone input
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -197,67 +236,78 @@ async function startListening() {
         log(`Microphone access granted: ${audioContext.sampleRate}Hz, 1 channel`);
         
         // Disconnect previous connections
-        demodulator.disconnect();
+        receiverDataChannel.disconnect();
         
-        // Connect: microphone -> demodulator
+        // Connect: microphone -> receiver
         const source = audioContext.createMediaStreamSource(stream);
-        source.connect(demodulator);
-        log('Connected: microphone → demodulator');
+        source.connect(receiverDataChannel);
+        log('Connected: microphone → receiver');
         
-        isListening = true;
+        isReceiving = true;
         currentStream = stream;
-        updateStatus('test-status', '🎤 Listening for FSK signals...', 'success');
-        log('Audio listening started - waiting for FSK signals...');
+        updateStatus('receive-status', '🎤 Listening for XModem transmission...', 'success');
+        log('XModem reception started - waiting for data...');
         updateUI();
         
-        // Blocking reception loop (no polling delay needed)
-        const listenLoop = async () => {
-            while (isListening) {
+        // XModem reception loop
+        const receiveLoop = async () => {
+            while (isReceiving) {
                 try {
-                    // demodulate() blocks until data is available
-                    const received = await demodulator.demodulate();
+                    log('Waiting for XModem data...');
+                    updateStatus('receive-status', '🎤 Waiting for XModem transmission...', 'info');
                     
-                    if (received.length > 0) {
-                        const text = new TextDecoder().decode(received);
-                        const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, ''); // Remove control characters
+                    const receivedData = await receiverTransport.receiveData();
+                    
+                    if (receivedData.length > 0) {
+                        const text = new TextDecoder().decode(receivedData);
+                        log(`XModem received: ${receivedData.length} bytes → "${text}"`);
                         
-                        log(`Received from audio: ${received.length} bytes: [${Array.from(received).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
-                        log(`Received text: "${cleanText}"`);
+                        updateOutput(text);
+                        updateStatus('receive-status', `📡 XModem received: "${text}"`, 'success');
                         
-                        if (cleanText) {
-                            updateOutput(cleanText);
-                            updateStatus('test-status', `📡 Received: "${cleanText}"`, 'success');
-                        }
+                        // Reset status for next transmission after a delay
+                        setTimeout(() => {
+                            if (isReceiving) {
+                                updateStatus('receive-status', '🎤 Listening for next XModem transmission...', 'info');
+                            }
+                        }, 2000);
                     }
                 } catch (error) {
-                    if (isListening) {
-                        log(`Reception error: ${error.message}`);
-                        // Small delay on error to prevent tight error loop
-                        await new Promise(resolve => setTimeout(resolve, 100));
+                    if (isReceiving) {
+                        log(`XModem reception error: ${error.message}`);
+                        
+                        // Check if it's a "Transport busy" error
+                        if (error.message.includes('Transport busy')) {
+                            log('Receiver is busy, waiting before retry...');
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } else {
+                            updateStatus('receive-status', `Reception error: ${error.message}`, 'error');
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
                     }
                 }
             }
         };
         
-        listenLoop();
+        receiveLoop();
         
     } catch (error) {
-        const errorMsg = `Failed to start audio listening: ${error.message}`;
+        const errorMsg = `Failed to start XModem reception: ${error.message}`;
         log(errorMsg);
-        updateStatus('test-status', errorMsg, 'error');
-        isListening = false;
+        updateStatus('receive-status', errorMsg, 'error');
+        isReceiving = false;
         updateUI();
     }
 }
 
-// Stop listening for audio input
-function stopListening() {
-    if (!isListening) {
-        log('Not currently listening');
+// Stop receiving XModem data
+function stopReceiving() {
+    if (!isReceiving) {
+        log('Not currently receiving');
         return;
     }
     
-    isListening = false;
+    isReceiving = false;
     
     // Clean up audio resources
     if (currentStream) {
@@ -268,31 +318,31 @@ function stopListening() {
         currentStream = null;
     }
     
-    // Disconnect demodulator
-    if (demodulator) {
-        demodulator.disconnect();
-        log('Disconnected demodulator from microphone');
+    // Disconnect receiver
+    if (receiverDataChannel) {
+        receiverDataChannel.disconnect();
+        log('Disconnected receiver from microphone');
     }
     
-    updateStatus('test-status', 'Stopped listening', 'info');
-    log('Audio listening stopped');
+    updateStatus('receive-status', 'Stopped receiving', 'info');
+    log('XModem reception stopped');
     updateUI();
 }
 
 // UI management
 function updateUI() {
-    const systemReady = audioContext && modulator && demodulator && 
-                       modulator.isReady() && demodulator.isReady();
+    const systemReady = audioContext && senderTransport && receiverTransport && 
+                       senderTransport.isReady() && receiverTransport.isReady();
     
     // Update button states
     document.getElementById('init-btn').disabled = systemReady;
+    document.getElementById('send-btn').disabled = !systemReady;
     document.getElementById('loopback-btn').disabled = !systemReady;
-    document.getElementById('play-btn').disabled = !systemReady;
-    document.getElementById('listen-btn').disabled = !systemReady || isListening;
+    document.getElementById('receive-btn').disabled = !systemReady || isReceiving;
     
-    // Show/hide Stop Listening button based on listening state
+    // Show/hide Stop Receiving button based on receiving state
     const stopBtn = document.getElementById('stop-btn');
-    if (isListening) {
+    if (isReceiving) {
         stopBtn.style.display = 'inline-block';
         stopBtn.disabled = false;
     } else {
@@ -317,23 +367,27 @@ function updateStatus(elementId, message, type = 'info') {
 function updateOutput(text) {
     const outputElement = document.getElementById('output-text');
     if (outputElement) {
-        const timestamp = new Date().toLocaleTimeString();
         const currentContent = outputElement.textContent;
         
         if (currentContent === 'No data received') {
-            outputElement.textContent = `[${timestamp}] ${text}`;
+            outputElement.textContent = text;
         } else {
-            outputElement.textContent = currentContent + `\n[${timestamp}] ${text}`;
+            outputElement.textContent = currentContent + '\n' + text;
         }
     }
 }
 
-function clearReceivedData() {
+function clearAll() {
+    // Clear received data
     const outputElement = document.getElementById('output-text');
     if (outputElement) {
         outputElement.textContent = 'No data received';
     }
-    log('Received data cleared');
+    
+    // Clear log
+    document.getElementById('log').value = '';
+    
+    log('All data and logs cleared');
 }
 
 // Logging
@@ -348,16 +402,10 @@ function log(message) {
     console.log(logEntry.trim());
 }
 
-function clearLog() {
-    document.getElementById('log').value = '';
-    log('Log cleared');
-}
-
 // Export functions to global scope for HTML onclick handlers
 window.initializeSystem = initializeSystem;
-window.testDigitalLoopback = testDigitalLoopback;
-window.playAudio = playAudio;
-window.startListening = startListening;
-window.stopListening = stopListening;
-window.clearLog = clearLog;
-window.clearReceivedData = clearReceivedData;
+window.sendTextViaXModem = sendTextViaXModem;
+window.testXModemLoopback = testXModemLoopback;
+window.startReceiving = startReceiving;
+window.stopReceiving = stopReceiving;
+window.clearAll = clearAll;

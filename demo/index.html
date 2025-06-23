@@ -152,13 +152,14 @@
     <h1>WebAudio-Modem Demo</h1>
     
     <div class="instructions">
-        <h3>使用方法</h3>
+        <h3>使用方法 (XModem Protocol)</h3>
         <ol>
             <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
-            <li><strong>Digital Loopback Test</strong> で内部ループバックテスト</li>
-            <li><strong>Play Audio Signal</strong> でスピーカーから音声出力</li>
-            <li><strong>Start Audio Listening</strong> でマイクからの受信開始</li>
+            <li><strong>XModem Loopback Test</strong> で内部ループバックテスト</li>
+            <li><strong>Send Text</strong> でスピーカーからXModem送信</li>
+            <li><strong>Start Receiving</strong> でマイクからのXModem受信開始</li>
         </ol>
+        <p><strong>XModem特徴:</strong> エラー検出・訂正、自動再送、確実なデータ転送</p>
     </div>
     
     <div class="section">
@@ -168,18 +169,28 @@
     </div>
     
     <div class="section">
-        <h2>Input</h2>
+        <h2>Send Text (XModem)</h2>
         <label for="input-text">送信テキスト:</label>
-        <input type="text" id="input-text" value="AB" placeholder="Enter text to send">
+        <input type="text" id="input-text" value="Hello World" placeholder="Enter text to send">
+        <div class="controls">
+            <button id="send-btn" onclick="sendTextViaXModem()" disabled>Send Text</button>
+        </div>
+        <div id="send-status" class="status info">Initialize system first</div>
+    </div>
+    
+    <div class="section">
+        <h2>Receive Text (XModem)</h2>
+        <div class="controls">
+            <button id="receive-btn" onclick="startReceiving()" disabled>Start Receiving</button>
+            <button id="stop-btn" onclick="stopReceiving()" disabled class="danger" style="display: none;">Stop Receiving</button>
+        </div>
+        <div id="receive-status" class="status info">Initialize system first</div>
     </div>
     
     <div class="section">
         <h2>Test Options</h2>
         <div class="controls">
-            <button id="loopback-btn" onclick="testDigitalLoopback()" disabled>Digital Loopback Test</button>
-            <button id="play-btn" onclick="playAudio()" disabled>Play Audio Signal</button>
-            <button id="listen-btn" onclick="startListening()" disabled>Start Audio Listening</button>
-            <button id="stop-btn" onclick="stopListening()" disabled class="danger" style="display: none;">Stop Listening</button>
+            <button id="loopback-btn" onclick="testXModemLoopback()" disabled>XModem Loopback Test</button>
         </div>
         <div id="test-status" class="status info">Initialize system first</div>
     </div>
@@ -193,8 +204,7 @@
         <h2>System Log</h2>
         <textarea id="log" readonly placeholder="System logs will appear here..."></textarea>
         <br>
-        <button onclick="clearLog()">Clear Log</button>
-        <button onclick="clearReceivedData()">Clear Received Data</button>
+        <button onclick="clearAll()">Clear All</button>
     </div>
     
     <script type="module" src="demo.js"></script>

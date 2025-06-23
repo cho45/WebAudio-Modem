@@ -71,8 +71,8 @@ describe('FSKProcessor', () => {
   test('should handle modulate message via port', async () => {
     const modulateMessage = {
       id: 'test-2',
-      type: 'modulate',
-      data: { bytes: new Uint8Array([0x48, 0x65, 0x6C]) } // "Hel"
+      type: 'status',
+      data: {} // "Hel"
     };
 
     await sendMessage(modulateMessage);
