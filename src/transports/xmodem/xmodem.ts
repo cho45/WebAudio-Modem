@@ -345,10 +345,9 @@ export class XModemTransport extends BaseTransport {
       return;
     }
 
-    this.statistics.packetsReceived++;
-
     if (packet.sequence === this.expectedSequence) {
       // Expected packet - accept it
+      this.statistics.packetsReceived++;
       this.receivedData.push(packet.payload);
       this.expectedSequence = (this.expectedSequence % 255) + 1;
       this.state = State.RECEIVING_SEND_ACK;
@@ -357,10 +356,10 @@ export class XModemTransport extends BaseTransport {
       this.statistics.bytesTransferred += packet.payload.length;
     } else {
       // Unexpected sequence - reject it
+      this.statistics.packetsDropped++;
       this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('NAK');
       this.state = State.RECEIVING_WAIT_BLOCK; // Wait for retransmission
-      this.statistics.packetsDropped++;
     }
   }
 

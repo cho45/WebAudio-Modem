@@ -1167,4 +1167,228 @@ describe('XModem Transport', () => {
       expect(stats.bytesTransferred).toBe(0);
     });
   });
+
+  describe('Data Fragmentation and Reassembly', () => {
+    test('Receive fragmented data correctly', async () => {
+      // Configure small payload size to force fragmentation
+      transport.configure({ maxPayloadSize: 3 });
+      
+      const receivePromise = transport.receiveData();
+      
+      // Wait for initial NAK
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Create original test data that will be fragmented
+      const originalData = new Uint8Array([0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47]); // 7 bytes -> 3 fragments (3+3+1)
+      
+      // Send fragment 1: bytes [0x41, 0x42, 0x43]
+      const fragment1 = XModemPacket.createData(1, originalData.slice(0, 3));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment1));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK for fragment 1
+      
+      // Send fragment 2: bytes [0x44, 0x45, 0x46]
+      const fragment2 = XModemPacket.createData(2, originalData.slice(3, 6));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment2));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(3); // Previous + ACK for fragment 2
+      
+      // Send fragment 3: bytes [0x47]
+      const fragment3 = XModemPacket.createData(3, originalData.slice(6, 7));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment3));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(4); // Previous + ACK for fragment 3
+      
+      // Send EOT to complete transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      // Wait for final ACK
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(5); // Previous + Final ACK
+      
+      // Verify the reassembled data matches original
+      const receivedData = await receivePromise;
+      expect(receivedData).toEqual(originalData);
+      expect(receivedData.length).toBe(7);
+      
+      // Verify byte-by-byte match
+      for (let i = 0; i < originalData.length; i++) {
+        expect(receivedData[i]).toBe(originalData[i]);
+      }
+    });
+
+    test('Fragmentation boundary conditions', async () => {
+      // Test exact boundary: maxPayloadSize = 4, data = 4 bytes (exactly 1 packet)
+      transport.configure({ maxPayloadSize: 4 });
+      
+      const exactSizeData = new Uint8Array([0x10, 0x20, 0x30, 0x40]);
+      
+      const receivePromise = transport.receiveData();
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Should be sent as single packet
+      const packet = XModemPacket.createData(1, exactSizeData);
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await receivePromise;
+      expect(result).toEqual(exactSizeData);
+      
+      // Reset for next test
+      mockDataChannel.reset();
+      transport.reset();
+    });
+
+    test('Fragmentation with maxPayloadSize + 1', async () => {
+      // Test boundary: maxPayloadSize = 4, data = 5 bytes (2 packets: 4+1)
+      transport.configure({ maxPayloadSize: 4 });
+      
+      const oversizeData = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55]);
+      
+      const receivePromise = transport.receiveData();
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send first fragment: [0x11, 0x22, 0x33, 0x44]
+      const fragment1 = XModemPacket.createData(1, oversizeData.slice(0, 4));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment1));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Send second fragment: [0x55]
+      const fragment2 = XModemPacket.createData(2, oversizeData.slice(4, 5));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment2));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await receivePromise;
+      expect(result).toEqual(oversizeData);
+      expect(result.length).toBe(5);
+      
+      // Reset for next test
+      mockDataChannel.reset();
+      transport.reset();
+    });
+
+    test('Fragmentation with error recovery', async () => {
+      // Test error in middle of fragmented transfer
+      transport.configure({ maxPayloadSize: 2 });
+      
+      const testData = new Uint8Array([0xAA, 0xBB, 0xCC, 0xDD]); // 4 bytes -> 2 fragments
+      
+      const receivePromise = transport.receiveData();
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send first fragment successfully
+      const fragment1 = XModemPacket.createData(1, testData.slice(0, 2));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment1));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Send second fragment with wrong sequence number (should be rejected)
+      const wrongFragment = XModemPacket.createData(1, testData.slice(2, 4)); // Wrong seq: 1 instead of 2
+      mockDataChannel.addReceivedData(XModemPacket.serialize(wrongFragment));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(3); // Previous + NAK (rejection)
+      
+      // Resend second fragment with correct sequence number
+      const fragment2 = XModemPacket.createData(2, testData.slice(2, 4));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(fragment2));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(4); // Previous + ACK
+      
+      // Complete transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await receivePromise;
+      expect(result).toEqual(testData);
+      
+      // Verify statistics
+      const stats = transport.getStatistics();
+      expect(stats.packetsReceived).toBe(2); // Only successful packets counted
+      expect(stats.packetsDropped).toBe(1); // Wrong sequence packet dropped
+      expect(stats.bytesTransferred).toBe(4);
+      
+      // Reset for next test
+      mockDataChannel.reset();
+      transport.reset();
+    });
+
+    test('Large data fragmentation (many fragments)', async () => {
+      // Test with many small fragments
+      transport.configure({ maxPayloadSize: 2 });
+      
+      // Create 10-byte data -> 5 fragments
+      const largeData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]);
+      
+      const receivePromise = transport.receiveData();
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send all 5 fragments sequentially
+      for (let i = 0; i < 5; i++) {
+        const startIdx = i * 2;
+        const endIdx = Math.min(startIdx + 2, largeData.length);
+        const fragmentData = largeData.slice(startIdx, endIdx);
+        
+        const fragment = XModemPacket.createData(i + 1, fragmentData);
+        mockDataChannel.addReceivedData(XModemPacket.serialize(fragment));
+        
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(mockDataChannel.sentData.length).toBe(i + 2); // NAK + ACKs
+      }
+      
+      // Complete transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await receivePromise;
+      expect(result).toEqual(largeData);
+      expect(result.length).toBe(10);
+      
+      // Verify all fragments were received correctly
+      const stats = transport.getStatistics();
+      expect(stats.packetsReceived).toBe(5);
+      expect(stats.bytesTransferred).toBe(10);
+    });
+
+    test('Empty fragment handling', async () => {
+      // Test with empty payload
+      transport.configure({ maxPayloadSize: 5 });
+      
+      const emptyData = new Uint8Array([]);
+      
+      const receivePromise = transport.receiveData();
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send empty packet
+      const emptyPacket = XModemPacket.createData(1, emptyData);
+      mockDataChannel.addReceivedData(XModemPacket.serialize(emptyPacket));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await receivePromise;
+      expect(result).toEqual(emptyData);
+      expect(result.length).toBe(0);
+    });
+  });
 });

@@ -52,24 +52,18 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
-    console.log(`[WebAudioDataChannel:${this.instanceName}] Received message: ${type} with id: ${id}`, data);
-    console.log(`[WebAudioDataChannel:${this.instanceName}] Pending operations before processing: ${this.pendingOperations.size}`);
     const operation = this.pendingOperations.get(id);
     
     if (!operation) {
-      console.warn(`[WebAudioDataChannel:${this.instanceName}] *** CRITICAL *** Received message for unknown operation: ${id}`);
-      console.warn(`[WebAudioDataChannel:${this.instanceName}] Available operations:`, Array.from(this.pendingOperations.keys()));
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] Received message for unknown operation: ${id}`);
       return;
     }
     
     this.pendingOperations.delete(id);
-    console.log(`[WebAudioDataChannel:${this.instanceName}] Removed operation ${id}, remaining: ${this.pendingOperations.size}`);
     
     if (type === 'result') {
-      console.log(`[WebAudioDataChannel:${this.instanceName}] Resolving operation ${id} with result:`, data);
       operation.resolve(data);
     } else if (type === 'error') {
-      console.log(`[WebAudioDataChannel:${this.instanceName}] Rejecting operation ${id} with error:`, data.message);
       operation.reject(new Error(data.message));
     } else {
       console.warn(`[WebAudioDataChannel:${this.instanceName}] Unhandled message type: ${type}`);
@@ -109,9 +103,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    * 復調されたデータを取得（データが利用可能になるまで待機）
    */
   async demodulate(): Promise<Uint8Array> {
-    console.log(`[WebAudioDataChannel:${this.instanceName}] === DEMODULATE START === pending operations: ${this.pendingOperations.size}`);
     const result = await this.sendMessage('demodulate', {});
-    console.log(`[WebAudioDataChannel:${this.instanceName}] === DEMODULATE COMPLETE === received bytes:`, result.bytes);
     return new Uint8Array(result.bytes || []);
   }
 
