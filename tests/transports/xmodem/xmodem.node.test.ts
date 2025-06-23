@@ -52,6 +52,24 @@ class MockDataChannel implements IDataChannel {
     }
   }
   
+  // Add data byte by byte (simulates real WebAudio FSK demodulation)
+  addReceivedDataByByte(data: Uint8Array): void {
+    if (this.closed) return;
+    
+    for (const byte of data) {
+      const singleByte = new Uint8Array([byte]);
+      
+      // If there are pending demodulate promises, resolve one immediately
+      if (this.demodulateResolvers.length > 0) {
+        const resolver = this.demodulateResolvers.shift()!;
+        resolver.resolve(singleByte);
+      } else {
+        // Otherwise, queue the data for later demodulate calls
+        this.dataToReceive.push(singleByte);
+      }
+    }
+  }
+  
   close(): void {
     this.closed = true;
     // Reject all pending demodulate promises with error
@@ -222,12 +240,14 @@ describe('MockDataChannel and XModem Integration', () => {
     // Wait for processing
     await new Promise(resolve => setTimeout(resolve, 10));
     
-    // Should have sent exactly ONE ACK (not ACK+NAK)
-    expect(mockDataChannel.sentData.length).toBe(1);
+    // Should have sent NAK + ACK (new protocol: NAK to initiate + ACK for data)
+    expect(mockDataChannel.sentData.length).toBe(2);
     
-    // Parse the sent data to verify it's ACK (single byte)
+    // Parse the sent data to verify: first NAK, then ACK
     expect(mockDataChannel.sentData[0].length).toBe(1);
-    expect(mockDataChannel.sentData[0][0]).toBe(ControlType.ACK);
+    expect(mockDataChannel.sentData[0][0]).toBe(ControlType.NAK); // Initial NAK
+    expect(mockDataChannel.sentData[1].length).toBe(1);
+    expect(mockDataChannel.sentData[1][0]).toBe(ControlType.ACK); // Data ACK
     
     // Complete the receive
     mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
@@ -236,33 +256,29 @@ describe('MockDataChannel and XModem Integration', () => {
     expect(result).toEqual(testData);
   });
 
-  test('concurrent send and receive operations isolation', async () => {
-    // This test verifies that send and receive don't interfere with each other
-    // when using the same MockDataChannel
+  test('half-duplex constraint verification', async () => {
+    // XModem is half-duplex: cannot send and receive simultaneously
     
     const sendData = new Uint8Array([1, 2, 3]);
-    const receiveData = new Uint8Array([4, 5, 6]);
     
-    // Configure for quick testing
-    transport.configure({ maxPayloadSize: 10 });
-    
+    // Start a send operation
     const sendPromise = transport.sendData(sendData);
     
-    // Wait for data packet to be sent
+    // Transport should be busy, receive should fail
+    await expect(transport.receiveData()).rejects.toThrow('Transport busy');
+    await expect(transport.sendData(new Uint8Array([4, 5, 6]))).rejects.toThrow('Transport busy');
+    
+    // Complete the send operation
+    mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
     await new Promise(resolve => setTimeout(resolve, 10));
-    expect(mockDataChannel.sentData.length).toBe(1);
-    
-    // Verify it's a data packet
-    const sentDataPacket = XModemPacket.parse(mockDataChannel.sentData[0]);
-    expect(sentDataPacket.packet?.sequence).toBeGreaterThan(0); // Data packet
-    
-    // Send ACK to complete send
+    mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+    await new Promise(resolve => setTimeout(resolve, 10));
     mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
     
     await sendPromise;
     
-    // Now EOT should have been sent
-    expect(mockDataChannel.sentData.length).toBe(2);
+    // Now transport should be ready again
+    expect(transport.isReady()).toBe(true);
   });
 });
 
@@ -362,23 +378,38 @@ describe('XModem Transport', () => {
     test('Send small data (single packet)', async () => {
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
       
-      // Start send operation - this should immediately send the first packet
+      // Start send operation - waits for NAK
       const sendPromise = transport.sendData(testData);
       
       // Give a small time for async processing 
       await new Promise(resolve => setTimeout(resolve, 10));
       
-      // Check that one packet was sent
+      // Should be waiting for NAK, no packets sent yet
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
+      // Wait for data packet to be sent
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Check that one data packet was sent
       expect(mockDataChannel.sentData.length).toBe(1);
       
       // Simulate ACK response - this should trigger EOT
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
-      // The processing loop should handle the ACK and send EOT, completing the sendPromise
-      await sendPromise;
+      // Wait for EOT to be sent
+      await new Promise(resolve => setTimeout(resolve, 10));
       
       // Verify that EOT was sent (total 2 packets: data + EOT)
       expect(mockDataChannel.sentData.length).toBe(2);
+      
+      // Send final ACK to complete the transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      // The processing loop should handle the final ACK and complete the sendPromise
+      await sendPromise;
     });
 
     test('Send large data (multiple packets)', async () => {
@@ -388,6 +419,13 @@ describe('XModem Transport', () => {
       const testData = new Uint8Array([1, 2, 3, 4, 5, 6, 7]); // 7 bytes -> 3 packets
       
       const sendPromise = transport.sendData(testData);
+      
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
       
       // Wait for packet 1 to be sent
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -408,6 +446,9 @@ describe('XModem Transport', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockDataChannel.sentData.length).toBe(4);
       
+      // Send final ACK to complete the transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
       await sendPromise;
     });
 
@@ -415,6 +456,13 @@ describe('XModem Transport', () => {
       const testData = new Uint8Array([]);
       
       const sendPromise = transport.sendData(testData);
+      
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
       
       // Wait for empty packet to be sent
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -425,6 +473,9 @@ describe('XModem Transport', () => {
       // Wait for EOT to be sent
       await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockDataChannel.sentData.length).toBe(2);
+      
+      // Send final ACK to complete the transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
       await sendPromise;
     });
@@ -437,7 +488,15 @@ describe('XModem Transport', () => {
       // Send data
       const sendPromise = transport.sendData(testData);
       
-      // Initial send
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
+      // Wait for initial send
+      await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockDataChannel.sentData.length).toBe(1);
       
       // Wait for timeout (100ms + some buffer)
@@ -447,7 +506,13 @@ describe('XModem Transport', () => {
       expect(mockDataChannel.sentData.length).toBe(2);
       expect(transport.getStatistics().packetsRetransmitted).toBe(1);
       
-      // Send ACK to complete
+      // Send ACK to complete (triggers EOT)
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      // Wait for EOT
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Send final ACK to complete transfer
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
       await sendPromise;
@@ -458,12 +523,20 @@ describe('XModem Transport', () => {
       
       const sendPromise = transport.sendData(testData);
       
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
       // Wait for all retries to timeout and complete
       await expect(sendPromise).rejects.toThrow('Timeout - max retries exceeded');
       
       // Wait a bit more to ensure all timeouts are processed
       await new Promise(resolve => setTimeout(resolve, 150));
       
+      // Should have sent: initial attempt + 3 retries = 4 packets
       expect(mockDataChannel.sentData.length).toBe(4);
       expect(transport.getStatistics().packetsRetransmitted).toBe(3);
       
@@ -476,11 +549,18 @@ describe('XModem Transport', () => {
       
       const sendPromise = transport.sendData(testData);
       
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
       // Wait for initial send
       await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockDataChannel.sentData.length).toBe(1);
       
-      // Send NAK
+      // Send NAK to trigger retransmission
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
       
       // Wait for processing and retransmission
@@ -490,7 +570,13 @@ describe('XModem Transport', () => {
       expect(mockDataChannel.sentData.length).toBe(2);
       expect(transport.getStatistics().packetsRetransmitted).toBe(1);
       
-      // Send ACK to complete
+      // Send ACK to complete (triggers EOT)
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      // Wait for EOT
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Send final ACK to complete transfer
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
       await sendPromise;
@@ -503,7 +589,16 @@ describe('XModem Transport', () => {
       
       const testData = new Uint8Array([0x42]);
       
-      await expect(transport.sendData(testData)).rejects.toThrow();
+      const sendPromise = transport.sendData(testData);
+      
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer - this triggers the modulate error
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
+      await expect(sendPromise).rejects.toThrow();
       
       // Restore original method
       mockDataChannel.modulate = originalModulate;
@@ -520,9 +615,9 @@ describe('XModem Transport', () => {
       const dataPacket = XModemPacket.createData(1, testData);
       mockDataChannel.addReceivedData(XModemPacket.serialize(dataPacket));
       
-      // Wait for ACK to be sent
+      // Wait for NAK + ACK to be sent (new protocol: NAK to initiate + ACK for data)
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(1);
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
       expect(transport.getStatistics().packetsReceived).toBe(1);
       
       // Send EOT
@@ -540,17 +635,20 @@ describe('XModem Transport', () => {
       const packet2 = XModemPacket.createData(2, new Uint8Array([4, 5, 6]));
       const packet3 = XModemPacket.createData(3, new Uint8Array([7, 8]));
       
+      // Packet 1: NAK + ACK = 2 packets
       mockDataChannel.addReceivedData(XModemPacket.serialize(packet1));
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(1);
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK for packet 1
       
+      // Packet 2: ACK = 1 more packet, total 3
       mockDataChannel.addReceivedData(XModemPacket.serialize(packet2));
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(2);
+      expect(mockDataChannel.sentData.length).toBe(3); // Previous 2 + ACK for packet 2
       
+      // Packet 3: ACK = 1 more packet, total 4
       mockDataChannel.addReceivedData(XModemPacket.serialize(packet3));
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(3);
+      expect(mockDataChannel.sentData.length).toBe(4); // Previous 3 + ACK for packet 3
       expect(transport.getStatistics().packetsReceived).toBe(3);
       
       // Send EOT to complete
@@ -567,9 +665,9 @@ describe('XModem Transport', () => {
       const packet2 = XModemPacket.createData(2, new Uint8Array([4, 5, 6]));
       mockDataChannel.addReceivedData(XModemPacket.serialize(packet2));
       
-      // Wait for NAK to be sent
+      // Wait for initial NAK + sequence error NAK to be sent
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(1);
+      expect(mockDataChannel.sentData.length).toBe(2); // Initial NAK + sequence error NAK
       expect(transport.getStatistics().packetsDropped).toBe(1);
       
       // Send correct packet 1
@@ -578,7 +676,7 @@ describe('XModem Transport', () => {
       
       // Wait for ACK to be sent
       await new Promise(resolve => setTimeout(resolve, 10));
-      expect(mockDataChannel.sentData.length).toBe(2);
+      expect(mockDataChannel.sentData.length).toBe(3); // Previous 2 + ACK for correct packet
       
       // Complete with EOT
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
@@ -586,24 +684,102 @@ describe('XModem Transport', () => {
       const receivedData = await receivePromise;
       expect(receivedData).toEqual(new Uint8Array([1, 2, 3]));
     });
+
+    test('Receive single packet byte-by-byte (simulates WebAudio FSK)', async () => {
+      const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]);
+      
+      const receivePromise = transport.receiveData();
+      
+      // Create and serialize data packet
+      const dataPacket = XModemPacket.createData(1, testData);
+      const serializedPacket = XModemPacket.serialize(dataPacket);
+      
+      // Send packet byte by byte (simulates real WebAudio FSK demodulation)
+      mockDataChannel.addReceivedDataByByte(serializedPacket);
+      
+      // Wait for NAK + ACK to be sent (new protocol: NAK to initiate + ACK for data)
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      expect(transport.getStatistics().packetsReceived).toBe(1);
+      
+      // Send EOT byte by byte
+      const eotData = XModemPacket.serializeControl(ControlType.EOT);
+      mockDataChannel.addReceivedDataByByte(eotData);
+      
+      const receivedData = await receivePromise;
+      expect(receivedData).toEqual(testData);
+    });
+
+    test('Receive multiple packets byte-by-byte', async () => {
+      const receivePromise = transport.receiveData();
+      
+      // Create packets
+      const packet1 = XModemPacket.createData(1, new Uint8Array([1, 2, 3]));
+      const packet2 = XModemPacket.createData(2, new Uint8Array([4, 5, 6]));
+      const packet3 = XModemPacket.createData(3, new Uint8Array([7, 8]));
+      
+      // Send packet 1 byte by byte (NAK + ACK = 2 packets)
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serialize(packet1));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK for packet 1
+      
+      // Send packet 2 byte by byte (ACK = 1 more packet, total 3)
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serialize(packet2));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(mockDataChannel.sentData.length).toBe(3); // Previous 2 + ACK for packet 2
+      
+      // Send packet 3 byte by byte (ACK = 1 more packet, total 4)
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serialize(packet3));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(mockDataChannel.sentData.length).toBe(4); // Previous 3 + ACK for packet 3
+      expect(transport.getStatistics().packetsReceived).toBe(3);
+      
+      // Send EOT byte by byte
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const receivedData = await receivePromise;
+      expect(receivedData).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    });
+
+    test('Mixed data and control commands byte-by-byte', async () => {
+      const testData = new Uint8Array([0x42]);
+      
+      const receivePromise = transport.receiveData();
+      
+      // Send data packet byte by byte
+      const dataPacket = XModemPacket.createData(1, testData);
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serialize(dataPacket));
+      
+      // Wait for NAK + ACK (new protocol: NAK to initiate + ACK for data)
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Send EOT as single byte (simulates control command)
+      mockDataChannel.addReceivedDataByByte(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const receivedData = await receivePromise;
+      expect(receivedData).toEqual(testData);
+    });
   });
 
   describe('State Management', () => {
     test('Cannot send while busy', async () => {
-      vi.useFakeTimers();
-      
       const data1 = new Uint8Array([1, 2, 3]);
       const data2 = new Uint8Array([4, 5, 6]);
       
       const send1 = transport.sendData(data1);
       
+      // Should be in SENDING_WAIT_NAK state, so second send should fail
       await expect(transport.sendData(data2)).rejects.toThrow('Transport busy');
       
-      // Complete first send
+      // Complete first send to clean up
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
       await send1;
-      vi.useRealTimers();
     });
 
     test('Cannot receive while busy', async () => {
@@ -642,11 +818,16 @@ describe('XModem Transport', () => {
       // Start receive to activate processing loop
       const receivePromise = transport.receiveData();
       
-      const invalidData = new Uint8Array([0x02, 0x01, 0x02]); // Invalid packet
-      mockDataChannel.addReceivedData(invalidData);
+      // Wait for NAK to be sent
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send invalid packet that looks like a data packet but has invalid CRC
+      const invalidPacket = new Uint8Array([0x01, 0x01, 0xFE, 0x03, 0x42, 0x43, 0x44, 0xFF, 0xFF]); // SOH+SEQ+~SEQ+LEN+PAYLOAD+Bad CRC
+      mockDataChannel.addReceivedData(invalidPacket);
       
       // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 20));
       
       expect(errorSpy).toHaveBeenCalled();
       
@@ -672,10 +853,28 @@ describe('XModem Transport', () => {
       const testData = new Uint8Array([0x42]);
       const sendPromise = transport.sendData(testData);
       
+      // Should be waiting for NAK, no packets sent yet
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(0);
+      
+      // Send NAK to initiate transfer
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      
+      // Wait for initial send
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1);
+      
       // Wait for timeout and retry
       await new Promise(resolve => setTimeout(resolve, 150));
+      expect(mockDataChannel.sentData.length).toBe(2); // Initial + retry
       
-      // Send ACK to complete
+      // Send ACK to complete (triggers EOT)
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      // Wait for EOT
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Send final ACK to complete transfer
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
       
       await sendPromise;
@@ -684,6 +883,288 @@ describe('XModem Transport', () => {
       expect(stats.packetsSent).toBe(3); // 2 data packets + 1 EOT
       expect(stats.packetsRetransmitted).toBe(1);
       expect(stats.bytesTransferred).toBe(1);
+    });
+
+    test('Multiple transfer statistics accuracy', async () => {
+      // First transfer
+      const data1 = new Uint8Array([0x41, 0x42]);
+      const send1Promise = transport.sendData(data1);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await send1Promise;
+      
+      // Verify first transfer stats
+      let stats = transport.getStatistics();
+      expect(stats.packetsSent).toBe(2); // 1 data packet + 1 EOT
+      expect(stats.bytesTransferred).toBe(2);
+      
+      // Second transfer - stats should accumulate
+      const data2 = new Uint8Array([0x43, 0x44, 0x45]);
+      const send2Promise = transport.sendData(data2);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await send2Promise;
+      
+      // Verify accumulated stats
+      stats = transport.getStatistics();
+      expect(stats.packetsSent).toBe(4); // 2 data packets + 2 EOT
+      expect(stats.bytesTransferred).toBe(5); // 2 + 3 bytes
+      expect(stats.packetsRetransmitted).toBe(0); // No retries in this test
+    });
+  });
+
+  describe('Sequential Operations', () => {
+    test('Sequential send operations', async () => {
+      // First send
+      const data1 = new Uint8Array([0x41]);
+      const send1Promise = transport.sendData(data1);
+      
+      expect(transport.isReady()).toBe(false);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await send1Promise;
+      expect(transport.isReady()).toBe(true);
+      
+      // Reset mock for second send
+      mockDataChannel.clearSentData();
+      
+      // Second send - should work immediately
+      const data2 = new Uint8Array([0x42]);
+      const send2Promise = transport.sendData(data2);
+      
+      expect(transport.isReady()).toBe(false);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Data packet
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // Data + EOT
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await send2Promise;
+      expect(transport.isReady()).toBe(true);
+    });
+
+    test('Sequential receive operations', async () => {
+      // First receive
+      const receive1Promise = transport.receiveData();
+      
+      expect(transport.isReady()).toBe(false);
+      
+      // Send data packet
+      const dataPacket1 = XModemPacket.createData(1, new Uint8Array([0x41]));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(dataPacket1));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Complete first receive
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result1 = await receive1Promise;
+      expect(result1).toEqual(new Uint8Array([0x41]));
+      expect(transport.isReady()).toBe(true);
+      
+      // Reset mock for second receive
+      mockDataChannel.clearSentData();
+      
+      // Second receive - should work immediately
+      const receive2Promise = transport.receiveData();
+      
+      expect(transport.isReady()).toBe(false);
+      
+      // Wait for initial NAK
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Initial NAK
+      
+      // Send data packet
+      const dataPacket2 = XModemPacket.createData(1, new Uint8Array([0x42]));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(dataPacket2));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Complete second receive
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result2 = await receive2Promise;
+      expect(result2).toEqual(new Uint8Array([0x42]));
+      expect(transport.isReady()).toBe(true);
+    });
+
+    test('Alternating send-receive pattern', async () => {
+      // Send -> Receive -> Send pattern
+      
+      // 1. Send operation
+      const sendData = new Uint8Array([0x53]); // 'S'
+      const sendPromise = transport.sendData(sendData);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await sendPromise;
+      expect(transport.isReady()).toBe(true);
+      
+      // Clear sent data for receive test
+      mockDataChannel.clearSentData();
+      
+      // 2. Receive operation
+      const receivePromise = transport.receiveData();
+      
+      // Wait for NAK
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // NAK
+      
+      // Send data
+      const dataPacket = XModemPacket.createData(1, new Uint8Array([0x52])); // 'R'
+      mockDataChannel.addReceivedData(XModemPacket.serialize(dataPacket));
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // NAK + ACK
+      
+      // Complete receive
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const receivedData = await receivePromise;
+      expect(receivedData).toEqual(new Uint8Array([0x52]));
+      expect(transport.isReady()).toBe(true);
+      
+      // Clear sent data for second send test
+      mockDataChannel.clearSentData();
+      
+      // 3. Second send operation
+      const send2Data = new Uint8Array([0x53, 0x32]); // 'S2'
+      const send2Promise = transport.sendData(send2Data);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(1); // Data packet
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(mockDataChannel.sentData.length).toBe(2); // Data + EOT
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await send2Promise;
+      expect(transport.isReady()).toBe(true);
+      
+      // Verify final statistics include all operations
+      const stats = transport.getStatistics();
+      expect(stats.bytesTransferred).toBe(4); // 1 + 1 + 2 bytes
+      expect(stats.packetsReceived).toBe(1); // Only receive operation counted
+    });
+  });
+
+  describe('State Transitions and Recovery', () => {
+    test('State transitions and isReady() verification', async () => {
+      // Initial state
+      expect(transport.isReady()).toBe(true);
+      
+      // Start send - should be not ready
+      const sendPromise = transport.sendData(new Uint8Array([0x41]));
+      expect(transport.isReady()).toBe(false);
+      
+      // Complete send - should be ready again
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      expect(transport.isReady()).toBe(false); // Still in progress
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      expect(transport.isReady()).toBe(false); // Still waiting for final ACK
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await sendPromise;
+      expect(transport.isReady()).toBe(true); // Now ready
+      
+      // Start receive - should be not ready
+      const receivePromise = transport.receiveData();
+      expect(transport.isReady()).toBe(false);
+      
+      // Complete receive - should be ready again
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      await receivePromise;
+      expect(transport.isReady()).toBe(true);
+    });
+
+    test('Error recovery and next operation', async () => {
+      // Start operation that will fail (timeout without NAK initiation)
+      const failPromise = transport.sendData(new Uint8Array([0x41]));
+      expect(transport.isReady()).toBe(false);
+      
+      // Need to initiate with NAK first for timeout to happen in sending phase
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Now wait for all retries to timeout
+      await expect(failPromise).rejects.toThrow('Timeout - max retries exceeded');
+      
+      // Transport should be ready again after error
+      expect(transport.isReady()).toBe(true);
+      
+      // Next operation should work normally
+      mockDataChannel.clearSentData();
+      const sendPromise = transport.sendData(new Uint8Array([0x42]));
+      
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.NAK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
+      
+      await sendPromise;
+      expect(transport.isReady()).toBe(true);
+    });
+
+    test('Reset after various states', async () => {
+      // Reset during send wait NAK state
+      let sendPromise = transport.sendData(new Uint8Array([0x41]));
+      expect(transport.isReady()).toBe(false);
+      
+      transport.reset();
+      await expect(sendPromise).rejects.toThrow('Transport reset');
+      expect(transport.isReady()).toBe(true);
+      
+      // Reset during receive state
+      const receivePromise = transport.receiveData();
+      expect(transport.isReady()).toBe(false);
+      
+      // Wait a moment for async NAK send to start
+      await new Promise(resolve => setTimeout(resolve, 5));
+      
+      transport.reset();
+      await expect(receivePromise).rejects.toThrow('Transport reset');
+      expect(transport.isReady()).toBe(true);
+      
+      // Verify statistics are cleared
+      const stats = transport.getStatistics();
+      expect(stats.packetsSent).toBe(0);
+      expect(stats.packetsReceived).toBe(0);
+      expect(stats.bytesTransferred).toBe(0);
     });
   });
 });

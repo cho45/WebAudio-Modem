@@ -246,7 +246,7 @@ describe('XModem Packet', () => {
     });
 
     test('Control character round-trip', () => {
-      const controlTypes = [ControlType.ACK, ControlType.NAK, ControlType.EOT, ControlType.ENQ, ControlType.CAN];
+      const controlTypes = [ControlType.ACK, ControlType.NAK, ControlType.EOT];
 
       controlTypes.forEach(controlType => {
         const serialized = XModemPacket.serializeControl(controlType);

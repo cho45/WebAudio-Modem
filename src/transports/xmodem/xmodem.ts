@@ -1,44 +1,11 @@
 /**
- * XModem transport protocol implementation - Simple state machine
+ * XModem transport protocol implementation - Half-duplex protocol
  * 
- * ## State Transition Diagram
- * 
- * ```
- * IDLE
- *   ├─ sendData() ──┐
- *   │               ├── Start processing loop
- *   │               └── Send first packet
- *   │                   └─ SENDING ──────┐
- *   │                                    │
- *   └─ receiveData() ────────────────────┼── Start processing loop
- *                                        │   └─ RECEIVING
- *                                        │
- * Processing Loop (single demodulate point):                                      
- *   ┌─ while (loopRunning && state !== IDLE) ──┐
- *   │     │                                    │
- *   │     ├─ data = await demodulate()         │
- *   │     └─ processIncomingData(data) ────────┼─ handleControlPacket()
- *   │                                          │   │
- *   │  SENDING state:                          │   ├─ ACK → fragmentIndex++
- *   │    ├─ Timeout → retransmit               │   │         ├─ More fragments? → Send next
- *   │    ├─ ACK → next fragment or EOT        │   │         └─ All done? → Send EOT → completeSend() → IDLE
- *   │    ├─ NAK → retransmit                  │   │
- *   │    └─ Max retries → failSend() → IDLE   │   └─ NAK → retransmit
- *   │                                          │
- *   │  RECEIVING state:                        │   ├─ EOT → completeReceive() → IDLE
- *   │    ├─ Expected sequence → ACK            │   │
- *   │    └─ Wrong sequence → NAK               └─ handleDataPacket()
- *   │                                              │
- *   └─ Loop exits when state = IDLE               ├─ Correct sequence → save data, send ACK
- *                                                  └─ Wrong sequence → send NAK
- * 
- * ## Key Design Principles:
- * 1. Single demodulate() call point - eliminates race conditions
- * 2. Simple 3-state machine: IDLE/SENDING/RECEIVING  
- * 3. Processing loop handles all incoming data
- * 4. Timeouts only for ACK waiting during send
- * 5. Clean state transitions with loopRunning control
- * ```
+ * Simple state machine following standard XModem protocol:
+ * - Half-duplex communication (send OR receive, not both)
+ * - Receiver initiates with NAK
+ * - Block-by-block transmission with ACK/NAK responses
+ * - Proper CRC16 and sequence number validation
  */
 
 import { BaseTransport, IDataChannel, Event } from '../../core';
@@ -53,8 +20,14 @@ export interface XModemConfig {
 
 enum State {
   IDLE,
-  SENDING,
-  RECEIVING
+  // Sending states
+  SENDING_WAIT_NAK,      // 送信: 初回NAK待ち
+  SENDING_WAIT_ACK,      // 送信: ACK待ち
+  SENDING_WAIT_FINAL_ACK, // 送信: EOT後の最終ACK待ち
+  // Receiving states
+  RECEIVING_SEND_NAK,    // 受信: 最初のNAK送信
+  RECEIVING_WAIT_BLOCK,  // 受信: ブロック待ち
+  RECEIVING_SEND_ACK     // 受信: ACK/NAK送信後、次ブロック待ち
 }
 
 export class XModemTransport extends BaseTransport {
@@ -73,6 +46,9 @@ export class XModemTransport extends BaseTransport {
   private retries = 0;
   private receivedData: Uint8Array[] = [];
   private expectedSequence = 1;
+  
+  // Simple receive buffer for byte-by-byte assembly
+  private receiveBuffer: number[] = [];
 
   // Promise resolvers
   private sendResolve?: () => void;
@@ -103,17 +79,14 @@ export class XModemTransport extends BaseTransport {
       this.sendReject = reject;
       
       // Setup send state
-      this.state = State.SENDING;
+      this.state = State.SENDING_WAIT_NAK;
       this.sequence = 1;
       this.fragmentIndex = 0;
       this.retries = 0;
       this.fragments = this.createFragments(data);
       
-      // Start processing loop first, then send packet
+      // Start processing loop and wait for NAK from receiver
       this.ensureProcessingLoop();
-      
-      // Send first packet
-      this.sendCurrentFragment();
     });
   }
 
@@ -126,14 +99,25 @@ export class XModemTransport extends BaseTransport {
       this.receiveResolve = resolve;
       this.receiveReject = reject;
       
-      // Setup receive state
-      this.state = State.RECEIVING;
+      // Setup receive state and send initial NAK
+      this.state = State.RECEIVING_SEND_NAK;
       this.expectedSequence = 1;
       this.receivedData = [];
+      this.receiveBuffer = [];
       
-      // Start processing loop to wait for incoming data
+      // Start processing loop and send NAK to initiate transfer
       this.ensureProcessingLoop();
+      this.sendNAKToInitiate();
     });
+  }
+  
+  private async sendNAKToInitiate(): Promise<void> {
+    try {
+      await this.sendControl('NAK');
+      this.state = State.RECEIVING_WAIT_BLOCK;
+    } catch (error) {
+      this.failReceive(new Error(`Failed to send initial NAK: ${error}`));
+    }
   }
 
   async sendControl(command: string): Promise<void> {
@@ -156,6 +140,7 @@ export class XModemTransport extends BaseTransport {
     this.fragments = [];
     this.receivedData = [];
     this.expectedSequence = 1;
+    this.receiveBuffer = [];
     
     if (this.sendReject) {
       this.sendReject(new Error('Transport reset'));
@@ -198,10 +183,10 @@ export class XModemTransport extends BaseTransport {
         await this.processIncomingData(data);
       } catch (error) {
         // Handle errors based on current state
-        if (this.state === State.SENDING && this.sendReject) {
+        if ((this.state === State.SENDING_WAIT_NAK || this.state === State.SENDING_WAIT_ACK || this.state === State.SENDING_WAIT_FINAL_ACK) && this.sendReject) {
           this.sendReject(new Error(`Demodulation failed: ${error}`));
           this.state = State.IDLE;
-        } else if (this.state === State.RECEIVING && this.receiveReject) {
+        } else if ((this.state === State.RECEIVING_SEND_NAK || this.state === State.RECEIVING_WAIT_BLOCK || this.state === State.RECEIVING_SEND_ACK) && this.receiveReject) {
           this.receiveReject(new Error(`Demodulation failed: ${error}`));
           this.state = State.IDLE;
         }
@@ -213,49 +198,120 @@ export class XModemTransport extends BaseTransport {
 
   private async processIncomingData(data: Uint8Array): Promise<void> {
     if (data.length === 0) {
-      return; // 空データはスキップ
+      return;
     }
     
-    // Check if it's a single control byte
-    if (data.length === 1) {
-      const controlResult = XModemPacket.parseControl(data);
-      if (controlResult.isControl && controlResult.controlType) {
-        await this.handleControlCommand(controlResult.controlType);
+    // Add all bytes to receive buffer
+    for (const byte of data) {
+      this.receiveBuffer.push(byte);
+      
+      // Check for complete packet or control command
+      await this.processReceiveBuffer();
+    }
+  }
+  
+  private async processReceiveBuffer(): Promise<void> {
+    // Check for control commands first (single byte)
+    if (this.receiveBuffer.length === 1) {
+      const byte = this.receiveBuffer[0];
+      if (this.isControlByte(byte)) {
+        this.receiveBuffer = []; // Clear buffer
+        await this.handleControlCommand(byte as ControlType);
         return;
       }
     }
     
-    // Try to parse as data packet
-    const result = XModemPacket.parse(data);
-    if (result.error || !result.packet) {
-      // Emit error event for invalid packets
-      this.emit('error', new Event(result.error || 'Invalid packet data'));
-      return;
+    // Check for complete data packet
+    const completePacket = this.extractCompletePacket();
+    if (completePacket) {
+      const result = XModemPacket.parse(completePacket);
+      if (result.error || !result.packet) {
+        this.emit('error', new Event(result.error || 'Invalid packet data'));
+        return;
+      }
+      await this.handleDataPacket(result.packet);
     }
-
-    // Data packet
-    await this.handleDataPacket(result.packet);
+  }
+  
+  private extractCompletePacket(): Uint8Array | null {
+    if (this.receiveBuffer.length < 6) {
+      return null; // Minimum packet size
+    }
+    
+    // Check if starts with SOH
+    if (this.receiveBuffer[0] !== 0x01) {
+      // Invalid start, clear buffer
+      this.receiveBuffer = [];
+      return null;
+    }
+    
+    // Get expected packet length
+    if (this.receiveBuffer.length < 4) {
+      return null; // Need LEN field
+    }
+    
+    const len = this.receiveBuffer[3];
+    const expectedLength = 1 + 1 + 1 + 1 + len + 2; // SOH+SEQ+~SEQ+LEN+PAYLOAD+CRC
+    
+    if (this.receiveBuffer.length < expectedLength) {
+      return null; // Incomplete packet
+    }
+    
+    // Extract complete packet
+    const packetBytes = this.receiveBuffer.slice(0, expectedLength);
+    this.receiveBuffer = this.receiveBuffer.slice(expectedLength);
+    
+    // Validate packet structure
+    if (!this.validatePacketStructure(packetBytes)) {
+      return null;
+    }
+    
+    return new Uint8Array(packetBytes);
+  }
+  
+  private validatePacketStructure(packetBytes: number[]): boolean {
+    if (packetBytes.length < 6) return false;
+    
+    // Check SEQ + ~SEQ = 255
+    if ((packetBytes[1] + packetBytes[2]) !== 255) {
+      return false;
+    }
+    
+    // CRC validation will be done by XModemPacket.parse()
+    return true;
+  }
+  
+  private isControlByte(byte: number): boolean {
+    return byte === ControlType.ACK || byte === ControlType.NAK || byte === ControlType.EOT;
   }
 
   private async handleControlCommand(controlType: ControlType): Promise<void> {
-    if (this.state === State.SENDING) {
-      switch (controlType) {
-        case ControlType.ACK:
+    switch (this.state) {
+      case State.SENDING_WAIT_NAK:
+        if (controlType === ControlType.NAK) {
+          // Receiver is ready, start sending
+          this.state = State.SENDING_WAIT_ACK;
+          await this.sendCurrentFragment();
+        }
+        break;
+        
+      case State.SENDING_WAIT_ACK:
+        if (controlType === ControlType.ACK) {
+          // Block acknowledged, send next or complete
           this.fragmentIndex++;
           this.sequence = (this.sequence % 255) + 1;
           this.retries = 0;
           
           if (this.fragmentIndex >= this.fragments.length) {
-            // All fragments sent, send EOT and complete
+            // All fragments sent, send EOT
+            this.state = State.SENDING_WAIT_FINAL_ACK;
             await this.sendControl('EOT');
-            this.completeSend();
           } else {
             // Send next fragment
             await this.sendCurrentFragment();
           }
-          break;
-          
-        case ControlType.NAK:
+        } else if (controlType === ControlType.NAK) {
+          // Block rejected, retransmit
           this.retries++;
           if (this.retries > this.config.maxRetries) {
             this.failSend(new Error('Max retries exceeded'));
@@ -263,19 +319,29 @@ export class XModemTransport extends BaseTransport {
             await this.sendCurrentFragment();
             this.statistics.packetsRetransmitted++;
           }
-          break;
-      }
-    } else if (this.state === State.RECEIVING) {
-      switch (controlType) {
-        case ControlType.EOT:
+        }
+        break;
+        
+      case State.SENDING_WAIT_FINAL_ACK:
+        if (controlType === ControlType.ACK) {
+          // Transfer complete
+          this.completeSend();
+        }
+        break;
+        
+      case State.RECEIVING_WAIT_BLOCK:
+      case State.RECEIVING_SEND_ACK:
+        if (controlType === ControlType.EOT) {
+          // Transfer complete, send final ACK
+          await this.sendControl('ACK');
           this.completeReceive();
-          break;
-      }
+        }
+        break;
     }
   }
 
   private async handleDataPacket(packet: DataPacket): Promise<void> {
-    if (this.state !== State.RECEIVING) {
+    if (this.state !== State.RECEIVING_WAIT_BLOCK && this.state !== State.RECEIVING_SEND_ACK) {
       return;
     }
 
@@ -285,11 +351,15 @@ export class XModemTransport extends BaseTransport {
       // Expected packet - accept it
       this.receivedData.push(packet.payload);
       this.expectedSequence = (this.expectedSequence % 255) + 1;
+      this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('ACK');
+      this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
       this.statistics.bytesTransferred += packet.payload.length;
     } else {
       // Unexpected sequence - reject it
+      this.state = State.RECEIVING_SEND_ACK;
       await this.sendControl('NAK');
+      this.state = State.RECEIVING_WAIT_BLOCK; // Wait for retransmission
       this.statistics.packetsDropped++;
     }
   }
@@ -309,7 +379,7 @@ export class XModemTransport extends BaseTransport {
       
       // Set timeout for ACK
       setTimeout(() => {
-        if (this.state === State.SENDING && this.fragmentIndex < this.fragments.length) {
+        if (this.state === State.SENDING_WAIT_ACK && this.fragmentIndex < this.fragments.length) {
           this.retries++;
           if (this.retries > this.config.maxRetries) {
             this.failSend(new Error('Timeout - max retries exceeded'));
@@ -342,8 +412,6 @@ export class XModemTransport extends BaseTransport {
       case 'ACK': return ControlType.ACK;
       case 'NAK': return ControlType.NAK;
       case 'EOT': return ControlType.EOT;
-      case 'ENQ': return ControlType.ENQ;
-      case 'CAN': return ControlType.CAN;
       default: throw new Error(`Unknown control command: ${command}`);
     }
   }
@@ -365,6 +433,16 @@ export class XModemTransport extends BaseTransport {
       this.sendReject(error);
       this.sendResolve = undefined;
       this.sendReject = undefined;
+    }
+    this.loopRunning = false;
+  }
+  
+  private failReceive(error: Error): void {
+    this.state = State.IDLE;
+    if (this.receiveReject) {
+      this.receiveReject(error);
+      this.receiveResolve = undefined;
+      this.receiveReject = undefined;
     }
     this.loopRunning = false;
   }

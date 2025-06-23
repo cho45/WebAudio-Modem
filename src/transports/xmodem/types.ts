@@ -23,14 +23,12 @@ export interface DataPacket {
  */
 
 /**
- * Control packet types based on ASCII control characters
+ * Control packet types (minimal set for XModem protocol)
  */
 export enum ControlType {
   ACK = 0x06,  // Acknowledge - positive response
   NAK = 0x15,  // Negative Acknowledge - request retransmission
-  EOT = 0x04,  // End of Transmission - end of data stream
-  ENQ = 0x05,  // Enquiry - request for status
-  CAN = 0x18   // Cancel - abort transmission
+  EOT = 0x04   // End of Transmission - end of data stream
 }
 
 /**
