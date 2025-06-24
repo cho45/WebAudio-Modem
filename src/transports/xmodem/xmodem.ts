@@ -84,12 +84,14 @@ export class XModemTransport extends BaseTransport {
     this.fragmentIndex = 0;
     this.retries = 0;
     this.fragments = this.createFragments(data);
+    
+    // Wait for initial NAK only once
+    this.setTimeout(abortController);
+    await this.waitAndSkipForControl(ControlType.NAK, { signal });
+    this.clearTimeout();
+    
     while (this.fragmentIndex < this.fragments.length) {
       if (signal.aborted) throw new Error('Operation aborted at sendData');
-
-      this.setTimeout(abortController);
-      await this.waitAndSkipForControl(ControlType.NAK, { signal });
-      this.clearTimeout();
 
       const fragment = this.fragments[this.fragmentIndex];
       const packet = XModemPacket.createData(this.sequence, fragment);
@@ -105,10 +107,12 @@ export class XModemTransport extends BaseTransport {
       if (byte === ControlType.ACK) {
         this.retries = 0;
         this.fragmentIndex++;
+        this.sequence = (this.sequence % 255) + 1;  // Update sequence number
         continue;
       } else
       if (byte === ControlType.NAK) {
         if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+        this.statistics.packetsRetransmitted++;
         console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
         continue;
       } else {
@@ -164,6 +168,7 @@ export class XModemTransport extends BaseTransport {
           this.clearTimeout();
           if (byte === ControlType.EOT) {
             this.state = State.RECEIVING_SEND_ACK;
+            await this.sendControl('ACK'); // Send final ACK for EOT
             break fragment;
           } else 
           if (byte === ControlType.SOH) {
@@ -196,6 +201,7 @@ export class XModemTransport extends BaseTransport {
           }));
 
           this.expectedSequence = (this.expectedSequence % 255) + 1;
+          this.retries = 0; // Reset retries after successful packet
           this.state = State.RECEIVING_SEND_ACK;
           await this.sendControl('ACK');
           this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
