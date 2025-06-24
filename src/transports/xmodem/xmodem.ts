@@ -97,7 +97,7 @@ export class XModemTransport extends BaseTransport {
     }
     
     console.log(`[XModemTransport] Starting fragment loop: fragmentIndex=${this.fragmentIndex}, fragmentsLength=${this.fragments.length}`);
-    while (this.fragmentIndex < this.fragments.length) {
+    fragment: while (this.fragmentIndex < this.fragments.length) {
       if (signal.aborted) throw new Error('Operation aborted at sendData');
       console.log(`[XModemTransport] Processing fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
 
@@ -109,26 +109,28 @@ export class XModemTransport extends BaseTransport {
       this.statistics.packetsSent++;
 
       this.state = State.SENDING_WAIT_ACK;
-      this.setTimeout(abortController);
       
       try {
-        this.dataChannel.reset();
-        const byte = await this.waitForByte({ signal });
-        this.clearTimeout();
-        
-        if (byte === ControlType.ACK) {
-          this.retries = 0;
-          this.fragmentIndex++;
-          this.sequence = (this.sequence % 255) + 1;  // Update sequence number
-          continue;
-        } else
-        if (byte === ControlType.NAK) {
-          if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
-          this.statistics.packetsRetransmitted++;
-          console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
-          continue;
-        } else {
-          throw new Error(`Unexpected byte received: ${byte}`);
+        for (;;) {
+          this.setTimeout(abortController);
+          if (signal.aborted) throw new Error('Operation aborted at sendData');
+          const byte = await this.waitForByte({ signal });
+          this.clearTimeout();
+          
+          if (byte === ControlType.ACK) {
+            this.retries = 0;
+            this.fragmentIndex++;
+            this.sequence = (this.sequence % 255) + 1;  // Update sequence number
+            continue fragment;
+          } else
+          if (byte === ControlType.NAK) {
+            if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+            this.statistics.packetsRetransmitted++;
+            console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
+            continue fragment;
+          } else {
+            continue;
+          }
         }
       } catch (error: any) {
         this.clearTimeout();
@@ -151,6 +153,7 @@ export class XModemTransport extends BaseTransport {
     
     for (;;) {
       if (signal.aborted) throw new Error('Operation aborted at sendData');
+      console.log(`[XModemTransport] Sending EOT, waiting for final ACK`);
       await this.sendControl('EOT');
       this.state = State.SENDING_WAIT_FINAL_ACK;
 
@@ -226,12 +229,14 @@ export class XModemTransport extends BaseTransport {
         const bytes = await this.waitForBytes(3, { signal });
         const [seq, nseq, len] = [bytes[0], bytes[1], bytes[2]];
         if ((seq + nseq) !== 255) throw new Error('Invalid sequence number');
+        console.log(`[XModemTransport] Received packet: seq=${seq}, nseq=${nseq}, len=${len}`);
         if (seq === this.expectedSequence) {
           const payloadWithCRC = await this.waitForBytes(len + 2, { signal }); // Wait for payload + CRC
           this.statistics.packetsReceived++;
 
           const payload = payloadWithCRC.slice(0, len);
           const crc = (payloadWithCRC[len] << 8) | payloadWithCRC[len + 1];
+          console.log(`[XModemTransport] Received payload with CRC: seq=${seq}, len=${len}, crc=${crc} (== ${CRC16.calculate(payload)})`);
 
           if (CRC16.calculate(payload) !== crc) throw new Error('Invalid CRC');
           this.receivedData.push(payload);
@@ -248,6 +253,7 @@ export class XModemTransport extends BaseTransport {
           this.expectedSequence = (this.expectedSequence % 255) + 1;
           this.retries = 0; // Reset retries after successful packet
           this.state = State.RECEIVING_SEND_ACK;
+          console.log(`[XModemTransport] Sending ACK for seq=${seq}`);
           await this.sendControl('ACK');
           this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
         } else
@@ -278,6 +284,8 @@ export class XModemTransport extends BaseTransport {
       result.set(data, offset);
       offset += data.length;
     }
+
+    console.log(`[XModemTransport] Received total data length: ${result.length} bytes`);
     
     return result;
   }

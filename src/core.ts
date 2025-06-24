@@ -60,6 +60,10 @@ export interface IDataChannel {
    */
   demodulate(): Promise<Uint8Array>;
 
+  /**
+   * Reset the data channel state
+   */
+  reset(): Promise<void>;
 }
 
 /**

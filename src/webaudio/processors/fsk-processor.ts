@@ -14,7 +14,7 @@ import { RingBuffer } from '../../utils';
 
 interface WorkletMessage {
   id: string;
-  type: 'configure' | 'modulate' | 'demodulate' | 'status';
+  type: 'configure' | 'modulate' | 'demodulate' | 'status' | 'reset';
   data?: any;
 }
 
@@ -91,6 +91,13 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       
       return demodulatedBytes;
   }
+
+  async reset(): Promise<void> {
+      this.demodulatedBuffer.clear();
+      this.pendingModulation = null;
+      this.awaitingCallback = null;
+      this.modulationWaitCallback = () => {};
+  }
   
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const input = inputs[0];
@@ -124,6 +131,10 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             throw configError;
           }
           break;
+        case 'reset': {
+          await this.reset();
+          break;
+        }
           
         case 'modulate': {
           await this.modulate(new Uint8Array(data.bytes));

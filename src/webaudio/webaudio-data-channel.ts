@@ -117,12 +117,14 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   /**
    * チャネルをリセット
    */
-  reset(): void {
+  async reset(): Promise<void> {
     // Clear pending operations
     for (const [_id, operation] of this.pendingOperations) {
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] Resetting operation: ${_id}`);
       operation.reject(new Error('DataChannel reset'));
     }
     this.pendingOperations.clear();
+    await this.sendMessage('reset', {});
   }
   
   /**
