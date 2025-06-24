@@ -84,14 +84,22 @@ export class XModemTransport extends BaseTransport {
     this.fragmentIndex = 0;
     this.retries = 0;
     this.fragments = this.createFragments(data);
+    console.log(`[XModemTransport] Created ${this.fragments.length} fragments for ${data.length} bytes`);
     
     // Wait for initial NAK only once
     this.setTimeout(abortController);
-    await this.waitAndSkipForControl(ControlType.NAK, { signal });
-    this.clearTimeout();
+    try {
+      await this.waitAndSkipForControl(ControlType.NAK, { signal });
+      this.clearTimeout();
+    } catch (error) {
+      this.clearTimeout();
+      throw new Error(`Failed to receive initial NAK: ${error}`);
+    }
     
+    console.log(`[XModemTransport] Starting fragment loop: fragmentIndex=${this.fragmentIndex}, fragmentsLength=${this.fragments.length}`);
     while (this.fragmentIndex < this.fragments.length) {
       if (signal.aborted) throw new Error('Operation aborted at sendData');
+      console.log(`[XModemTransport] Processing fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
 
       const fragment = this.fragments[this.fragmentIndex];
       const packet = XModemPacket.createData(this.sequence, fragment);
@@ -102,37 +110,71 @@ export class XModemTransport extends BaseTransport {
 
       this.state = State.SENDING_WAIT_ACK;
       this.setTimeout(abortController);
-      const byte = await this.waitForByte({ signal });
-      this.clearTimeout();
-      if (byte === ControlType.ACK) {
-        this.retries = 0;
-        this.fragmentIndex++;
-        this.sequence = (this.sequence % 255) + 1;  // Update sequence number
-        continue;
-      } else
-      if (byte === ControlType.NAK) {
-        if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
-        this.statistics.packetsRetransmitted++;
-        console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
-        continue;
-      } else {
-        throw new Error(`Unexpected control byte: ${byte}`);
+      
+      try {
+        this.dataChannel.reset();
+        const byte = await this.waitForByte({ signal });
+        this.clearTimeout();
+        
+        if (byte === ControlType.ACK) {
+          this.retries = 0;
+          this.fragmentIndex++;
+          this.sequence = (this.sequence % 255) + 1;  // Update sequence number
+          continue;
+        } else
+        if (byte === ControlType.NAK) {
+          if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+          this.statistics.packetsRetransmitted++;
+          console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
+          continue;
+        } else {
+          throw new Error(`Unexpected byte received: ${byte}`);
+        }
+      } catch (error: any) {
+        this.clearTimeout();
+        console.warn(`[XModemTransport] Error waiting for ACK/NAK: ${error}`);
+        if (++this.retries > this.config.maxRetries) {
+          console.warn(`[XModemTransport] Max retries (${this.config.maxRetries}) exceeded, retries=${this.retries}`);
+          throw new Error(`Send failed after max retries: ${error}`);
+        }
+        if (error?.message === 'Operation aborted at sendData') {
+          // Timeout occurred, retry the same fragment
+          console.warn(`[XModemTransport] Timeout, retrying fragment ${this.fragmentIndex + 1}, retries=${this.retries}`);
+          continue;
+        }
       }
     }
 
+    console.log(`[XModemTransport] Exited fragment loop: fragmentIndex=${this.fragmentIndex}, fragmentsLength=${this.fragments.length}`);
+    // Reset retries for EOT phase
+    this.retries = 0;
+    
     for (;;) {
       if (signal.aborted) throw new Error('Operation aborted at sendData');
       await this.sendControl('EOT');
       this.state = State.SENDING_WAIT_FINAL_ACK;
 
       this.setTimeout(abortController);
-      const byte = await this.waitForByte({ signal });
-      this.clearTimeout();
-      if (byte === ControlType.ACK) {
-        this.state = State.IDLE;
-        break;
-      } else {
-        if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+      
+      try {
+        const byte = await this.waitForByte({ signal });
+        this.clearTimeout();
+        
+        if (byte === ControlType.ACK) {
+          this.state = State.IDLE;
+          break;
+        } else {
+          if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded for final ACK');
+          continue;
+        }
+      } catch (error) {
+        this.clearTimeout();
+        if (++this.retries > this.config.maxRetries) {
+          console.warn(`[XModemTransport] Final ACK max retries (${this.config.maxRetries}) exceeded, retries=${this.retries}`);
+          throw new Error(`Final ACK timeout after max retries: ${error}`);
+        }
+        // Timeout occurred, retry EOT
+        console.warn(`[XModemTransport] Final ACK timeout, retrying EOT, retries=${this.retries}`);
         continue;
       }
     }
@@ -167,13 +209,16 @@ export class XModemTransport extends BaseTransport {
           const byte = await this.waitForByte({ signal });
           this.clearTimeout();
           if (byte === ControlType.EOT) {
+            console.log(`[XModemTransport] EOT Received byte: ${byte}`);
             this.state = State.RECEIVING_SEND_ACK;
             await this.sendControl('ACK'); // Send final ACK for EOT
             break fragment;
           } else 
           if (byte === ControlType.SOH) {
+            console.log(`[XModemTransport] SOH Received byte: ${byte}`);
             break;
           } else {
+            console.log(`[XModemTransport] receiveData/received byte ignored: ${byte}`);
             continue; // Ignore any other byte
           }
         }
@@ -249,6 +294,8 @@ export class XModemTransport extends BaseTransport {
   }
 
   reset(): void {
+    console.warn(`[XModemTransport] RESET called!`);
+    console.trace();
     this.state = State.IDLE;
     this.loopRunning = false;
     this.sequence = 1;
@@ -321,7 +368,7 @@ export class XModemTransport extends BaseTransport {
   private setTimeout(abortController: AbortController): void {
     this.clearTimeout();
     this.timeout = setTimeout(() => {
-      abortController.abort();
+      abortController.abort("timeout");
     }, this.config.timeoutMs);
   }
   
