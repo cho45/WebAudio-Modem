@@ -26,6 +26,7 @@ export interface DataPacket {
  * Control packet types (minimal set for XModem protocol)
  */
 export enum ControlType {
+  SOH = 0x01, // Start of Header - indicates start of data packet
   ACK = 0x06,  // Acknowledge - positive response
   NAK = 0x15,  // Negative Acknowledge - request retransmission
   EOT = 0x04   // End of Transmission - end of data stream

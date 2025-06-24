@@ -8,10 +8,12 @@
  * - Proper CRC16 and sequence number validation
  */
 
-import { sign } from 'crypto';
+import { clear } from 'console';
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlType } from './types';
+import { abort } from 'process';
+import { CRC16 } from '@/utils/crc16';
 
 export interface XModemConfig {
   timeoutMs: number;
@@ -79,24 +81,59 @@ export class XModemTransport extends BaseTransport {
     const abortController = new AbortController();
     const signal = abortController.signal;
 
-    await this.waitForControl(ControlType.NAK, { signal });
+    this.state = State.SENDING_WAIT_NAK;
+    this.sequence = 1;
+    this.fragmentIndex = 0;
+    this.retries = 0;
+    this.fragments = this.createFragments(data);
+    while (this.fragmentIndex < this.fragments.length) {
+      if (signal.aborted) throw new Error('Operation aborted at sendData');
 
-    // ---- old code ----k
+      this.setTimeout(abortController);
+      await this.waitAndSkipForControl(ControlType.NAK, { signal });
+      this.clearTimeout();
 
-    return new Promise((resolve, reject) => {
-      this.sendResolve = resolve;
-      this.sendReject = reject;
-      
-      // Setup send state
-      this.state = State.SENDING_WAIT_NAK;
-      this.sequence = 1;
-      this.fragmentIndex = 0;
-      this.retries = 0;
-      this.fragments = this.createFragments(data);
-      
-      // Start processing loop and wait for NAK from receiver
-      this.ensureProcessingLoop();
-    });
+      const fragment = this.fragments[this.fragmentIndex];
+      const packet = XModemPacket.createData(this.sequence, fragment);
+      const serialized = XModemPacket.serialize(packet);
+      console.log(`[XModemTransport] Sending fragment ${this.fragmentIndex + 1}/${this.fragments.length}, sequence: ${this.sequence}`);
+      await this.dataChannel.modulate(serialized);
+      this.statistics.packetsSent++;
+
+      this.state = State.SENDING_WAIT_ACK;
+      this.setTimeout(abortController);
+      const byte = await this.waitForByte({ signal });
+      this.clearTimeout();
+      if (byte === ControlType.ACK) {
+        this.retries = 0;
+        this.fragmentIndex++;
+        continue;
+      } else
+      if (byte === ControlType.NAK) {
+        if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+        console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
+        continue;
+      } else {
+        throw new Error(`Unexpected control byte: ${byte}`);
+      }
+    }
+
+    for (;;) {
+      if (signal.aborted) throw new Error('Operation aborted at sendData');
+      await this.sendControl('EOT');
+      this.state = State.SENDING_WAIT_FINAL_ACK;
+
+      this.setTimeout(abortController);
+      const byte = await this.waitForByte({ signal });
+      this.clearTimeout();
+      if (byte === ControlType.ACK) {
+        this.state = State.IDLE;
+        break;
+      } else {
+        if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
+        continue;
+      }
+    }
   }
 
   async receiveData(): Promise<Uint8Array> {
@@ -104,33 +141,99 @@ export class XModemTransport extends BaseTransport {
       throw new Error('Transport busy');
     }
 
-    return new Promise((resolve, reject) => {
-      this.receiveResolve = resolve;
-      this.receiveReject = reject;
-      
-      // Setup receive state and send initial NAK
-      this.state = State.RECEIVING_SEND_NAK;
-      this.expectedSequence = 1;
-      this.receivedData = [];
-      this.receiveBuffer = [];
-      this.retries = 0;
-      
-      // Start processing loop and send NAK to initiate transfer
-      this.ensureProcessingLoop();
-      this.sendNAKToInitiate();
-    });
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    this.state = State.RECEIVING_SEND_NAK;
+    this.expectedSequence = 1;
+    this.receivedData = [];
+    this.retries = 0;
+
+    // Send initial NAK to start transfer
+    await this.sendControl('NAK');
+    this.state = State.RECEIVING_WAIT_BLOCK;
+
+    // Receive data packets loop
+    fragment: for (;;) {
+      if (signal.aborted) throw new Error('Operation aborted at receiveData');
+
+      try {
+        for (;;) {
+          if (signal.aborted) throw new Error('Operation aborted at receiveData');
+          this.setTimeout(abortController);
+          const byte = await this.waitForByte({ signal });
+          this.clearTimeout();
+          if (byte === ControlType.EOT) {
+            this.state = State.RECEIVING_SEND_ACK;
+            break fragment;
+          } else 
+          if (byte === ControlType.NAK) {
+            await this.sendControl('NAK');
+            continue;
+          } else
+          if (byte === ControlType.SOH) {
+            break;
+          } else {
+            continue; // Ignore any other byte
+          }
+        }
+
+        const [seq, nseq, len] = await this.waitForBytes(3, { signal });
+        if (seq === (~nseq & 0xFF)) throw new Error('Invalid sequence number');
+        if (seq === this.expectedSequence) {
+          const payloadWithCRC = await this.waitForBytes(len + 2, { signal }); // Wait for payload + CRC
+          this.statistics.packetsReceived++;
+
+          const payload = payloadWithCRC.slice(0, len);
+          const crc = (payloadWithCRC[len] << 8) | payloadWithCRC[len + 1];
+
+          if (CRC16.calculate(payload) !== crc) throw new Error('Invalid CRC');
+          this.receivedData.push(payload);
+
+          // Emit fragment received event
+          this.emit('fragmentReceived', new Event({
+            seqNum: seq,
+            fragment: payload,
+            totalFragments: this.receivedData.length,
+            totalBytesReceived: this.receivedData.reduce((sum, data) => sum + data.length, 0),
+            timestamp: Date.now()
+          }));
+
+          this.expectedSequence = (this.expectedSequence % 255) + 1;
+          this.state = State.RECEIVING_SEND_ACK;
+          await this.sendControl('ACK');
+          this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
+        } else
+        if (seq < this.expectedSequence) {
+          await this.sendControl('ACK'); // Already received this packet
+          continue;
+        } else {
+          // cannot recover from unexpected sequence
+            throw new Error(`Unexpected sequence number: expected ${this.expectedSequence}, got ${seq}`);
+        }
+      } catch (error) {
+        this.clearTimeout();
+        if (++this.retries > this.config.maxRetries) {
+          throw new Error(`Receive failed after max retries: ${error}`);
+        }
+        // Send NAK to request retransmission
+        await this.sendControl('NAK');
+      }
+    }
+
+    // Reassemble received data
+    const totalLength = this.receivedData.reduce((sum, d) => sum + d.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    
+    for (const data of this.receivedData) {
+      result.set(data, offset);
+      offset += data.length;
+    }
+    
+    return result;
   }
   
-  private async sendNAKToInitiate(): Promise<void> {
-    try {
-      await this.sendControl('NAK');
-      this.state = State.RECEIVING_WAIT_BLOCK;
-      this.setTimeout();
-    } catch (error) {
-      this.failReceive(new Error(`Failed to send initial NAK: ${error}`));
-    }
-  }
-
   async sendControl(command: string): Promise<void> {
     const controlType = this.parseControlCommand(command);
     const serialized = XModemPacket.serializeControl(controlType);
@@ -185,19 +288,24 @@ export class XModemTransport extends BaseTransport {
     this.removeAllListeners();
   }
 
-  private async waitForControl(controlType: ControlType, options: {signal: AbortSignal }): Promise<void> {
-    while (!options.signal.aborted) {
-      const bytes = await this.waitForBytes(1, options);
-      if (bytes[0] === controlType)
+  private async waitAndSkipForControl(controlType: ControlType, options: {signal: AbortSignal }): Promise<void> {
+    for (;;) {
+      if (options.signal.aborted) throw new Error('Operation aborted at waitForControl');
+      const byte = await this.waitForByte(options)
+      if (byte === controlType)
         return;
     }
   }
 
+  private async waitForByte(options: {signal: AbortSignal }): Promise<number> {
+    const bytes = await this.waitForBytes(1, options);
+    return bytes[0];
+  }
 
   private async waitForBytes(count: number, options: {signal: AbortSignal }): Promise<Uint8Array> {
     while (this.receiveBuffer.length < count) {
       const data = await this.dataChannel.demodulate();
-      if (options.signal.aborted) throw new Error('Operation aborted');
+      if (options.signal.aborted) throw new Error('Operation aborted at waitForBytes');
       for (const byte of data) {
         this.receiveBuffer.push(byte);
       }
@@ -207,245 +315,10 @@ export class XModemTransport extends BaseTransport {
     return new Uint8Array(result);
   }
 
-
-
-  // Ensure processing loop is running
-  private ensureProcessingLoop(): void {
-    if (!this.loopRunning) {
-      this.loopRunning = true;
-      this.startProcessingLoop();
-    }
-  }
-
-  // Core processing loop - single demodulate point
-  private async startProcessingLoop(): Promise<void> {
-    while (this.loopRunning && this.state !== State.IDLE) {
-      try {
-        const data = await this.dataChannel.demodulate();
-        await this.processIncomingData(data);
-      } catch (error) {
-        // Handle errors based on current state
-        if ((this.state === State.SENDING_WAIT_NAK || this.state === State.SENDING_WAIT_ACK || this.state === State.SENDING_WAIT_FINAL_ACK) && this.sendReject) {
-          this.sendReject(new Error(`Demodulation failed: ${error}`));
-          this.state = State.IDLE;
-        } else if ((this.state === State.RECEIVING_SEND_NAK || this.state === State.RECEIVING_WAIT_BLOCK || this.state === State.RECEIVING_SEND_ACK) && this.receiveReject) {
-          this.receiveReject(new Error(`Demodulation failed: ${error}`));
-          this.state = State.IDLE;
-        }
-        break;
-      }
-    }
-    this.loopRunning = false;
-  }
-
-  private async processIncomingData(data: Uint8Array): Promise<void> {
-    if (data.length === 0) {
-      return;
-    }
-    
-    // Add all bytes to receive buffer
-    for (const byte of data) {
-      this.receiveBuffer.push(byte);
-      
-      // Check for complete packet or control command
-      await this.processReceiveBuffer();
-    }
-  }
-  
-  private async processReceiveBuffer(): Promise<void> {
-    // Check for control commands first (single byte)
-    if (this.receiveBuffer.length === 1) {
-      const byte = this.receiveBuffer[0];
-      if (this.isControlByte(byte)) {
-        this.receiveBuffer = []; // Clear buffer
-        await this.handleControlCommand(byte as ControlType);
-        return;
-      }
-    }
-    
-    // Check for complete data packet
-    const completePacket = this.extractCompletePacket();
-    if (completePacket) {
-      const result = XModemPacket.parse(completePacket);
-      console.log(`[XModemTransport] Received packet:`, result);
-      if (result.error || !result.packet) {
-        this.emit('error', new Event(result.error || 'Invalid packet data'));
-        return;
-      }
-      await this.handleDataPacket(result.packet);
-    }
-  }
-  
-  private extractCompletePacket(): Uint8Array | null {
-    if (this.receiveBuffer.length < 6) {
-      return null; // Minimum packet size
-    }
-    
-    // Check if starts with SOH
-    if (this.receiveBuffer[0] !== 0x01) {
-      // Invalid start, clear buffer
-      this.receiveBuffer = [];
-      return null;
-    }
-    
-    // Get expected packet length
-    if (this.receiveBuffer.length < 4) {
-      return null; // Need LEN field
-    }
-    
-    const len = this.receiveBuffer[3];
-    const expectedLength = 1 + 1 + 1 + 1 + len + 2; // SOH+SEQ+~SEQ+LEN+PAYLOAD+CRC
-    
-    if (this.receiveBuffer.length < expectedLength) {
-      return null; // Incomplete packet
-    }
-    
-    // Extract complete packet
-    const packetBytes = this.receiveBuffer.slice(0, expectedLength);
-    this.receiveBuffer = this.receiveBuffer.slice(expectedLength);
-    
-    // Validate packet structure
-    if (!this.validatePacketStructure(packetBytes)) {
-      return null;
-    }
-    
-    return new Uint8Array(packetBytes);
-  }
-  
-  private validatePacketStructure(packetBytes: number[]): boolean {
-    if (packetBytes.length < 6) return false;
-    
-    // Check SEQ + ~SEQ = 255
-    if ((packetBytes[1] + packetBytes[2]) !== 255) {
-      return false;
-    }
-    
-    // CRC validation will be done by XModemPacket.parse()
-    return true;
-  }
-  
-  private isControlByte(byte: number): boolean {
-    return byte === ControlType.ACK || byte === ControlType.NAK || byte === ControlType.EOT;
-  }
-
-  private async handleControlCommand(controlType: ControlType): Promise<void> {
-    switch (this.state) {
-      case State.SENDING_WAIT_NAK:
-        if (controlType === ControlType.NAK) {
-          // Receiver is ready, start sending
-          this.state = State.SENDING_WAIT_ACK;
-          await this.sendCurrentFragment();
-        }
-        break;
-        
-      case State.SENDING_WAIT_ACK:
-        if (controlType === ControlType.ACK) {
-          // Block acknowledged, send next or complete
-          this.fragmentIndex++;
-          this.sequence = (this.sequence % 255) + 1;
-          this.retries = 0;
-          
-          if (this.fragmentIndex >= this.fragments.length) {
-            // All fragments sent, send EOT
-            this.state = State.SENDING_WAIT_FINAL_ACK;
-            await this.sendControl('EOT');
-            this.setTimeout(); // Set timeout for final ACK
-          } else {
-            // Send next fragment
-            await this.sendCurrentFragment();
-          }
-        } else if (controlType === ControlType.NAK) {
-          // Block rejected, retransmit
-          this.retries++;
-          if (this.retries > this.config.maxRetries) {
-            this.failSend(new Error('Max retries exceeded'));
-          } else {
-            await this.sendCurrentFragment();
-            this.statistics.packetsRetransmitted++;
-          }
-        }
-        break;
-        
-      case State.SENDING_WAIT_FINAL_ACK:
-        if (controlType === ControlType.ACK) {
-          // Transfer complete
-          this.completeSend();
-        }
-        break;
-        
-      case State.RECEIVING_WAIT_BLOCK:
-      case State.RECEIVING_SEND_ACK:
-        if (controlType === ControlType.EOT) {
-          // Transfer complete, send final ACK
-          await this.sendControl('ACK');
-          this.completeReceive();
-        }
-        break;
-    }
-  }
-
-  private async handleDataPacket(packet: DataPacket): Promise<void> {
-    if (this.state !== State.RECEIVING_WAIT_BLOCK && this.state !== State.RECEIVING_SEND_ACK) {
-      return;
-    }
-
-    if (packet.sequence === this.expectedSequence) {
-      console.log(`[XModemTransport] Received expected packet: seq=${packet.sequence}, length=${packet.payload.length}`);
-      // Expected packet - accept it
-      this.statistics.packetsReceived++;
-      this.receivedData.push(packet.payload);
-      
-      // フラグメント受信イベントを発行
-      this.emit('fragmentReceived', new Event({
-        seqNum: packet.sequence,
-        fragment: packet.payload,
-        totalFragments: this.receivedData.length,
-        totalBytesReceived: this.receivedData.reduce((sum, data) => sum + data.length, 0),
-        timestamp: Date.now()
-      }));
-      
-      this.expectedSequence = (this.expectedSequence % 255) + 1;
-      this.state = State.RECEIVING_SEND_ACK;
-      await this.sendControl('ACK');
-      this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
-      this.setTimeout(); // Set timeout for next block
-      this.statistics.bytesTransferred += packet.payload.length;
-    } else {
-      // Unexpected sequence - reject it
-      this.statistics.packetsDropped++;
-      this.state = State.RECEIVING_SEND_ACK;
-      await this.sendControl('NAK');
-      this.state = State.RECEIVING_WAIT_BLOCK; // Wait for retransmission
-      this.setTimeout(); // Set timeout for retransmission
-    }
-  }
-
-  private async sendCurrentFragment(): Promise<void> {
-    if (this.fragmentIndex >= this.fragments.length) {
-      return;
-    }
-
-    try {
-      const fragment = this.fragments[this.fragmentIndex];
-      const packet = XModemPacket.createData(this.sequence, fragment);
-      const serialized = XModemPacket.serialize(packet);
-      
-      console.log(`[XModemTransport] Sending fragment ${this.fragmentIndex + 1}/${this.fragments.length}, sequence: ${this.sequence}`);
-      await this.dataChannel.modulate(serialized);
-      this.statistics.packetsSent++;
-      
-      // Set timeout for ACK
-      this.setTimeout();
-    } catch (error) {
-      // Handle modulation errors
-      this.failSend(new Error(`Send failed: ${error}`));
-    }
-  }
-
-  private setTimeout(): void {
+  private setTimeout(abortController?: AbortController): void {
     this.clearTimeout();
     this.timeout = setTimeout(() => {
-      this.handleTimeout();
+      abortController.abort();
     }, this.config.timeoutMs);
   }
   
@@ -453,47 +326,6 @@ export class XModemTransport extends BaseTransport {
     if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = undefined;
-    }
-  }
-  
-  private handleTimeout(): void {
-    switch (this.state) {
-      case State.SENDING_WAIT_ACK:
-        if (this.fragmentIndex < this.fragments.length) {
-          console.warn(`[XModemTransport] Timeout waiting for ACK for fragment ${this.fragmentIndex + 1}`);
-          this.retries++;
-          if (this.retries > this.config.maxRetries) {
-            this.failSend(new Error('Timeout - max retries exceeded'));
-          } else {
-            this.statistics.packetsRetransmitted++;
-            this.sendCurrentFragment();
-          }
-        }
-        break;
-        
-      case State.SENDING_WAIT_FINAL_ACK:
-        console.warn(`[XModemTransport] Timeout waiting for final ACK`);
-        this.failSend(new Error('Timeout waiting for final ACK'));
-        break;
-        
-      case State.RECEIVING_WAIT_BLOCK:
-        console.warn(`[XModemTransport] Receive timeout waiting for block ${this.expectedSequence}`);
-        this.retries++;
-        if (this.retries > this.config.maxRetries) {
-          this.failReceive(new Error('Receive timeout - max retries exceeded'));
-        } else {
-          // Send NAK to request retransmission
-          this.sendControl('NAK').then(() => {
-            this.setTimeout(); // Set new timeout for retransmission
-          }).catch(error => {
-            this.failReceive(new Error(`Failed to send NAK retry: ${error}`));
-          });
-        }
-        break;
-        
-      default:
-        console.warn(`[XModemTransport] Unexpected timeout in state: ${this.state}`);
-        break;
     }
   }
   
@@ -518,70 +350,5 @@ export class XModemTransport extends BaseTransport {
     }
   }
 
-  private completeSend(): void {
-    this.state = State.IDLE;
-    this.loopRunning = false;
-    
-    // Clear any pending timeout
-    this.clearTimeout();
-    
-    this.statistics.bytesTransferred += this.fragments.reduce((sum, f) => sum + f.length, 0);
-    if (this.sendResolve) {
-      this.sendResolve();
-      this.sendResolve = undefined;
-      this.sendReject = undefined;
-    }
-  }
 
-  private failSend(error: Error): void {
-    this.state = State.IDLE;
-    this.loopRunning = false;
-    
-    // Clear any pending timeout
-    this.clearTimeout();
-    
-    if (this.sendReject) {
-      this.sendReject(error);
-      this.sendResolve = undefined;
-      this.sendReject = undefined;
-    }
-  }
-  
-  private failReceive(error: Error): void {
-    this.state = State.IDLE;
-    this.loopRunning = false;
-    
-    // Clear any pending timeout
-    this.clearTimeout();
-    
-    if (this.receiveReject) {
-      this.receiveReject(error);
-      this.receiveResolve = undefined;
-      this.receiveReject = undefined;
-    }
-  }
-
-  private completeReceive(): void {
-    this.state = State.IDLE;
-    this.loopRunning = false;
-    
-    // Clear any pending timeout
-    this.clearTimeout();
-    
-    // Reassemble data
-    const totalLength = this.receivedData.reduce((sum, d) => sum + d.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    
-    for (const data of this.receivedData) {
-      result.set(data, offset);
-      offset += data.length;
-    }
-    
-    if (this.receiveResolve) {
-      this.receiveResolve(result);
-      this.receiveResolve = undefined;
-      this.receiveReject = undefined;
-    }
-  }
 }
