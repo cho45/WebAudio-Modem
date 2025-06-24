@@ -477,9 +477,10 @@
                 <h3>使用方法 (XModem Protocol)</h3>
                 <ol>
                     <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
-                    <li><strong>XModem Loopback Test</strong> で内部ループバックテスト</li>
-                    <li><strong>Send Text/Image</strong> でスピーカーからXModem送信</li>
-                    <li><strong>Start Receiving</strong> でマイクからのXModem受信開始</li>
+                    <li><strong>🔄 XModem Loopback Test</strong> で内部テスト（推奨・マイク不要）</li>
+                    <li><strong>🎤 Enable Microphone</strong> でマイク権限を取得（実際の通信用）</li>
+                    <li><strong>Using: Loopback/Microphone</strong> で入力ソースを切り替え</li>
+                    <li><strong>Send/Receive</strong> でXModem通信を実行</li>
                 </ol>
                 <p><strong>XModem特徴:</strong> エラー検出・訂正、自動再送、確実なデータ転送</p>
             </div>
@@ -488,7 +489,9 @@
                 <h2>System Control</h2>
                 <div class="controls">
                     <button @click="initializeSystem" :disabled="systemReady">{{ systemReady ? 'System Ready ✓' : 'Initialize System' }}</button>
-                    <button @click="testXModemLoopback" :disabled="!systemReady" class="secondary">XModem Loopback Test</button>
+                    <button @click="testXModemLoopback" :disabled="!systemReady" class="secondary">🔄 XModem Loopback Test (Recommended)</button>
+                    <button @click="requestMicrophonePermission" :disabled="microphonePermission || !systemReady" class="success">{{ microphonePermission ? 'Microphone Ready ✓' : '🎤 Enable Microphone' }}</button>
+                    <button @click="toggleInputSource" :disabled="!systemReady || !microphonePermission" class="secondary">{{ inputSource === 'loopback' ? '🔄 Using: Loopback' : '🎤 Using: Microphone' }}</button>
                     <button @click="toggleDebug" class="secondary">{{ showDebug ? 'Hide Debug' : 'Show Debug' }}</button>
                 </div>
                 <div :class="['status', systemStatus.type]">{{ systemStatus.message }}</div>
@@ -517,7 +520,7 @@
                         <div :class="['status', sendStatus.type]">{{ sendStatus.message }}</div>
                         
                         <div class="button-group">
-                            <button @click="sendData" :disabled="!canSend" class="success">
+                            <button @click="sendData" :disabled="!canSendWithMic" class="success">
                                 📡 Send {{ sendDataType === 'text' ? 'Text' : 'Image' }}
                             </button>
                             <button @click="stopSending" :disabled="!isSending" class="danger">
@@ -599,29 +602,29 @@
                         <div :class="['status', receiveStatus.type]">{{ receiveStatus.message }}</div>
                         
                         <div class="button-group">
-                            <button @click="startReceiving" :disabled="!systemReady || isReceiving" class="success">
+                            <button @click="startReceiving" :disabled="!canReceiveWithMic || receivingSession.active" class="success">
                                 🎤 Start Receiving
                             </button>
-                            <button @click="stopReceiving" :disabled="!isReceiving" class="danger">
+                            <button @click="stopReceiving" :disabled="!receivingSession.active" class="danger">
                                 ⏹️ Stop
                             </button>
                         </div>
                         
                         <!-- Receiving Progress -->
-                        <div v-if="receivingProgress.isReceiving || receivingFragments.length > 0">
+                        <div v-if="receivingSession.active && receivingSession.fragments.length > 0">
                             <h4>📊 Reception Progress</h4>
                             <div class="progress-bar">
-                                <div class="progress-bar-fill" :style="{ width: receivingProgress.isReceiving ? '100%' : '100%' }">
+                                <div class="progress-bar-fill" style="width: 100%">
                                     <div class="progress-text">
-                                        {{ receivingProgress.totalFragments }} fragments, {{ receivingProgress.totalBytes }} bytes
-                                        <span v-if="receivingProgress.bytesPerSecond > 0"> @ {{ receivingProgress.bytesPerSecond }}B/s</span>
+                                        {{ receivingSession.fragments.length }} fragments, {{ receivingSession.totalReceived }} bytes
+                                        <span v-if="receivingSession.bytesPerSecond > 0"> @ {{ receivingSession.bytesPerSecond }}B/s</span>
                                     </div>
                                 </div>
                             </div>
                             
                             <!-- Fragments List -->
-                            <div v-if="receivingFragments.length > 0" class="fragments-container">
-                                <div v-for="(fragment, index) in receivingFragments" :key="index" class="fragment-item">
+                            <div v-if="receivingSession.fragments.length > 0" class="fragments-container">
+                                <div v-for="(fragment, index) in receivingSession.fragments" :key="index" class="fragment-item">
                                     <div class="fragment-seq">#{{ fragment.seqNum }}</div>
                                     <div class="fragment-info">{{ fragment.size }} bytes</div>
                                     <div class="fragment-time">{{ fragment.timestamp }}</div>
@@ -630,17 +633,14 @@
                         </div>
 
                         <!-- Received Image (Live Preview) -->
-                        <div v-if="currentImageData.isReceiving || currentImageData.previewUrl" class="section">
+                        <div v-if="receivingSession.currentTransfer && receivingSession.currentTransferData.dataType === 'image'" class="section">
                             <h3>🖼️ Received Image</h3>
                             <div class="received-data">
-                                <div v-if="currentImageData.previewUrl">
-                                    <img :src="currentImageData.previewUrl" alt="Receiving image" class="received-image">
-                                    <p><strong>Size:</strong> {{ currentImageData.totalSize }} bytes 
-                                       <span v-if="currentImageData.isReceiving">(receiving...)</span>
-                                       <span v-else>(completed)</span>
-                                    </p>
+                                <div v-if="receivingSession.currentTransferData.previewUrl">
+                                    <img :src="receivingSession.currentTransferData.previewUrl" alt="Receiving image" class="received-image">
+                                    <p><strong>Size:</strong> {{ receivingSession.currentTransferData.totalSize }} bytes (receiving...)</p>
                                 </div>
-                                <div v-else-if="currentImageData.isReceiving">
+                                <div v-else>
                                     <p>🔄 Receiving image data...</p>
                                 </div>
                             </div>

@@ -8,6 +8,7 @@
  * - Proper CRC16 and sequence number validation
  */
 
+import { sign } from 'crypto';
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlType } from './types';
@@ -74,6 +75,13 @@ export class XModemTransport extends BaseTransport {
     if (this.state !== State.IDLE) {
       throw new Error('Transport busy');
     }
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    await this.waitForControl(ControlType.NAK, { signal });
+
+    // ---- old code ----k
 
     return new Promise((resolve, reject) => {
       this.sendResolve = resolve;
@@ -176,6 +184,30 @@ export class XModemTransport extends BaseTransport {
     this.receiveReject = undefined;
     this.removeAllListeners();
   }
+
+  private async waitForControl(controlType: ControlType, options: {signal: AbortSignal }): Promise<void> {
+    while (!options.signal.aborted) {
+      const bytes = await this.waitForBytes(1, options);
+      if (bytes[0] === controlType)
+        return;
+    }
+  }
+
+
+  private async waitForBytes(count: number, options: {signal: AbortSignal }): Promise<Uint8Array> {
+    while (this.receiveBuffer.length < count) {
+      const data = await this.dataChannel.demodulate();
+      if (options.signal.aborted) throw new Error('Operation aborted');
+      for (const byte of data) {
+        this.receiveBuffer.push(byte);
+      }
+    }
+    const result = this.receiveBuffer.slice(0, count);
+    this.receiveBuffer = this.receiveBuffer.slice(count);
+    return new Uint8Array(result);
+  }
+
+
 
   // Ensure processing loop is running
   private ensureProcessingLoop(): void {
