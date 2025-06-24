@@ -8,11 +8,9 @@
  * - Proper CRC16 and sequence number validation
  */
 
-import { clear } from 'console';
 import { BaseTransport, IDataChannel, Event } from '../../core';
 import { XModemPacket } from './packet';
 import { DataPacket, ControlType } from './types';
-import { abort } from 'process';
 import { CRC16 } from '@/utils/crc16';
 
 export interface XModemConfig {
@@ -152,6 +150,7 @@ export class XModemTransport extends BaseTransport {
     // Send initial NAK to start transfer
     await this.sendControl('NAK');
     this.state = State.RECEIVING_WAIT_BLOCK;
+    this.setTimeout(abortController); // Set timeout for initial response
 
     // Receive data packets loop
     fragment: for (;;) {
@@ -167,10 +166,6 @@ export class XModemTransport extends BaseTransport {
             this.state = State.RECEIVING_SEND_ACK;
             break fragment;
           } else 
-          if (byte === ControlType.NAK) {
-            await this.sendControl('NAK');
-            continue;
-          } else
           if (byte === ControlType.SOH) {
             break;
           } else {
@@ -178,8 +173,9 @@ export class XModemTransport extends BaseTransport {
           }
         }
 
-        const [seq, nseq, len] = await this.waitForBytes(3, { signal });
-        if (seq === (~nseq & 0xFF)) throw new Error('Invalid sequence number');
+        const bytes = await this.waitForBytes(3, { signal });
+        const [seq, nseq, len] = [bytes[0], bytes[1], bytes[2]];
+        if ((seq + nseq) !== 255) throw new Error('Invalid sequence number');
         if (seq === this.expectedSequence) {
           const payloadWithCRC = await this.waitForBytes(len + 2, { signal }); // Wait for payload + CRC
           this.statistics.packetsReceived++;
@@ -204,12 +200,13 @@ export class XModemTransport extends BaseTransport {
           await this.sendControl('ACK');
           this.state = State.RECEIVING_WAIT_BLOCK; // Wait for next block
         } else
-        if (seq < this.expectedSequence) {
-          await this.sendControl('ACK'); // Already received this packet
+        if (this.isPreviousSequence(seq, this.expectedSequence)) {
+          // Duplicate packet - ACK and ignore
+          await this.sendControl('ACK');
           continue;
         } else {
-          // cannot recover from unexpected sequence
-            throw new Error(`Unexpected sequence number: expected ${this.expectedSequence}, got ${seq}`);
+          // Unexpected sequence - cannot recover
+          throw new Error(`Unexpected sequence number: expected ${this.expectedSequence}, got ${seq}`);
         }
       } catch (error) {
         this.clearTimeout();
@@ -315,7 +312,7 @@ export class XModemTransport extends BaseTransport {
     return new Uint8Array(result);
   }
 
-  private setTimeout(abortController?: AbortController): void {
+  private setTimeout(abortController: AbortController): void {
     this.clearTimeout();
     this.timeout = setTimeout(() => {
       abortController.abort();
@@ -348,6 +345,13 @@ export class XModemTransport extends BaseTransport {
       case 'EOT': return ControlType.EOT;
       default: throw new Error(`Unknown control command: ${command}`);
     }
+  }
+
+  private isPreviousSequence(receivedSeq: number, expectedSeq: number): boolean {
+    // XModem sequence numbers are 1-255, wrapping around
+    // Check if receivedSeq is the previous sequence number (already received)
+    const prevSeq = expectedSeq === 1 ? 255 : expectedSeq - 1;
+    return receivedSeq === prevSeq;
   }
 
 
