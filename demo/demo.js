@@ -43,9 +43,10 @@ const app = createApp({
     // サンプル画像ファイル定義
     const sampleImages = ref([
       { value: '', name: 'Custom file...', description: 'Upload your own file' },
-      { value: 'jpg-interlaced.jpg', name: 'JPEG Interlaced', description: 'Interlaced JPEG image' },
-      { value: 'png-8.png', name: 'PNG 8-bit', description: '8-bit PNG image' },
-      { value: 'png-interlaced.png', name: 'PNG Interlaced', description: 'Interlaced PNG image' }
+      { value: 'jpg-interlaced.jpg', name: 'JPEG progressive (5.7K)', description: 'Progressive JPEG image' },
+      { value: 'png-8.png', name: 'PNG 8-bit (9.5K)', description: '8-bit PNG image' },
+      { value: 'png-interlaced.png', name: 'PNG Interlaced (12K)', description: 'Interlaced PNG image' },
+      { value: 'webp.webp', name: 'WebP not progressive (3.8K)', description: 'WebP image' }
     ]);
     const systemLog = ref('');
     const currentSendStream = ref(null);
@@ -502,29 +503,8 @@ const app = createApp({
       try {
         log('Starting XModem reception...');
         updateStatus(receiveStatus, 'Starting microphone input...', 'info');
-        
-        // フラグメント状態をリセット
-        receivingFragments.value = [];
-        receivingProgress.value = {
-          totalFragments: 0,
-          totalBytes: 0,
-          estimatedTotal: 0,
-          startTime: null,
-          lastFragmentTime: null,
-          bytesPerSecond: 0,
-          isReceiving: false
-        };
-        
-        // 画像受信状態をリセット
-        if (currentImageData.value.previewUrl) {
-          URL.revokeObjectURL(currentImageData.value.previewUrl);
-        }
-        currentImageData.value = {
-          fragments: [],
-          isReceiving: false,
-          previewUrl: null,
-          totalSize: 0
-        };
+
+        clearAll(); // 受信状態をリセット
         
         // フラグメント受信リスナーを登録
         receiverTransport.value.on('fragmentReceived', onFragmentReceived);
@@ -684,8 +664,9 @@ const app = createApp({
     // 受信開始時のデータ種別を判定
     const detectDataType = (firstFragment) => {
       // 画像ファイルのマジックナンバーをチェック
-      if (firstFragment.length >= 4) {
-        const bytes = Array.from(firstFragment.slice(0, 4));
+      if (firstFragment.length >= 12) {
+        const bytes = Array.from(firstFragment.slice(0, 12));
+        console.log("Detecting data type from first fragment:", bytes);
         
         // JPEG: FF D8 FF
         if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
@@ -699,6 +680,16 @@ const app = createApp({
         
         // GIF: 47 49 46
         if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+          return 'image';
+        }
+
+        // BMP: 42 4D
+        if (bytes[0] === 0x42 && bytes[1] === 0x4D) {
+          return 'image';
+        }
+
+        // WebP: 52 49 46 46 __ __ __ __ 57 45 42 50
+        if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
           return 'image';
         }
       }

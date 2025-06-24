@@ -105,6 +105,7 @@ export class XModemTransport extends BaseTransport {
       this.expectedSequence = 1;
       this.receivedData = [];
       this.receiveBuffer = [];
+      this.retries = 0;
       
       // Start processing loop and send NAK to initiate transfer
       this.ensureProcessingLoop();
@@ -445,7 +446,17 @@ export class XModemTransport extends BaseTransport {
         
       case State.RECEIVING_WAIT_BLOCK:
         console.warn(`[XModemTransport] Receive timeout waiting for block ${this.expectedSequence}`);
-        this.failReceive(new Error('Receive timeout - no block received'));
+        this.retries++;
+        if (this.retries > this.config.maxRetries) {
+          this.failReceive(new Error('Receive timeout - max retries exceeded'));
+        } else {
+          // Send NAK to request retransmission
+          this.sendControl('NAK').then(() => {
+            this.setTimeout(); // Set new timeout for retransmission
+          }).catch(error => {
+            this.failReceive(new Error(`Failed to send NAK retry: ${error}`));
+          });
+        }
         break;
         
       default:
