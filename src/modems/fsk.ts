@@ -100,7 +100,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private spaceFreq = 0;
   private sampleRate = 0;
   
-  // I/Q demodulation state (proper FSK demodulation)
+  // I/Q demodulation state (proper FSK demodulation
   private centerFreq = 0;
   private localOscPhase = 0;
   private lastPhase = 0;
@@ -119,6 +119,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
 
   // Frame detection state2
   private syncSamplesBuffer?: RingBuffer<Uint8Array>;
+  private syncAmplitudeBuffer?: RingBuffer<Float32Array>;
 
   // Byte assembly state
   private currentByte = 0;
@@ -126,7 +127,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   private byteBuffer: number[] = [];
   
   // Silence detection state
-  private readonly SILENCE_THRESHOLD = 0.01;
+  private silenceThreshold = 0.01;
   private silenceSamplesForEOD = 0;
   private silentSampleCount = 0;
 
@@ -182,6 +183,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.silenceSamplesForEOD = this.bitsPerByte * this.samplesPerBit * 0.7;
 
     this.syncSamplesBuffer = new RingBuffer(Uint8Array, this.maxSyncBits * this.samplesPerBit * 1.1);
+    this.syncAmplitudeBuffer = new RingBuffer(Float32Array, this.samplesPerBit * 8); // 1byte of amplitude data
     
     // Reset all state
     this.resetState();
@@ -282,6 +284,9 @@ export class FSKCore extends BaseModulator<FSKConfig> {
   }
 
   private processSample(sample: number): boolean {
+    if (!this.syncSamplesBuffer) return false;
+    if (!this.syncAmplitudeBuffer) return false;
+
     // Step 1: I/Q demodulation - one sample at a time
     const omega = 2 * Math.PI * this.centerFreq / this.sampleRate;
     let i = sample * Math.cos(this.localOscPhase);
@@ -326,7 +331,8 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     // Following original implementation: positive phase diff → bit 1
     // This works despite theoretical expectation being opposite
     const bitValue = filteredPhaseDiff > 0 ? 1 : 0;
-    this.syncSamplesBuffer?.put(bitValue);
+    this.syncSamplesBuffer.put(bitValue);
+    this.syncAmplitudeBuffer.put(amplitude);
 
     // Debug: Log first few samples (disabled)
     // if (this.bitSampleCounter < 5 && this.receivedBits.length < 10) {
@@ -338,7 +344,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     this.globalSampleCounter++;
 
     // console.log(`[FSK] Processing sample ${this.globalSampleCounter}, bitSampleCounter=${this.bitSampleCounter}, nextBitSampleIndex=${this.nextBitSampleIndex}`);
-    if (amplitude < this.SILENCE_THRESHOLD) {
+    if (amplitude < this.silenceThreshold) {
       this.silentSampleCount++;
       if (this.silentSampleCount >= this.silenceSamplesForEOD) {
         //  console.log(`[FSK] End of data detected: ${this.silentSampleCount} consecutive silent samples`);
@@ -358,7 +364,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
         // フレーム同期開始、サンプル単位でのパターン比較を行い一致率とビット同期位置を決定する
         for (let j = 0; j < this.preambleSfdBits.length; j++) {
           for (let k = 0; k < this.samplesPerBit; k++) {
-            // Compare current sample with expected bit pattern
+            // Compare current sample with expected bit patter
             if (this.syncSamplesBuffer.get(this.syncSamplesBuffer.length - (j * this.samplesPerBit + k) - 1) === this.preambleSfdBits[this.preambleSfdBits.length - j]) {
               matched++;
             }
@@ -378,6 +384,13 @@ export class FSKCore extends BaseModulator<FSKConfig> {
           this.bitAccumCount = 0;
           this.bitSampleCounter = 0;
           this.nextBitSampleIndex = 0;
+
+          let sum = 0;
+          for (let i = 0, len = this.syncAmplitudeBuffer.length; i < len; i++) {
+            sum += this.syncAmplitudeBuffer.get(i);
+          }
+          const avg = sum / this.syncAmplitudeBuffer.length;
+          this.silenceThreshold = avg * 0.1; // Set silence threshold based on average amplitude
         }
       }
     } else {
@@ -583,6 +596,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
       byteBufferLength: this.byteBuffer.length,
       demodulationCalls: this.demodulationCallCount,
       syncDetections: this.syncDetectionCount,
+      silenceThreshold: this.silenceThreshold,
       totalSamplesProcessed: this.totalSamplesProcessed,
     };
   }
