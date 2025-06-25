@@ -389,7 +389,7 @@ const app = createApp({
           hub.gain.value = 1.0;
           senderDataChannel.value.connect(hub);
           receiverDataChannel.value.connect(hub);
-          hub.connect(audioContext.value.outputGain);
+          hub.connect(outputGain.value);
           hub.connect(senderDataChannel.value);
           hub.connect(receiverDataChannel.value);
           logSend('Connected: sender → receiver (internal loopback)');
@@ -683,7 +683,7 @@ const app = createApp({
         }
         
         receiverDataChannel.value.disconnect();
-        receiverDataChannel.value.connect(audioContext.value.outputGain);
+        receiverDataChannel.value.connect(outputGain.value);
         
         const source = audioContext.value.createMediaStreamSource(microphoneStream.value);
         source.connect(receiverDataChannel.value);
