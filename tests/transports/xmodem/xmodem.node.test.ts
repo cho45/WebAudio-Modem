@@ -698,11 +698,6 @@ describe('XModem Transport', () => {
     });
 
     test('Out-of-sequence packet triggers NAK', async () => {
-      // Clear any leftover data and reset state completely
-      mockDataChannel.clearSentData();
-      mockDataChannel['dataToReceive'] = [];  // Clear any leftover received data
-      transport.reset();
-      
       // Configure low retry count for quick failure
       transport.configure({ timeoutMs: 100, maxRetries: 1 });
       

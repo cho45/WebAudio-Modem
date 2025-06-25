@@ -109,7 +109,6 @@ export class XModemTransport extends BaseTransport {
         // Continue without initial NAK for standalone operation
       }
     
-    console.log(`[XModemTransport] Starting fragment loop: fragmentIndex=${this.fragmentIndex}, fragmentsLength=${this.fragments.length}`);
     fragment: while (this.fragmentIndex < this.fragments.length) {
       console.log(`[XModemTransport] Processing fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
 
@@ -163,7 +162,6 @@ export class XModemTransport extends BaseTransport {
     
     for (;;) {
       if (externalSignal?.aborted || operationSignal.aborted) throw new Error('Operation aborted at sendData');
-      console.log(`[XModemTransport] Sending EOT, waiting for final ACK`);
       this.stateChanged(State.SENDING_WAIT_FINAL_ACK, 'Sending EOT, waiting for final ACK');
       await this.sendControl('EOT');
 
@@ -376,8 +374,6 @@ export class XModemTransport extends BaseTransport {
   }
 
   reset(): void {
-    console.warn(`[XModemTransport] RESET called!`);
-    
     // Clear statistics first (before abort to prevent further updates)
     super.reset();
     
