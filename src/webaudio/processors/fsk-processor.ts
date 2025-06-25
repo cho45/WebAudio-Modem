@@ -216,6 +216,8 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
           this.abortController = new MyAbortController();
           // @ts-expect-error 
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
+          // Clear receive buffer after modulation to avoid self-reception
+          this.demodulatedBuffer.clear();
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
