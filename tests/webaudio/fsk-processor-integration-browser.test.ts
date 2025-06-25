@@ -194,6 +194,79 @@ describe('FSK Processor Integration', () => {
     modulator.disconnect();
     demodulator.disconnect();
   });
+
+  test('Direct Audio Test - AudioWorklet Integration (Long)', async () => {
+    console.log('🧪 Starting Direct Audio Test with real FSK processing...');
+
+    // Use the real FSK processor
+    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
+
+    const modulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+    modulator.onprocessorerror = (error) => {
+      console.error('Modulator processor error:', error);
+    };
+    const demodulator = new WebAudioDataChannel(audioContext, 'fsk-processor');
+    demodulator.onprocessorerror = (error) => {
+      console.error('Demodulator processor error:', error);
+    };
+
+    // Configure with test-friendly settings for reliable transmission
+    const testConfig = {
+      ...DEFAULT_FSK_CONFIG,
+      sampleRate: audioContext.sampleRate,
+    };
+
+    console.log('🔧 Configuring FSK processors with test settings:', testConfig);
+
+    await modulator.configure(testConfig);
+    await demodulator.configure(testConfig);
+
+    console.log('✅ Real FSK processors configured successfully!');
+
+    // Create audio connection: modulator -> demodulator -> destination
+    // WebAudio requires connection to destination for process() to be called
+    modulator.connect(demodulator);
+    demodulator.connect(audioContext.destination);
+    console.log('🔗 AudioWorkletNode connection established: modulator → demodulator → destination');
+
+    expect(audioContext.state).toBe('running');
+
+    // Test data
+    const textData = new Uint8Array(500); // Long test data (500 bytes of 'A')
+    for (let i = 0; i < textData.length; i++) {
+      textData[i] = i % 256;
+    }
+    console.log(`🔊 Testing with: "${textData}" (${textData.length} bytes)`);
+
+    // console.log('⏳ Waiting for audio signal processing...');
+    // await new Promise(resolve => setTimeout(resolve, 1000));  // 1 second for audio processing
+
+    // console.log('📊 Demodulator status:', await demodulator.getStatus());
+
+    // Start modulation - this will generate audio signal
+    await modulator.modulate(textData);
+    console.log('🎵 Modulation started - audio signal generating');
+
+    // Allow time for audio processing through the connection
+    console.log('⏳ Waiting for audio signal processing...');
+    await new Promise(resolve => setTimeout(resolve, 1000));  // 1 second for audio processing
+
+    console.log('📊 Demodulator status:', await demodulator.getStatus());
+
+    // Check demodulated buffer
+    const demodulated = await demodulator.demodulate();
+    console.log(`🔍 Demodulated ${demodulated.length} bytes`);
+
+    // Assert perfect match
+    expect(demodulated).toEqual(textData);
+    expect(demodulated.length).toBe(textData.length);
+
+    console.log('✅ Direct Audio Test PASSED - Real WebAudio connection working!');
+
+    // Cleanup connections
+    modulator.disconnect();
+    demodulator.disconnect();
+  });
 });
 
 // WebAudioDataChannel specific tests using real browser APIs
@@ -615,173 +688,5 @@ describe('Demodulate Blocking Behavior Tests', () => {
 
     console.log('✅ Data arrival unblocking test completed');
   });
-
-  // NOTE: This test passes in standalone browser environment (see demo/debug-sequential-demodulate.html)
-  // but fails in vitest browser environment due to AudioWorklet/AudioContext limitations in test environment.
-  // The FSK implementation itself is correct - this is a vitest environment issue.
-  // TODO: Investigate vitest browser AudioWorklet compatibility or find alternative testing approach
-  /*
-  test('sequential demodulate calls work correctly', async () => {
-    console.log('🧪 Testing sequential demodulate() calls (XModem pattern)...');
-
-    // Setup sender and receiver channels with instance names
-    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
-    
-    const senderChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-      processorOptions: { name: 'sender' }
-    });
-    const receiverChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-      processorOptions: { name: 'receiver' }
-    });
-
-    // Configure both processors
-    const testConfig = {
-      ...DEFAULT_FSK_CONFIG,
-      sampleRate: audioContext.sampleRate,
-    };
-
-    await senderChannel.configure(testConfig);
-    await receiverChannel.configure(testConfig);
-
-    // Setup bidirectional connection
-    senderChannel.connect(receiverChannel);
-    receiverChannel.connect(senderChannel);
-    senderChannel.connect(audioContext.destination);
-    receiverChannel.connect(audioContext.destination);
-
-    console.log('✅ Bidirectional audio connection configured for sequential testing');
-
-    // Test data for sequential operations
-    const testData1 = new Uint8Array([0x41]); // 'A'
-    const testData2 = new Uint8Array([0x42]); // 'B'
-
-    // First operation: sender → receiver
-    console.log('🔄 First operation: sending data1 via sender');
-    await senderChannel.modulate(testData1);
-    
-    console.log('📡 Waiting for first demodulation...');
-    const result1 = await Promise.race([
-      receiverChannel.demodulate(),
-      new Promise<null>((_, reject) => {
-        setTimeout(() => reject(new Error('First demodulation timeout after 5000ms')), 5000);
-      })
-    ]);
-    expect(result1).toEqual(testData1);
-    console.log('✅ First operation completed:', result1);
-
-    // Wait a bit between operations
-    await new Promise(resolve => setTimeout(resolve, 200));
-
-    // Second operation: sender → receiver
-    console.log('🔄 Second operation: sending data2 via sender');
-    await senderChannel.modulate(testData2);
-    
-    console.log('📡 Waiting for second demodulation...');
-    const result2 = await Promise.race([
-      receiverChannel.demodulate(),
-      new Promise<null>((_, reject) => {
-        setTimeout(() => reject(new Error('Second demodulation timeout after 5000ms')), 5000);
-      })
-    ]);
-    expect(result2).toEqual(testData2);
-    console.log('✅ Second operation completed:', result2);
-
-    // Verify both operations worked correctly
-    expect(result1).not.toEqual(result2); // Should be different data
-    console.log('✅ Sequential operations verified - different data received correctly');
-
-    // Cleanup
-    senderChannel.disconnect();
-    receiverChannel.disconnect();
-
-    console.log('✅ Sequential demodulate pattern test completed');
-  });
-  */
-
-  // NOTE: This test also fails in vitest browser environment, likely due to the same AudioWorklet limitations.
-  // The timing edge cases work correctly in standalone browser environment.
-  // TODO: Consider alternative testing approaches for AudioWorklet timing edge cases
-  /*
-  test('demodulate() handles timing edge cases', async () => {
-    console.log('🧪 Testing demodulate() timing edge cases...');
-
-    // Setup separate sender and receiver channels for proper testing
-    await WebAudioDataChannel.addModule(audioContext, '/src/webaudio/processors/fsk-processor.js');
-    
-    const senderChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-      processorOptions: { name: 'sender' }
-    });
-    const receiverChannel = new WebAudioDataChannel(audioContext, 'fsk-processor', {
-      processorOptions: { name: 'receiver' }
-    });
-
-    // Configure both processors
-    const testConfig = {
-      ...DEFAULT_FSK_CONFIG,
-      sampleRate: audioContext.sampleRate,
-    };
-
-    await senderChannel.configure(testConfig);
-    await receiverChannel.configure(testConfig);
-
-    // Setup bidirectional connection
-    senderChannel.connect(receiverChannel);
-    receiverChannel.connect(senderChannel);
-    senderChannel.connect(audioContext.destination);
-    receiverChannel.connect(audioContext.destination);
-
-    console.log('✅ Bidirectional audio connection configured for timing edge case testing');
-
-    // Edge case 1: demodulate() called immediately after modulate()
-    console.log('🔄 Edge case 1: immediate demodulate() after modulate()');
-    
-    const testData = new Uint8Array([0x58]); // 'X'
-    
-    // Start modulation on sender and immediately call demodulate on receiver
-    const modulatePromise = senderChannel.modulate(testData);
-    const demodulatePromise = receiverChannel.demodulate();
-
-    // Both should complete successfully
-    await modulatePromise;
-    console.log('📡 Waiting for immediate demodulation result...');
-    const result = await Promise.race([
-      demodulatePromise,
-      new Promise<null>((_, reject) => {
-        setTimeout(() => reject(new Error('Immediate demodulation timeout after 5000ms')), 5000);
-      })
-    ]);
-    
-    expect(result).toEqual(testData);
-    console.log('✅ Immediate demodulate after modulate works correctly');
-
-    // Edge case 2: demodulate() called when no data is being sent
-    console.log('🔄 Edge case 2: demodulate() with delayed data arrival');
-    
-    // Start demodulate on receiver before sending data - should block
-    const emptyDemodulatePromise = receiverChannel.demodulate();
-    
-    // Wait briefly then send data via sender
-    setTimeout(async () => {
-      console.log('📡 Sending delayed data via sender...');
-      await senderChannel.modulate(new Uint8Array([0x59])); // 'Y'
-    }, 300);
-
-    console.log('📡 Waiting for delayed demodulation result...');
-    const result2 = await Promise.race([
-      emptyDemodulatePromise,
-      new Promise<null>((_, reject) => {
-        setTimeout(() => reject(new Error('Delayed demodulation timeout after 8000ms')), 8000);
-      })
-    ]);
-    expect(result2).toEqual(new Uint8Array([0x59]));
-    console.log('✅ Delayed data arrival handled correctly');
-
-    // Cleanup
-    senderChannel.disconnect();
-    receiverChannel.disconnect();
-
-    console.log('✅ Timing edge cases test completed');
-  });
-  */
 });
 
