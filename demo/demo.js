@@ -53,7 +53,6 @@ const app = createApp({
       { value: 'png-interlaced.png', name: 'PNG Interlaced (12K)', description: 'Interlaced PNG image' },
       { value: 'webp.webp', name: 'WebP not progressive (3.8K)', description: 'WebP image' }
     ]);
-    const systemLog = ref('');
     const sendLog = ref('');
     const receiveLog = ref('');
     
@@ -121,18 +120,8 @@ const app = createApp({
     
     // ログ出力
     const log = (message) => {
-      const timestamp = new Date().toLocaleTimeString();
-      const logEntry = `[${timestamp}] ${message}`;
-      systemLog.value += logEntry + '\n';
-      console.log(logEntry);
-      
-      // Auto-scroll to bottom
-      nextTick(() => {
-        const textarea = document.querySelector('.system-log textarea');
-        if (textarea) {
-          textarea.scrollTop = textarea.scrollHeight;
-        }
-      });
+      logSend(message);
+      logReceive(message);
     };
     
     // 送信ログ出力
@@ -200,8 +189,8 @@ const app = createApp({
     // システム初期化
     const initializeSystem = async () => {
       try {
-        log('Initializing audio system...');
-        updateStatus(systemStatus, 'Initializing...', 'info');
+        logSend('Initializing audio system...');
+        logReceive(systemStatus, 'Initializing...', 'info');
         
         // AudioContext作成
         audioContext.value = new AudioContext();
@@ -384,7 +373,7 @@ const app = createApp({
           
           // 送信者を音声出力に接続
           senderDataChannel.value.disconnect();
-          senderDataChannel.value.connect(audioContext.value.outputGain);
+          senderDataChannel.value.connect(outputGain.value);
           logSend('Connected sender to audio output');
           
           // マイクを送信者に接続
@@ -412,10 +401,8 @@ const app = createApp({
         
         await senderTransport.value.sendData(data);
         
-        if (isSending.value) {
-          updateStatus(sendStatus, `✓ XModem send completed: ${description}`, 'success');
-          logSend('XModem transmission completed successfully');
-        }
+        updateStatus(sendStatus, `✓ XModem send completed: ${description}`, 'success');
+        logSend('XModem transmission completed successfully');
         
       } catch (error) {
         console.error(errorMsg, error);
@@ -499,6 +486,7 @@ const app = createApp({
         hub.connect(outputGain.value);
         hub.connect(senderDataChannel.value);
         hub.connect(receiverDataChannel.value);
+        outputGain.value.connect(inputAnalyser.value);
         
         log('Connected: sender → receiver (internal loopback)');
         log(`Testing ${data.length} bytes via XModem protocol`);
@@ -517,12 +505,12 @@ const app = createApp({
           log('Both transports reset to IDLE state for loopback');
           
           // 送受信開始
-          log('Starting sender...');
+          logSend('Starting sender...');
           const sendPromise = senderTransport.value.sendData(data);
           
           await new Promise(resolve => setTimeout(resolve, 500));
           
-          log('Starting receiver...');
+          logReceive('Starting receiver...');
           const receivePromise = receiverTransport.value.receiveData();
           
           const [_, receivedData] = await Promise.all([sendPromise, receivePromise]);
@@ -536,16 +524,16 @@ const app = createApp({
           // 結果処理
           if (sendDataType.value === 'text') {
             const receivedText = new TextDecoder().decode(receivedData);
-            log(`XModem loopback result: "${receivedText}"`);
-            
+            logReceive(`XModem loopback result: "${receivedText}"`);
+
             addReceivedData('text', receivedText);
             
             if (receivedText === description) {
               updateStatus(systemStatus, '✓ Perfect XModem loopback!', 'success');
-              log('XModem loopback test: PASSED - Perfect match');
+              logReceive('XModem loopback test: PASSED - Perfect match');
             } else {
               updateStatus(systemStatus, `⚠ Partial match: "${receivedText}"`, 'info');
-              log(`XModem loopback test: PARTIAL - Expected: "${description}", Got: "${receivedText}"`);
+              logReceive(`XModem loopback test: PARTIAL - Expected: "${description}", Got: "${receivedText}"`);
             }
           } else {
             // 画像の場合
@@ -555,10 +543,10 @@ const app = createApp({
             
             if (receivedData.length === data.length) {
               updateStatus(systemStatus, '✓ Perfect XModem image loopback!', 'success');
-              log('XModem image loopback test: PASSED - Size match');
+              logReceive('XModem image loopback test: PASSED - Size match');
             } else {
               updateStatus(systemStatus, `⚠ Size mismatch: expected ${data.length}, got ${receivedData.length}`, 'info');
-              log(`XModem image loopback test: PARTIAL - Size mismatch`);
+              logReceive(`XModem image loopback test: PARTIAL - Size mismatch`);
             }
           }
         } catch (loopbackError) {
@@ -614,9 +602,9 @@ const app = createApp({
         session.currentTransferData.totalSize = 0;
         
         if (dataType === 'image') {
-          log('🖼️ Image transfer started');
+          logReceive('🖼️ Image transfer started');
         } else {
-          log('📝 Text transfer started');
+          logReceive('📝 Text transfer started');
         }
       }
       
@@ -642,8 +630,8 @@ const app = createApp({
         updateImagePreview();
         const isLoopback = inputSource.value === 'loopback';
         const prefix = isLoopback ? '🔄' : '🖼️';
-        log(`${prefix} Image fragment #${data.seqNum}: ${data.fragment.length}B (total: ${session.currentTransferData.totalSize}B)`);
-        
+        logReceive(`${prefix} Image fragment #${data.seqNum}: ${data.fragment.length}B (total: ${session.currentTransferData.totalSize}B)`);
+
         if (isLoopback) {
           updateStatus(systemStatus, `${prefix} Fragment #${data.seqNum}: ${data.fragment.length}B (${data.totalBytesReceived}B)`, 'info');
         } else {
@@ -652,8 +640,8 @@ const app = createApp({
       } else {
         const isLoopback = inputSource.value === 'loopback';
         const prefix = isLoopback ? '🔄' : '📦';
-        log(`${prefix} Fragment #${data.seqNum}: ${data.fragment.length}B, total: ${data.totalBytesReceived}B (${session.bytesPerSecond}B/s)`);
-        
+        logReceive(`${prefix} Fragment #${data.seqNum}: ${data.fragment.length}B, total: ${data.totalBytesReceived}B (${session.bytesPerSecond}B/s)`);
+
         if (isTextData(data.fragment)) {
           const partialText = new TextDecoder().decode(data.fragment);
           if (isLoopback) {
@@ -699,6 +687,7 @@ const app = createApp({
         
         const source = audioContext.value.createMediaStreamSource(microphoneStream.value);
         source.connect(receiverDataChannel.value);
+        source.connect(inputAnalyser.value);
         logReceive('Connected: microphone → receiver');
         
         // セッション開始
@@ -935,7 +924,7 @@ const app = createApp({
         session.currentTransferData.previewUrl = URL.createObjectURL(blob);
         
       } catch (error) {
-        log(`Image preview update failed: ${error.message}`);
+        logReceive(`Image preview update failed: ${error.message}`);
       }
     };
     
@@ -968,9 +957,9 @@ const app = createApp({
         // サンプル選択をリセット
         sampleImageSelection.value = '';
         
-        log(`Custom image selected: ${file.name} (${file.size} bytes)`);
+        logSend(`Custom image selected: ${file.name} (${file.size} bytes)`);
       } catch (error) {
-        log(`Failed to load custom image: ${error.message}`);
+        logSend(`Failed to load custom image: ${error.message}`);
         selectedImage.value = null;
       }
     };
@@ -1009,9 +998,9 @@ const app = createApp({
           source: 'sample'
         };
         
-        log(`Sample image selected: ${sampleFile.name} (${arrayBuffer.byteLength} bytes)`);
+        logSend(`Sample image selected: ${sampleFile.name} (${arrayBuffer.byteLength} bytes)`);
       } catch (error) {
-        log(`Failed to load sample image: ${error.message}`);
+        logSend(`Failed to load sample image: ${error.message}`);
         selectedImage.value = null;
         sampleImageSelection.value = '';
       }
@@ -1209,13 +1198,12 @@ const app = createApp({
       // 受信セッションをリセット
       resetReceivingSession();
       
-      systemLog.value = '';
       log('All data and logs cleared');
     };
     
     // マウント時の処理
     onMounted(() => {
-      log('WebAudio-Modem Vue3 Demo loaded');
+      log('WebAudio-Modem Demo loaded');
     });
     
     // コンポーネント破棄時の処理
@@ -1252,7 +1240,6 @@ const app = createApp({
       selectedImage,
       sampleImageSelection,
       sampleImages,
-      systemLog,
       sendLog,
       receiveLog,
       systemStatus,
