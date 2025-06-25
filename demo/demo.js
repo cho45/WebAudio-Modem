@@ -289,7 +289,7 @@ const app = createApp({
         
         microphoneStream.value = stream;
         microphonePermission.value = true;
-        inputSource.value = 'microphone'; // マイク入力に切り替え
+        toggleInputSource();
         
         log(`Microphone permission granted: ${audioContext.value.sampleRate}Hz, 1 channel`);
         updateStatus(systemStatus, 'Microphone ready ✓ You can now use Send/Receive!', 'success');
@@ -357,7 +357,8 @@ const app = createApp({
     
     // Sender transport準備
     const setupSender = async () => {
-      senderTransport.value.reset();
+      await senderDataChannel.value.reset();
+      await senderTransport.value.reset();
       logSend('Sender transport reset to IDLE state');
       
       // FSK設定をDataChannelに適用
@@ -365,21 +366,23 @@ const app = createApp({
       logSend(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
       
       // XModem設定をTransportに適用
-      senderTransport.value.configure(toRaw(xmodemConfig));
+      await senderTransport.value.configure(toRaw(xmodemConfig));
       logSend(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
     };
     
     // Receiver transport準備
     const setupReceiver = async () => {
-      receiverTransport.value.reset();
+      console.log('Setting up receiver transport...');
+      await receiverDataChannel.value.reset();
       logReceive('Receiver transport reset to IDLE state');
+      await receiverTransport.value.reset();
       
       // FSK設定をDataChannelに適用
       await receiverDataChannel.value.configure(toRaw(fskConfig));
       logReceive(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
       
       // XModem設定をTransportに適用
-      receiverTransport.value.configure(toRaw(xmodemConfig));
+      await receiverTransport.value.configure(toRaw(xmodemConfig));
       logReceive(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
     };
     

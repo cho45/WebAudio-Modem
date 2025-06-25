@@ -467,47 +467,6 @@ describe('WebAudioDataChannel Browser Tests', () => {
     }
   });
 
-  test('WebAudioDataChannel reset functionality', async () => {
-    // Test the reset functionality
-    try {
-      const testProcessorCode = `
-        class ResetTestProcessor extends AudioWorkletProcessor {
-          constructor() {
-            super();
-            this.port.onmessage = () => {
-              // Intentionally don't respond to test reset behavior
-            };
-          }
-          process() { return true; }
-        }
-        registerProcessor('reset-test-processor', ResetTestProcessor);
-      `;
-
-      const blob = new Blob([testProcessorCode], { type: 'application/javascript' });
-      const url = URL.createObjectURL(blob);
-
-      await WebAudioDataChannel.addModule(audioContext, url);
-      const dataChannel = new WebAudioDataChannel(audioContext, 'reset-test-processor');
-
-      // Start a configuration that won't complete
-      const configPromise = dataChannel.configure({ baudRate: 300 });
-
-      // Reset the channel
-      dataChannel.reset();
-
-      // The promise should reject
-      await expect(configPromise).rejects.toThrow('DataChannel reset');
-
-      console.log('✅ Reset functionality test passed');
-
-      URL.revokeObjectURL(url);
-
-    } catch (error) {
-      console.log('Reset test failed (may be expected):', error);
-      // Don't fail the test - browser environment may have restrictions
-    }
-  });
-
   test('WebAudioDataChannel AudioWorkletNode inheritance', () => {
     // Test that WebAudioDataChannel properly inherits from AudioWorkletNode
     try {

@@ -90,8 +90,13 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   /**
    * データを変調してオーディオ出力に送信
    */
-  async modulate(data: Uint8Array): Promise<void> {
+  async modulate(data: Uint8Array, options?: {signal?: AbortSignal }): Promise<void> {
     console.log(`[WebAudioDataChannel:${this.instanceName}] Modulating ${data.length} bytes`);
+    options?.signal?.addEventListener('abort', async () => {
+      console.warn(`[WebAudioDataChannel:${this.instanceName}] Modulation aborted`);
+      await this.sendMessage('abort', {});
+    }, { once: true });
+
     const result = await this.sendMessage('modulate', { bytes: Array.from(data) });
     
     if (!result.success) {
@@ -118,7 +123,9 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    * チャネルをリセット
    */
   async reset(): Promise<void> {
+    await this.sendMessage('abort', {});
     // Clear pending operations
+    // abort によって reject されるので たぶんいらない
     for (const [_id, operation] of this.pendingOperations) {
       console.warn(`[WebAudioDataChannel:${this.instanceName}] Resetting operation: ${_id}`);
       operation.reject(new Error('DataChannel reset'));

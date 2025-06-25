@@ -106,12 +106,17 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     this.pendingModulation = new ChunkedModulator(this.fskCore);
     await this.pendingModulation.startModulation(data);
     await new Promise<void>((resolve, reject) => {
-      this.modulationWaitCallback = resolve;
-      options?.signal.addEventListener('abort', () => {
+      const handleAbort = () => {
+        console.warn(`[FSKProcessor:${this.instanceName}] Modulation aborted`);
         this.pendingModulation = null;
         this.modulationWaitCallback = () => {};
-        reject(new Error('Modulation aborted'));
-      }, { once: true });
+        reject(new Error('FSK Processor Modulation aborted'));
+      };
+      this.modulationWaitCallback = () => {
+        options?.signal.removeEventListener('abort', handleAbort);
+        resolve();
+      }
+      options?.signal.addEventListener('abort', handleAbort, { once: true });
     });
   }
 
@@ -146,6 +151,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   }
 
   async reset(): Promise<void> {
+      console.log(`[FSKProcessor:${this.instanceName}] Resetting FSKProcessor state`);
       this.demodulatedBuffer.clear();
       this.pendingModulation = null;
       this.awaitingCallback = null;
@@ -185,17 +191,20 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
           }
           break;
         case 'reset': {
+          console.log(`[FSKProcessor:${this.instanceName}] Resetting FSKProcessor state`);
           await this.reset();
+          this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
 
         case 'abort': {
           // Handle abort signal
           if (this.abortController) {
+            console.warn(`[FSKProcessor:${this.instanceName}] Received abort signal`);
             this.abortController.abort();
             this.abortController = null;
-            this.port.postMessage({ id, type: 'result', data: { success: true } });
           }
+          this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
 
@@ -204,6 +213,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             this.abortController.abort();
           }
           this.abortController = new MyAbortController();
+          console.log(`[FSKProcessor:${this.instanceName}] Modulating ${data.bytes.length} bytes: [${data.bytes.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
           // @ts-expect-error 
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
           // Clear receive buffer after modulation to avoid self-reception
@@ -217,6 +227,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             this.abortController.abort();
           }
           this.abortController = new MyAbortController();
+          console.log(`[FSKProcessor:${this.instanceName}] Demodulating data request received`);
           // @ts-expect-error 
           const demodulatedBytes = await this.demodulate({ signal: this.abortController.signal });
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
