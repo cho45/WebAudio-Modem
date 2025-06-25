@@ -40,7 +40,7 @@ The codebase implements a complete audio modem stack with three main layers:
 
 ```bash
 # Testing
-npm test                    # Run all tests (204 tests across 12 files)
+npm test                    # Run all tests (287 total: 266 Node.js + 21 browser)
 npm run test:node          # Run Node.js tests only
 npm run test:browser       # Run browser-specific tests
 
@@ -57,9 +57,9 @@ npm run preview            # Preview production build
 ### Running Specific Tests
 ```bash
 # Test specific modules
-npm test tests/modems/                          # FSK modem tests (70 tests)
-npm test tests/transports/                     # XModem transport tests (51 tests)
-npm test tests/core.node.test.ts              # Core infrastructure tests (21 tests)
+npm test tests/modems/                          # FSK modem tests
+npm test tests/transports/                     # XModem transport tests
+npm test tests/core.node.test.ts              # Core infrastructure tests
 
 # Test specific components
 npm test tests/modems/fsk-modulation.node.test.ts     # FSK modulation only
@@ -87,7 +87,7 @@ Enhanced XModem with variable-length payloads:
 - ✅ **XModem Transport**: Full protocol with error recovery and fragmentation
 - ✅ **Core Infrastructure**: Event system and base classes
 - ✅ **Signal Processing**: Complete DSP toolkit
-- ⚠️ **Audio Integration**: Interfaces ready, AudioWorklet implementation pending
+- ✅ **WebAudio Integration**: AudioWorklet processors and data channel implemented
 
 ## File Structure
 
@@ -103,7 +103,7 @@ src/
 ├── utils/crc16.ts                   # CRC-16-CCITT implementation
 └── utils.ts                         # RingBuffer and utilities
 
-tests/                               # 241 Node.js tests + 12 browser tests
+tests/                               # 266 Node.js tests + 21 browser tests
 ├── core.node.test.ts               # Event system tests (21 tests)
 ├── modems/                         # FSK modem tests (70 tests)
 ├── transports/xmodem/              # XModem protocol tests (51 tests)
@@ -147,7 +147,7 @@ Browser tests (`npm run test:browser`) are specifically designed to test **WebAu
 - Uses vitest with Playwright in headless Chromium
 - Real AudioContext and AudioWorklet APIs available
 - AudioWorklet processor loading succeeds via vite dev server
-- 12 focused integration tests ensuring Web API compatibility
+- 21 focused integration tests ensuring Web API compatibility
 
 ### Signal Processing Standards
 - **Phase continuity**: FSK modulation must maintain phase coherence
@@ -155,12 +155,24 @@ Browser tests (`npm run test:browser`) are specifically designed to test **WebAu
 - **Numerical stability**: Handle edge cases in floating-point calculations
 - **Performance optimization**: Minimize CPU usage while maintaining precision
 
-## Legacy Code Notice
+## Demo and Development Server
 
-The `FSK/` directory contains legacy JavaScript implementation for reference only:
-- **Do not extend or modify** legacy code
-- **Use for algorithm reference** and validation only
-- **Modern implementation** in `src/` supersedes all legacy functionality
+```bash
+npm run dev                 # Start development server at http://localhost:3000
+```
+
+The demo directory contains working examples of the modem functionality:
+- Interactive FSK modulation/demodulation demo
+- Real-time audio processing with WebAudio API
+- XModem file transfer examples
+
+## Additional Documentation
+
+The `docs/` directory contains detailed design documents:
+- `FSK_DESIGN.md` - Signal processing mathematics
+- `PACKET_PROTOCOL_DESIGN.md` - XModem protocol details
+- `architecture.md` - System architecture overview
+- `README.md` - XModem packet structure reference (Japanese)
 
 ## Development Guidelines
 
