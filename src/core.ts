@@ -46,19 +46,22 @@ export interface IDataChannel {
   /**
    * アプリケーションレベルの変調要求
    * データを音声信号に変調し、音声出力キューに追加
+   * 音声出力が終わるまでブロック
    * 
    * @param data 変調するデータ
    * @returns 変調完了を示すPromise
    */
-  modulate(data: Uint8Array): Promise<void>;
+  modulate(_data: Uint8Array, _options?: {signal?: AbortSignal}): Promise<void>;
   
   /**
    * アプリケーションレベルの復調データ取得
    * バッファされた復調データを取得（データが来るまで待機）
    * 
+   * @param options オプション設定
+   * @param options.signal キャンセル用のAbortSignal
    * @returns 復調されたデータ
    */
-  demodulate(): Promise<Uint8Array>;
+  demodulate(_options?: {signal?: AbortSignal}): Promise<Uint8Array>;
 
   /**
    * Reset the data channel state
@@ -133,17 +136,19 @@ export interface ITransport {
    * Handles fragmentation, sequencing, retransmission automatically
    * 
    * @param data Data to send
+   * @param options Optional parameters including AbortSignal for cancellation
    * @returns Promise that resolves when data is acknowledged by remote
    */
-  sendData(data: Uint8Array): Promise<void>;
+  sendData(_data: Uint8Array, _options?: {signal?: AbortSignal}): Promise<void>;
   
   /**
    * Receive data from the remote endpoint
    * Handles reassembly, duplicate detection, acknowledgment automatically
    * 
+   * @param options Optional parameters including AbortSignal for cancellation
    * @returns Promise that resolves with received data
    */
-  receiveData(): Promise<Uint8Array>;
+  receiveData(_options?: {signal?: AbortSignal}): Promise<Uint8Array>;
   
   /**
    * Send control command (protocol-specific)
@@ -151,7 +156,7 @@ export interface ITransport {
    * @param command Protocol-specific control command
    * @returns Promise that resolves when command is sent
    */
-  sendControl(command: string): Promise<void>;
+  sendControl(_command: string): Promise<void>;
   
   /**
    * Check if protocol is ready for communication
@@ -314,8 +319,8 @@ export abstract class BaseTransport
   }
   
   // Abstract methods that must be implemented by concrete protocols
-  abstract sendData(data: Uint8Array): Promise<void>;
-  abstract receiveData(): Promise<Uint8Array>;
+  abstract sendData(data: Uint8Array, options?: {signal?: AbortSignal}): Promise<void>;
+  abstract receiveData(options?: {signal?: AbortSignal}): Promise<Uint8Array>;
   abstract sendControl(command: string): Promise<void>;
   abstract isReady(): boolean;
   

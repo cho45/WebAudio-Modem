@@ -10,8 +10,6 @@
  * based on data content and modulation parameters.
  */
 
-import type { FSKCore } from '../modems/fsk.js';
-
 export interface ChunkResult {
   signal: Float32Array;
   isComplete: boolean;
@@ -23,7 +21,7 @@ export class ChunkedModulator {
   private pendingSignal: Float32Array | null = null;
   private samplePosition = 0;
   
-  constructor(private fskCore: FSKCore) {
+  constructor() {
     // No configuration needed - this class adapts to any sample size requests
   }
   

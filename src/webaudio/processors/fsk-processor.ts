@@ -14,7 +14,7 @@ import { RingBuffer } from '../../utils';
 
 interface WorkletMessage {
   id: string;
-  type: 'configure' | 'modulate' | 'demodulate' | 'status' | 'reset';
+  type: 'configure' | 'modulate' | 'demodulate' | 'status' | 'reset' | 'abort';
   data?: any;
 }
 
@@ -25,6 +25,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   private awaitingCallback: (() => void) | null = null;
   private modulationWaitCallback: () => void = () => {};
   private instanceName: string;
+  private abortController: AbortController | null = null;
   
   constructor(options?: AudioWorkletNodeOptions) {
     super();
@@ -46,7 +47,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     this.port.onmessage = this.handleMessage.bind(this);
   }
 
-  async modulate(data: Uint8Array): Promise<void> {
+  async modulate(data: Uint8Array, options: {signal: AbortSignal }): Promise<void> {
     /**
      * 変調リクエスト: バイト列を受けとり、変調キューに入れる
      * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
@@ -59,14 +60,20 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     }
     
     // console.log(`[FSKProcessor:${this.instanceName}] Queuing modulation of ${data.length} bytes`);
-    this.pendingModulation = new ChunkedModulator(this.fskCore);
+    this.pendingModulation = new ChunkedModulator();
     await this.pendingModulation.startModulation(data);
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       this.modulationWaitCallback = resolve;
+      options?.signal.addEventListener('abort', () => {
+        console.warn(`[FSKProcessor:${this.instanceName}] Modulation aborted`);
+        this.pendingModulation = null;
+        this.modulationWaitCallback = () => {};
+        reject(new Error('Modulation aborted'));
+      }, { once: true });
     });
   }
 
-  async demodulate(): Promise<Uint8Array> {
+  async demodulate(options: {signal: AbortSignal }): Promise<Uint8Array> {
       /**
        * 復調リクエスト: 復調済みのデータを返す
        * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
@@ -78,6 +85,11 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       if (availableBytes === 0) {
         await new Promise<void>((resolve) => {
           this.awaitingCallback = resolve;
+          options?.signal.addEventListener('abort', () => {
+            console.warn(`[FSKProcessor:${this.instanceName}] Demodulation aborted`);
+            this.awaitingCallback = null;
+            resolve();
+          }, { once: true });
         });
       }
 
@@ -135,15 +147,33 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
           await this.reset();
           break;
         }
-          
+
+        case 'abort': {
+          // Handle abort signal
+          if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+            this.port.postMessage({ id, type: 'result', data: { success: true } });
+          }
+          break;
+        }
+
         case 'modulate': {
-          await this.modulate(new Uint8Array(data.bytes));
+          if (this.abortController) {
+            this.abortController.abort();
+          }
+          this.abortController = new AbortController();
+          await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
           
         case 'demodulate': {
-          const demodulatedBytes = await this.demodulate();
+          if (this.abortController) {
+            this.abortController.abort();
+          }
+          this.abortController = new AbortController();
+          const demodulatedBytes = await this.demodulate({ signal: this.abortController.signal });
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
           break;
         }

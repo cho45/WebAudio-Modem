@@ -62,13 +62,13 @@ global.AudioWorkletProcessor = MockAudioWorkletProcessor
 global.AudioContext = MockAudioContext as any
 global.registerProcessor = vi.fn()
 
-// Mock getUserMedia
-Object.defineProperty(navigator, 'mediaDevices', {
-  writable: true,
-  value: {
-    getUserMedia: vi.fn().mockResolvedValue({
-      getTracks: () => [],
-      addEventListener: vi.fn()
-    })
-  }
-})
+// // Mock getUserMedia
+// Object.defineProperty(navigator, 'mediaDevices', {
+//   writable: true,
+//   value: {
+//     getUserMedia: vi.fn().mockResolvedValue({
+//       getTracks: () => [],
+//       addEventListener: vi.fn()
+//     })
+//   }
+// })
