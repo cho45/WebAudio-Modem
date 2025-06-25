@@ -117,7 +117,7 @@ describe('FSK Processor Integration', () => {
     const paddingSamples = samplesPerBit * 2;
     const expectedLength = totalBytes * bitsPerByte * samplesPerBit + paddingSamples;
 
-    expect(expectedLength).toBe(13120); // Expected signal length for "Hello" with 48kHz
+    expect(expectedLength).toBe(3280); // Expected signal length for "Hello" with 48kHz
   });
 
   test('Direct Audio Test - AudioWorklet Integration', async () => {

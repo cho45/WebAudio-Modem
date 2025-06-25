@@ -118,10 +118,10 @@ export class XModemTransport extends BaseTransport {
       const serialized = XModemPacket.serialize(packet);
       console.log(`[XModemTransport] Sending fragment ${this.fragmentIndex + 1}/${this.fragments.length}, sequence: ${this.sequence}`);
       await this.dataChannel.modulate(serialized);
+      await this.dataChannel.reset();
       this.statistics.packetsSent++;
       
       // Clear receive buffer after modulation to avoid self-reception
-      await this.dataChannel.reset();
       
       this.stateChanged(State.SENDING_WAIT_ACK, `Waiting for ACK for fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
       
@@ -362,6 +362,7 @@ export class XModemTransport extends BaseTransport {
     const controlType = this.parseControlCommand(command);
     const serialized = XModemPacket.serializeControl(controlType);
     await this.dataChannel.modulate(serialized);
+    await this.dataChannel.reset();
     
     // Only update statistics if operation is not aborted
     if (!this.currentOperationController?.signal.aborted) {

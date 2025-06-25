@@ -18,7 +18,7 @@ export interface FSKConfig extends BaseModulatorConfig {
 
 export const DEFAULT_FSK_CONFIG: FSKConfig = {
   sampleRate: 48000,
-  baudRate: 300,
+  baudRate: 1200,
   markFrequency: 1650,
   spaceFrequency: 1850,
   preamblePattern: [0x55, 0x55],

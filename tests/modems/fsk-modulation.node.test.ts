@@ -16,7 +16,7 @@ describe('FSK Core Modulation', () => {
       
       expect(config.markFrequency).toBe(1650);
       expect(config.spaceFrequency).toBe(1850);
-      expect(config.baudRate).toBe(300);
+      expect(config.baudRate).toBe(1200);
       expect(config.sampleRate).toBe(48000);
       expect(config.startBits).toBe(1);
       expect(config.stopBits).toBe(1);
