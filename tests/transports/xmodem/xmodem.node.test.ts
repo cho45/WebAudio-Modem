@@ -704,7 +704,7 @@ describe('XModem Transport', () => {
       transport.reset();
       
       // Configure low retry count for quick failure
-      transport.configure({ timeoutMs: 50, maxRetries: 1 });
+      transport.configure({ timeoutMs: 100, maxRetries: 1 });
       
       // Send packet 2 instead of packet 1 (out of sequence)
       const packet2 = XModemPacket.createData(2, new Uint8Array([4, 5, 6])); // Test with EOT byte in payload

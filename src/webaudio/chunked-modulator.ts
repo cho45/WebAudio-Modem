@@ -10,6 +10,8 @@
  * based on data content and modulation parameters.
  */
 
+import type { FSKCore } from './fsk-core';
+
 export interface ChunkResult {
   signal: Float32Array;
   isComplete: boolean;
@@ -18,11 +20,12 @@ export interface ChunkResult {
 }
 
 export class ChunkedModulator {
+  private fskCore: FSKCore;
   private pendingSignal: Float32Array | null = null;
   private samplePosition = 0;
   
-  constructor() {
-    // No configuration needed - this class adapts to any sample size requests
+  constructor(fskCore: FSKCore) {
+    this.fskCore = fskCore;
   }
   
   /**
