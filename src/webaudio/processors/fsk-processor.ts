@@ -15,7 +15,58 @@ import { RingBuffer } from '../../utils';
 interface WorkletMessage {
   id: string;
   type: 'configure' | 'modulate' | 'demodulate' | 'status' | 'reset' | 'abort';
-  data?: any;
+  data?: any
+}
+
+
+class MyAbortSignal {
+  private _aborted = false;
+  private listeners: (() => void)[] = [];
+  onabort: (() => any) | null = null;
+  reason: any = undefined;
+
+  get aborted() {
+    return this._aborted;
+  }
+
+  addEventListener(type: 'abort', listener: () => void, _options?: { once?: boolean }) {
+    if (type === 'abort') {
+      this.listeners.push(listener);
+    }
+  }
+
+  removeEventListener(type: 'abort', listener: () => void, _options?: { once?: boolean }) {
+    if (type === 'abort') {
+      this.listeners = this.listeners.filter(l => l !== listener);
+    }
+  }
+
+  dispatchEvent() {
+    if (this.onabort) {
+      this.onabort.call(this);
+    }
+    for (const listener of this.listeners) {
+      listener();
+    }
+    this.listeners = [];
+  }
+
+  throwIfAborted() {
+    if (this._aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+  }
+}
+
+class MyAbortController {
+  public signal = new MyAbortSignal();
+
+  abort() {
+    if (!this.signal.aborted) {
+      (this.signal as any)._aborted = true;
+      this.signal.dispatchEvent();
+    }
+  }
 }
 
 export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
@@ -25,7 +76,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   private awaitingCallback: (() => void) | null = null;
   private modulationWaitCallback: () => void = () => {};
   private instanceName: string;
-  private abortController: AbortController | null = null;
+  private abortController: MyAbortController | null = null;
   
   constructor(options?: AudioWorkletNodeOptions) {
     super();
@@ -60,7 +111,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     }
     
     // console.log(`[FSKProcessor:${this.instanceName}] Queuing modulation of ${data.length} bytes`);
-    this.pendingModulation = new ChunkedModulator();
+    this.pendingModulation = new ChunkedModulator(this.fskCore);
     await this.pendingModulation.startModulation(data);
     await new Promise<void>((resolve, reject) => {
       this.modulationWaitCallback = resolve;
@@ -162,7 +213,8 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
           if (this.abortController) {
             this.abortController.abort();
           }
-          this.abortController = new AbortController();
+          this.abortController = new MyAbortController();
+          // @ts-expect-error 
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
           this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
@@ -172,7 +224,8 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
           if (this.abortController) {
             this.abortController.abort();
           }
-          this.abortController = new AbortController();
+          this.abortController = new MyAbortController();
+          // @ts-expect-error 
           const demodulatedBytes = await this.demodulate({ signal: this.abortController.signal });
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
           break;
