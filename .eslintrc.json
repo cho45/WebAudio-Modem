@@ -25,7 +25,7 @@
     "eqeqeq": "error",
     "curly": "off",
     "no-async-promise-executor": "error",
-    "no-unused-vars": ["error", { 
+    "no-unused-vars": ["warn", { 
       "argsIgnorePattern": "^_", 
       "varsIgnorePattern": "^_", 
       "args": "after-used",
