@@ -18,43 +18,35 @@ interface WorkletMessage {
   data?: any
 }
 
-
+/**
+ * Note:
+ * AudioWorkletGlobalScope では標準の AbortController / AbortSignal が利用できません。
+ * そのため、キャンセル制御には独自実装の MyAbortController / MyAbortSignal を使用しています。
+ */
 class MyAbortSignal {
   private _aborted = false;
   private listeners: (() => void)[] = [];
   onabort: (() => any) | null = null;
   reason: any = undefined;
 
-  get aborted() {
-    return this._aborted;
+  get aborted() { return this._aborted; }
+
+  addEventListener(type: 'abort', listener: () => void) {
+    if (type === 'abort') this.listeners.push(listener);
   }
 
-  addEventListener(type: 'abort', listener: () => void, _options?: { once?: boolean }) {
-    if (type === 'abort') {
-      this.listeners.push(listener);
-    }
-  }
-
-  removeEventListener(type: 'abort', listener: () => void, _options?: { once?: boolean }) {
-    if (type === 'abort') {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    }
+  removeEventListener(type: 'abort', listener: () => void) {
+    if (type === 'abort') this.listeners = this.listeners.filter(l => l !== listener);
   }
 
   dispatchEvent() {
-    if (this.onabort) {
-      this.onabort.call(this);
-    }
-    for (const listener of this.listeners) {
-      listener();
-    }
+    if (this.onabort) this.onabort.call(this);
+    for (const listener of this.listeners) listener();
     this.listeners = [];
   }
 
   throwIfAborted() {
-    if (this._aborted) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
+    if (this._aborted) throw new DOMException('Aborted', 'AbortError');
   }
 }
 
