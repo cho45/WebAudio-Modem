@@ -12,37 +12,466 @@
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
         }
         
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-top: 20px;
-        }
-        
-        @media (max-width: 768px) {
-            .main-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .column {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        
-        .section { 
+        /* Common section styling */
+        section { 
             padding: 20px; 
+            margin: 20px 0;
             background: rgba(255, 255, 255, 0.95);
             border: none; 
             border-radius: 12px; 
             box-shadow: 0 8px 32px rgba(0,0,0,0.1);
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        /* 1. Quick Setup */
+        .quick-setup {
+            padding: 15px 20px;
+        }
+        
+        .setup-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .setup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .setup-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .setup-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .test-loopback-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b) !important;
+            font-size: 16px !important;
+            font-weight: 600 !important;
+            padding: 14px 20px !important;
+            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4) !important;
+            border: 2px solid #c0392b !important;
+        }
+        
+        .test-loopback-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #c0392b, #e74c3c) !important;
+            box-shadow: 0 6px 20px rgba(231, 76, 60, 0.6) !important;
+            transform: translateY(-2px) !important;
+        }
+        
+        .mode-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-left: auto;
+        }
+        
+        .data-input {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .data-type {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border: 2px solid #ecf0f1;
+            border-radius: 8px;
+            background: white;
+            transition: border-color 0.3s;
+        }
+        
+        .data-type:has(input[type="radio"]:checked) {
+            border-color: #3498db;
+            background: #ebf7ff;
+        }
+        
+        .image-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        
+        /* 2. Data Comparison */
+        .data-comparison h2 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1.4em;
+            color: #2c3e50;
+            font-weight: 300;
+        }
+        
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+        
+        .sent-data, .received-data {
+            text-align: center;
+        }
+        
+        .sent-data h3, .received-data h3 {
+            margin: 0 0 20px 0;
+            padding: 0;
+            background: none;
+            color: #34495e;
+            border-radius: 0;
+            font-size: 1.2em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 8px;
+        }
+        
+        .received-data h3 {
+            border-bottom-color: #27ae60;
+        }
+        
+        .data-preview {
+            min-height: 120px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 2px solid #ecf0f1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .sent-data .data-preview {
+            border-color: #3498db;
+            background: #ebf7ff;
+        }
+        
+        .received-data .data-preview {
+            border-color: #27ae60;
+            background: #eafaf1;
+        }
+        
+        .text-preview {
+            font-weight: 600;
+            color: #2c3e50;
+            text-align: center;
+            word-break: break-word;
+        }
+        
+        .image-preview {
+            border-radius: 6px;
+            border: 1px solid #bdc3c7;
+        }
+        
+        .size-info {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 8px;
+        }
+        
+        .placeholder {
+            color: #95a5a6;
+            font-style: italic;
+        }
+        
+        .comparison-result {
+            margin-top: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .comparison-result.match {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .comparison-result.mismatch {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        /* 3. Communication Control */
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+        
+        .sender-control h3, .receiver-control h3 {
+            margin: 0 0 20px 0;
+            padding: 0;
+            background: none;
+            color: #34495e;
+            border-radius: 0;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 8px;
+        }
+        
+        .receiver-control h3 {
+            border-bottom-color: #27ae60;
+        }
+        
+        .control-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .control-buttons button {
+            margin: 0;
+            position: relative;
+        }
+        
+        /* ボタンの重要度区別 */
+        .btn-primary-action {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            font-size: 16px;
+            font-weight: 600;
+            padding: 14px 20px;
+            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+            border: 2px solid #c0392b;
+        }
+        
+        .btn-primary-action:hover:not(:disabled) {
+            background: linear-gradient(135deg, #c0392b, #e74c3c);
+            box-shadow: 0 6px 20px rgba(231, 76, 60, 0.6);
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary-action {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            font-size: 14px;
+            padding: 12px 18px;
+        }
+        
+        .btn-stop {
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            font-size: 14px;
+            padding: 10px 16px;
+        }
+        
+        
+        .progress-info {
+            margin: 15px 0;
+        }
+        
+        /* 4. Activity Logs */
+        .logs-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 15px;
+        }
+        
+        .send-log h3, .receive-log h3 {
+            margin: 0 0 15px 0;
+            padding: 0;
+            background: none;
+            color: #34495e;
+            border-radius: 0;
+            text-align: center;
+            font-size: 1em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 6px;
+        }
+        
+        .receive-log h3 {
+            border-bottom-color: #27ae60;
+        }
+        
+        .log-content {
+            height: 150px;
+            padding: 10px;
+            background: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            overflow-y: auto;
+            border: 1px solid #34495e;
+        }
+        
+        .log-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        
+        /* 5. Signal Visualization */
+        .signal-visualization {
+            margin-top: 10px;
+        }
+        
+        .signal-visualization h3 {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            color: #34495e;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 2px solid #9b59b6;
+            padding-bottom: 8px;
+        }
+        
+        .debug-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .debug-section h5 {
+            margin: 0 0 10px 0;
+            color: #34495e;
+        }
+        
+        /* アニメーション効果 */
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+                transform: scale(1);
+            }
+            50% {
+                box-shadow: 0 6px 25px rgba(231, 76, 60, 0.8);
+                transform: scale(1.02);
+            }
+            100% {
+                box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+                transform: scale(1);
+            }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        /* 改善されたボタンスタイル */
+        button {
+            padding: 12px 20px;
+            margin: 5px;
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 500;
+            text-transform: none;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+        }
+        
+        button:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2980b9, #3498db);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+        }
+        
+        button:disabled {
+            background: #bdc3c7 !important;
+            color: #7f8c8d !important;
+            cursor: not-allowed;
+            box-shadow: none !important;
+            transform: none !important;
+            animation: none !important;
+        }
+        
+        /* セットアップボタンのスタイル改善 */
+        .setup-controls button {
+            padding: 10px 16px;
+            font-size: 14px;
+            border-radius: 6px;
+        }
+        
+        .setup-controls button.success {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+        }
+        
+        .setup-controls button.secondary {
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+        }
+        
+        /* レガシーボタンクラス - 後方互換性のため保持 */
+        button.mini {
+            padding: 4px 8px;
+            font-size: 11px;
+            min-width: auto;
+        }
+        
+        button.mini.success {
+            background: linear-gradient(135deg, #27ae60, #2ecc71) !important;
+            color: white !important;
+            font-weight: 600 !important;
+        }
+        
+        button.secondary {
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
+        }
+        
+        button.secondary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #7f8c8d, #95a5a6);
+            box-shadow: 0 4px 12px rgba(149, 165, 166, 0.4);
+        }
+        
+        button.success {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+        }
+        
+        button.success:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+        }
+        
+        button.danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+        }
+        
+        button.danger:hover:not(:disabled) {
+            background: linear-gradient(135deg, #c0392b, #e74c3c);
+            box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
         }
         
         h1 {
@@ -73,64 +502,8 @@
             font-weight: 600;
         }
         
-        button { 
-            padding: 12px 20px; 
-            margin: 5px; 
-            background: linear-gradient(135deg, #3498db, #2980b9); 
-            color: white; 
-            border: none; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-size: 14px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
-        }
-        
-        button:disabled { 
-            background: #bdc3c7; 
-            cursor: not-allowed;
-            box-shadow: none;
-            transform: none;
-            opacity: 0.4;
-            filter: grayscale(50%);
-        }
-        
-        button:hover:not(:disabled) { 
-            background: linear-gradient(135deg, #2980b9, #3498db);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
-        }
-        
-        button.danger {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
-            box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
-        }
-        
-        button.danger:hover:not(:disabled) {
-            background: linear-gradient(135deg, #c0392b, #e74c3c);
-            box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
-        }
-        
-        button.secondary {
-            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
-            box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
-        }
-        
-        button.secondary:hover:not(:disabled) {
-            background: linear-gradient(135deg, #7f8c8d, #95a5a6);
-            box-shadow: 0 4px 12px rgba(149, 165, 166, 0.4);
-        }
-        
-        button.success {
-            background: linear-gradient(135deg, #27ae60, #2ecc71);
-            box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
-        }
-        
-        button.success:hover:not(:disabled) {
-            background: linear-gradient(135deg, #2ecc71, #27ae60);
-            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
-        }
+        /* レガシーボタンスタイル - 無効化 */
+        /* button { ... } は下の改善されたボタンスタイルで上書き */
         
         input, select { 
             padding: 8px; 
@@ -264,12 +637,6 @@
         }
         
         .received-data {
-            padding: 15px;
-            background: #ecf0f1;
-            border-radius: 8px;
-            min-height: 120px;
-            margin: 15px 0;
-            border: 2px solid #bdc3c7;
         }
         
         .received-text {
@@ -296,7 +663,7 @@
         }
         
         .image-preview img {
-            max-width: 200px;
+            max-width: 500px;
             height: auto;
             border: 2px solid #3498db;
             border-radius: 8px;
@@ -466,6 +833,96 @@
             margin-right: 8px;
             transform: scale(1.2);
         }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                max-width: 100%;
+                padding: 0 10px;
+            }
+            
+            .comparison-grid, .control-grid, .logs-grid, .debug-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .setup-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 15px;
+            }
+            
+            .setup-left {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            
+            .setup-right {
+                justify-content: center;
+            }
+            
+            .mode-indicator {
+                margin-left: 0;
+                justify-content: center;
+            }
+            
+            .data-input {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .data-type {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .image-input {
+                flex-direction: column;
+            }
+            
+            section {
+                margin: 10px 0;
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            .data-comparison h2 {
+                font-size: 1.2em;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 0 5px;
+            }
+            
+            section {
+                padding: 10px;
+            }
+            
+            .control-buttons {
+                gap: 8px;
+            }
+            
+            .control-buttons button {
+                font-size: 12px;
+                padding: 8px 12px;
+            }
+            
+            .log-content {
+                height: 120px;
+                font-size: 10px;
+            }
+            
+            .image-preview {
+                max-width: 300px;
+                max-height:300px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -473,208 +930,180 @@
         <div class="container">
             <h1>WebAudio-Modem Demo</h1>
             
-            <div class="instructions">
-                <h3>使用方法 (XModem Protocol)</h3>
-                <ol>
-                    <li><strong>Initialize System</strong> をクリックしてシステムを初期化</li>
-                    <li><strong>🔄 XModem Loopback Test</strong> で内部テスト（推奨・マイク不要）</li>
-                    <li><strong>🎤 Enable Microphone</strong> でマイク権限を取得（実際の通信用）</li>
-                    <li><strong>Using: Loopback/Microphone</strong> で入力ソースを切り替え</li>
-                    <li><strong>Send/Receive</strong> でXModem通信を実行</li>
-                </ol>
-                <p><strong>XModem特徴:</strong> エラー検出・訂正、自動再送、確実なデータ転送</p>
-            </div>
-            
-            <div class="section">
-                <h2>System Control</h2>
-                <div class="controls">
-                    <button @click="initializeSystem" :disabled="systemReady">{{ systemReady ? 'System Ready ✓' : 'Initialize System' }}</button>
-                    <button @click="testXModemLoopback" :disabled="!systemReady" class="secondary">🔄 XModem Loopback Test (Recommended)</button>
-                    <button @click="requestMicrophonePermission" :disabled="microphonePermission || !systemReady" class="success">{{ microphonePermission ? 'Microphone Ready ✓' : '🎤 Enable Microphone' }}</button>
-                    <button @click="toggleInputSource" :disabled="!systemReady || !microphonePermission" class="secondary">{{ inputSource === 'loopback' ? '🔄 Using: Loopback' : '🎤 Using: Microphone' }}</button>
-                    <button @click="toggleDebug" class="secondary">{{ showDebug ? 'Hide Debug' : 'Show Debug' }}</button>
+            <!-- 1. Quick Setup -->
+            <section class="quick-setup">
+                <div class="setup-header">
+                    <div class="setup-left">
+                        <button @click="initializeSystem" :disabled="systemReady">
+                            {{ systemReady ? 'System Ready ✓' : 'Initialize System' }}
+                        </button>
+                        <button @click="testXModemLoopback" :disabled="!systemReady || !canSend" 
+                                :class="['test-loopback-btn', { 'pulse': systemReady && !microphonePermission }]">
+                            🔄 Test Loopback
+                        </button>
+                    </div>
+                    <div class="setup-right">
+                        <span class="mode-indicator">
+                            Using: {{ inputSource === 'loopback' ? '🔄 Loopback' : '🎤 Microphone' }}
+                            <button @click="toggleMicrophoneMode" :disabled="!systemReady" 
+                                    :class="['mini', { 'success': !microphonePermission && systemReady }]">
+                                {{ microphonePermission ? 'Switch' : '🎤 Enable Mic' }}
+                            </button>
+                        </span>
+                    </div>
+                </div>
+                <div class="data-input">
+                    <label class="data-type">
+                        <input type="radio" v-model="sendDataType" value="text"> 📝 Text
+                        <input type="text" v-model="inputText" placeholder="Enter text to send" v-show="sendDataType === 'text'">
+                    </label>
+                    <label class="data-type">
+                        <input type="radio" v-model="sendDataType" value="image"> 🖼️ Image
+                        <div v-show="sendDataType === 'image'" class="image-input">
+                            <select v-model="sampleImageSelection" @change="onSampleImageSelect">
+                                <option v-for="sample in sampleImages" :key="sample.value" :value="sample.value">
+                                    {{ sample.name }}
+                                </option>
+                            </select>
+                            <input type="file" @change="onImageSelect" accept="image/*">
+                        </div>
+                    </label>
                 </div>
                 <div :class="['status', systemStatus.type]">{{ systemStatus.message }}</div>
-            </div>
-            
-            <div class="main-grid">
-                <!-- Sender Column -->
-                <div class="column">
-                    <div class="section">
-                        <h2>📤 Sender</h2>
-                        
-                        <!-- Sender Visualizer -->
-                        <div class="visualizer">
-                            <div class="visualizer-label">📊 Waveform</div>
-                            <canvas ref="senderWaveformCanvas" width="400" height="100"></canvas>
-                            <div class="visualizer-label">🌈 Spectrum</div>
-                            <canvas ref="senderSpectrumCanvas" width="400" height="100"></canvas>
+            </section>
+
+            <!-- 2. Data Comparison -->
+            <section class="data-comparison">
+                <h2>TRANSMISSION COMPARISON</h2>
+                <div class="comparison-grid">
+                    <div class="sent-data">
+                        <h3>📤 SENT DATA</h3>
+                        <div class="data-preview">
+                            <div v-if="sendDataType === 'text' && inputText.trim()">
+                                <div class="text-preview">Text: "{{ inputText }}"</div>
+                                <div class="size-info">Size: {{ textDataSize }} bytes</div>
+                            </div>
+                            <div v-else-if="sendDataType === 'image' && selectedImage">
+                                <img :src="selectedImage.preview" alt="Selected image" class="image-preview">
+                                <div class="size-info">{{ selectedImage.name }} - {{ selectedImage.size }} bytes</div>
+                            </div>
+                            <div v-else class="placeholder">No data selected</div>
                         </div>
-                        
-                        <!-- Sender Debug Info -->
-                        <div v-show="showDebug" class="debug-panel">
-                            <h4>Sender Debug Info</h4>
+                    </div>
+                    <div class="received-data">
+                        <h3>📥 RECEIVED DATA</h3>
+                        <div class="data-preview">
+                            <div v-if="!receivedData.length && !receivingSession.currentTransfer" class="placeholder">No data received</div>
+                            <div v-if="receivingSession.currentTransfer">
+                                <div v-if="receivingSession.currentTransferData.dataType === 'text'" class="text-preview">
+                                    Receiving text... ({{ receivingSession.currentTransferData.totalSize }} bytes)
+                                </div>
+                                <div v-else-if="receivingSession.currentTransferData.dataType === 'image'">
+                                    <img v-if="receivingSession.currentTransferData.previewUrl" 
+                                         :src="receivingSession.currentTransferData.previewUrl" 
+                                         alt="Receiving image" class="image-preview">
+                                    <div class="size-info">Receiving... {{ receivingSession.currentTransferData.totalSize }} bytes</div>
+                                </div>
+                            </div>
+                            <div v-for="(data, index) in receivedData" :key="index" class="completed-data">
+                                <div v-if="data.type === 'text'" class="text-preview">
+                                    Text: "{{ data.content }}"
+                                    <div class="comparison-result">{{ getComparisonResult(data) }}</div>
+                                </div>
+                                <div v-if="data.type === 'image'">
+                                    <img :src="data.content" alt="Received image" class="image-preview">
+                                    <div class="comparison-result">{{ getComparisonResult(data) }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <!-- 4. Activity Logs -->
+            <section class="activity-logs">
+                <div class="logs-grid">
+                    <div class="send-log">
+                        <h3>📤 SEND LOG</h3>
+                        <div class="log-content" ref="sendLogContent">{{ sendLog || 'No send activity yet' }}</div>
+                    </div>
+                    <div class="receive-log">
+                        <h3>📥 RECEIVE LOG</h3>
+                        <div class="log-content" ref="receiveLogContent">{{ receiveLog || 'No receive activity yet' }}</div>
+                    </div>
+                </div>
+                <div class="log-controls">
+                    <button @click="clearLogs">Clear Logs</button>
+                    <button @click="clearAll">Clear All Data</button>
+                </div>
+            </section>
+            <!-- 3. Communication Control -->
+            <section class="communication-control">
+                <div class="control-grid">
+                    <div class="sender-control">
+                        <h3>📤 Sender Control</h3>
+                        <div class="control-buttons">
+                            <button @click="sendData" :disabled="!canSendWithMic" 
+                                    :class="['btn-secondary-action', { 'pulse': microphonePermission && !isSending }]">
+                                📤 Send via Microphone
+                            </button>
+                            <button @click="stopSending" :disabled="!isSending" class="btn-stop">
+                                ⏹ Stop Sending
+                            </button>
+                        </div>
+                        <div :class="['status', sendStatus.type]">{{ sendStatus.message }}</div>
+                    </div>
+                    <div class="receiver-control">
+                        <h3>📥 Receiver Control</h3>
+                        <div class="control-buttons">
+                            <button @click="startReceiving" :disabled="!canReceiveWithMic || receivingSession.active" 
+                                    :class="['btn-secondary-action', { 'pulse': microphonePermission && !receivingSession.active }]">
+                                📥 Start Listening
+                            </button>
+                            <button @click="stopReceiving" :disabled="!receivingSession.active" class="btn-stop">
+                                ⏹ Stop Listening
+                            </button>
+                        </div>
+                        <div v-if="receivingSession.active" class="progress-info">
+                            <div class="progress-bar">
+                                <div class="progress-text">
+                                    {{ receivingSession.fragments.length }} fragments, {{ receivingSession.totalReceived }} bytes
+                                    <span v-if="receivingSession.bytesPerSecond > 0"> @ {{ receivingSession.bytesPerSecond }}B/s</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div :class="['status', receiveStatus.type]">{{ receiveStatus.message }}</div>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- 5. Signal Visualization -->
+            <section class="signal-visualization" v-show="showVisualization">
+                <h3>📊 Signal Visualization (Optional) 
+                    <div>
+                        <button @click="toggleVisualization" class="mini">{{ showVisualization ? 'Hide' : 'Show' }}</button>
+                        <button @click="toggleDebug" class="mini secondary">{{ showDebug ? 'Hide Debug' : 'Show Debug' }}</button>
+                    </div>
+                </h3>
+                <div class="visualizer">
+                    <div class="visualizer-label">Audio Waveform (Demodulator Input)</div>
+                    <canvas ref="visualizerCanvas" width="800" height="120"></canvas>
+                </div>
+                <!-- Debug Info -->
+                <div v-show="showDebug" class="debug-panel">
+                    <h4>System Debug Info</h4>
+                    <div class="debug-grid">
+                        <div class="debug-section">
+                            <h5>Sender</h5>
                             <div class="debug-content">{{ senderDebugInfo }}</div>
                         </div>
-                        
-                        <div :class="['status', sendStatus.type]">{{ sendStatus.message }}</div>
-                        
-                        <div class="button-group">
-                            <button @click="sendData" :disabled="!canSendWithMic" class="success">
-                                📡 Send {{ sendDataType === 'text' ? 'Text' : 'Image' }}
-                            </button>
-                            <button @click="stopSending" :disabled="!isSending" class="danger">
-                                ⏹️ Stop
-                            </button>
-                        </div>
-                        
-                        <!-- Data Type Selection -->
-                        <div class="data-type-selector">
-                            <label>
-                                <input type="radio" v-model="sendDataType" value="text"> 📝 Text
-                            </label>
-                            <label>
-                                <input type="radio" v-model="sendDataType" value="image"> 🖼️ Image
-                            </label>
-                        </div>
-                        
-                        <!-- Text Input -->
-                        <div v-show="sendDataType === 'text'">
-                            <label for="input-text">送信テキスト:</label>
-                            <input type="text" v-model="inputText" placeholder="Enter text to send">
-                        </div>
-                        
-                        <!-- Image Input -->
-                        <div v-show="sendDataType === 'image'">
-                            <h4>📷 Image Source</h4>
-                            
-                            <!-- Sample Images Selection -->
-                            <div class="image-source-section">
-                                <label for="sample-select">Sample Images:</label>
-                                <select v-model="sampleImageSelection" @change="onSampleImageSelect" id="sample-select">
-                                    <option v-for="sample in sampleImages" :key="sample.value" :value="sample.value">
-                                        {{ sample.name }}
-                                    </option>
-                                </select>
-                                <p v-if="sampleImageSelection" class="sample-description">
-                                    {{ sampleImages.find(s => s.value === sampleImageSelection)?.description }}
-                                </p>
-                            </div>
-                            
-                            <!-- Custom File Upload -->
-                            <div class="image-source-section">
-                                <label for="custom-file">Or upload your own:</label>
-                                <input type="file" @change="onImageSelect" accept="image/*" id="custom-file">
-                            </div>
-                            
-                            <!-- Image Preview -->
-                            <div v-if="selectedImage" class="image-preview">
-                                <img :src="selectedImage.preview" alt="Selected image">
-                                <p>
-                                    <strong>{{ selectedImage.name }}</strong> ({{ selectedImage.size }} bytes)
-                                    <span v-if="selectedImage.source === 'sample'" class="source-badge">📁 Sample</span>
-                                    <span v-if="selectedImage.source === 'custom'" class="source-badge">📤 Custom</span>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Receiver Column -->
-                <div class="column">
-                    <div class="section">
-                        <h2>📥 Receiver</h2>
-                        
-                        <!-- Receiver Visualizer -->
-                        <div class="visualizer">
-                            <div class="visualizer-label">📊 Waveform</div>
-                            <canvas ref="receiverWaveformCanvas" width="400" height="100"></canvas>
-                            <div class="visualizer-label">🌈 Spectrum</div>
-                            <canvas ref="receiverSpectrumCanvas" width="400" height="100"></canvas>
-                        </div>
-                        
-                        <!-- Receiver Debug Info -->
-                        <div v-show="showDebug" class="debug-panel">
-                            <h4>Receiver Debug Info</h4>
+                        <div class="debug-section">
+                            <h5>Receiver</h5>
                             <div class="debug-content">{{ receiverDebugInfo }}</div>
                         </div>
-                        
-                        <div :class="['status', receiveStatus.type]">{{ receiveStatus.message }}</div>
-                        
-                        <div class="button-group">
-                            <button @click="startReceiving" :disabled="!canReceiveWithMic || receivingSession.active" class="success">
-                                🎤 Start Receiving
-                            </button>
-                            <button @click="stopReceiving" :disabled="!receivingSession.active" class="danger">
-                                ⏹️ Stop
-                            </button>
-                        </div>
-                        
-                        <!-- Receiving Progress -->
-                        <div v-if="receivingSession.active && receivingSession.fragments.length > 0">
-                            <h4>📊 Reception Progress</h4>
-                            <div class="progress-bar">
-                                <div class="progress-bar-fill" style="width: 100%">
-                                    <div class="progress-text">
-                                        {{ receivingSession.fragments.length }} fragments, {{ receivingSession.totalReceived }} bytes
-                                        <span v-if="receivingSession.bytesPerSecond > 0"> @ {{ receivingSession.bytesPerSecond }}B/s</span>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Fragments List -->
-                            <div v-if="receivingSession.fragments.length > 0" class="fragments-container">
-                                <div v-for="(fragment, index) in receivingSession.fragments" :key="index" class="fragment-item">
-                                    <div class="fragment-seq">#{{ fragment.seqNum }}</div>
-                                    <div class="fragment-info">{{ fragment.size }} bytes</div>
-                                    <div class="fragment-time">{{ fragment.timestamp }}</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Received Image (Live Preview) -->
-                        <div v-if="receivingSession.currentTransfer && receivingSession.currentTransferData.dataType === 'image'" class="section">
-                            <h3>🖼️ Received Image</h3>
-                            <div class="received-data">
-                                <div v-if="receivingSession.currentTransferData.previewUrl">
-                                    <img :src="receivingSession.currentTransferData.previewUrl" alt="Receiving image" class="received-image">
-                                    <p><strong>Size:</strong> {{ receivingSession.currentTransferData.totalSize }} bytes (receiving...)</p>
-                                </div>
-                                <div v-else>
-                                    <p>🔄 Receiving image data...</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Received Text/Completed Data -->
-                        <div class="section">
-                            <h3>📥 Completed Receptions</h3>
-                            <div class="received-data">
-                                <div v-if="!receivedData.length">No data received</div>
-                                <div v-for="(data, index) in receivedData" :key="index">
-                                    <div v-if="data.type === 'text'" class="received-text">
-                                        <strong>Text:</strong> {{ data.content }}
-                                    </div>
-                                    <div v-if="data.type === 'image'">
-                                        <strong>Final Image:</strong><br>
-                                        <img :src="data.content" alt="Received image" class="received-image">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
                     </div>
                 </div>
-            </div>
-            
-            <!-- System Log (Full Width) -->
-            <div class="section system-log">
-                <h2>System Log</h2>
-                <textarea v-model="systemLog" readonly placeholder="System logs will appear here..."></textarea>
-                <div class="controls">
-                    <button @click="clearAll">Clear All</button>
-                </div>
-            </div>
+            </section>
         </div>
     </div>
     

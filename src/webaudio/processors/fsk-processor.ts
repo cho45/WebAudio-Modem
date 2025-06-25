@@ -108,7 +108,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     await new Promise<void>((resolve, reject) => {
       this.modulationWaitCallback = resolve;
       options?.signal.addEventListener('abort', () => {
-        console.warn(`[FSKProcessor:${this.instanceName}] Modulation aborted`);
         this.pendingModulation = null;
         this.modulationWaitCallback = () => {};
         reject(new Error('Modulation aborted'));
@@ -126,12 +125,11 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       // Return currently buffered demodulated data
       const availableBytes = this.demodulatedBuffer.length;
       if (availableBytes === 0) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
           this.awaitingCallback = resolve;
           options?.signal.addEventListener('abort', () => {
-            console.warn(`[FSKProcessor:${this.instanceName}] Demodulation aborted`);
             this.awaitingCallback = null;
-            resolve();
+            reject(new Error('Demodulation aborted'));
           }, { once: true });
         });
       }
