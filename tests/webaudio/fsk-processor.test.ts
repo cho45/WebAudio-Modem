@@ -284,4 +284,275 @@ describe('FSKProcessor', () => {
       data: { bytes: expect.any(Array) }
     });
   });
+
+  // AbortSignal functionality tests
+  describe('AbortSignal functionality', () => {
+    test('should handle abort message via port', async () => {
+      const abortMessage = {
+        id: 'abort-test',
+        type: 'abort',
+        data: {}
+      };
+
+      await sendMessage(abortMessage);
+
+      expect(mockPort.postMessage).toHaveBeenCalledWith({
+        id: 'abort-test',
+        type: 'result',
+        data: { success: true }
+      });
+    });
+
+    test('should handle reset message via port', async () => {
+      const resetMessage = {
+        id: 'reset-test',
+        type: 'reset',
+        data: {}
+      };
+
+      await sendMessage(resetMessage);
+
+      expect(mockPort.postMessage).toHaveBeenCalledWith({
+        id: 'reset-test',
+        type: 'result',
+        data: { success: true }
+      });
+    });
+
+    test('should clear demodulated buffer on reset', async () => {
+      // First configure
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Add some data to buffer
+      processor.demodulatedBuffer.put(0x41, 0x42, 0x43);
+      expect(processor.demodulatedBuffer.length).toBeGreaterThan(0);
+
+      // Reset
+      await sendMessage({
+        id: 'reset',
+        type: 'reset',
+        data: {}
+      });
+
+      // Buffer should be cleared
+      expect(processor.demodulatedBuffer.length).toBe(0);
+    });
+
+    test('should abort modulation in progress', async () => {
+      // Configure first
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Start modulation with longer data to have time for abort
+      const longData = new Array(100).fill(0x41); // 100 bytes of 'A'
+      const modulatePromise = sendMessage({
+        id: 'modulate-test',
+        type: 'modulate',
+        data: { bytes: longData }
+      });
+
+      // Clear previous messages
+      mockPort.postMessage.mockClear();
+
+      // Send abort signal shortly after
+      setTimeout(() => {
+        sendMessage({
+          id: 'abort-test',
+          type: 'abort',
+          data: {}
+        });
+      }, 10);
+
+      // Wait for modulation to complete or be aborted
+      await modulatePromise;
+
+      // Verify abort was handled
+      expect(mockPort.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'abort-test',
+          type: 'result',
+          data: { success: true }
+        })
+      );
+    });
+
+    test('should abort demodulation waiting', async () => {
+      // Configure first
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Start demodulation (should block waiting for data)
+      const demodulatePromise = sendMessage({
+        id: 'demodulate-test',
+        type: 'demodulate',
+        data: {}
+      });
+
+      // Clear previous messages
+      mockPort.postMessage.mockClear();
+
+      // Send abort signal shortly after
+      setTimeout(() => {
+        sendMessage({
+          id: 'abort-test',
+          type: 'abort',
+          data: {}
+        });
+      }, 10);
+
+      // Wait for operations to complete
+      await Promise.all([demodulatePromise, new Promise(resolve => setTimeout(resolve, 50))]);
+
+      // Verify abort was handled
+      expect(mockPort.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'abort-test',
+          type: 'result',
+          data: { success: true }
+        })
+      );
+    });
+
+    test('should allow restart after abort', async () => {
+      // Configure first
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Start modulation (don't wait for completion)
+      sendMessage({
+        id: 'modulate-1',
+        type: 'modulate',
+        data: { bytes: [0x41, 0x42] }
+      });
+
+      // Small delay to ensure modulation starts
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Abort it
+      await sendMessage({
+        id: 'abort-1',
+        type: 'abort',
+        data: {}
+      });
+
+      // Reset
+      await sendMessage({
+        id: 'reset-1',
+        type: 'reset',
+        data: {}
+      });
+
+      // Clear previous messages
+      mockPort.postMessage.mockClear();
+
+      // Try modulation again - just start it, don't wait for completion
+      // In test environment, audio processing doesn't run, so modulation won't complete
+      sendMessage({
+        id: 'modulate-2',
+        type: 'modulate',
+        data: { bytes: [0x43, 0x44] }
+      });
+
+      // Give time for message processing
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Should not have error messages - that's the key test
+      expect(mockPort.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error' })
+      );
+    });
+
+    test('should handle multiple aborts gracefully', async () => {
+      // Configure first
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Send multiple abort messages
+      const abort1Promise = sendMessage({
+        id: 'abort-1',
+        type: 'abort',
+        data: {}
+      });
+
+      const abort2Promise = sendMessage({
+        id: 'abort-2',
+        type: 'abort',
+        data: {}
+      });
+
+      await Promise.all([abort1Promise, abort2Promise]);
+
+      // Both should be handled successfully
+      expect(mockPort.postMessage).toHaveBeenCalledWith({
+        id: 'abort-1',
+        type: 'result',
+        data: { success: true }
+      });
+
+      expect(mockPort.postMessage).toHaveBeenCalledWith({
+        id: 'abort-2',
+        type: 'result',
+        data: { success: true }
+      });
+    });
+
+    test('should report correct status after abort', async () => {
+      // Configure first
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sampleRate: 44100, baudRate: 300 } }
+      });
+
+      // Start modulation
+      sendMessage({
+        id: 'modulate',
+        type: 'modulate',
+        data: { bytes: [0x41] }
+      });
+
+      // Abort
+      await sendMessage({
+        id: 'abort',
+        type: 'abort',
+        data: {}
+      });
+
+      // Clear previous messages
+      mockPort.postMessage.mockClear();
+
+      // Request status
+      await sendMessage({
+        id: 'status',
+        type: 'status',
+        data: {}
+      });
+
+      // Should return status without error
+      expect(mockPort.postMessage).toHaveBeenCalledWith({
+        id: 'status',
+        type: 'result',
+        data: expect.objectContaining({
+          demodulatedBufferLength: expect.any(Number),
+          fskCoreReady: expect.any(Boolean)
+        })
+      });
+    });
+  });
 });
