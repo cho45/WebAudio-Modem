@@ -48,8 +48,8 @@ const app = createApp({
     });
     
     const xmodemConfig = reactive({
-      timeoutMs: 5000,
-      maxRetries: 3,
+      timeoutMs: 3000,
+      maxRetries: 5,
       maxPayloadSize: 255
     });
     
@@ -366,7 +366,7 @@ const app = createApp({
       logSend(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
       
       // XModem設定をTransportに適用
-      await senderTransport.value.configure(toRaw(xmodemConfig));
+      await senderTransport.value.configure({ ...toRaw(xmodemConfig), timeoutMs: xmodemConfig.timeoutMs * xmodemConfig.maxRetries });
       logSend(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
     };
     
