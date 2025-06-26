@@ -2,30 +2,34 @@
 <html>
 <head>
     <title>WebAudio-Modem Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             margin: 0;
             padding: 20px; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #ffffff;
+            color: #1a1a1a;
             min-height: 100vh;
+            line-height: 1.6;
         }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
+            padding: 0 20px;
         }
         
         /* Common section styling */
         section { 
-            padding: 20px; 
+            padding: 24px; 
             margin: 20px 0;
-            background: rgba(255, 255, 255, 0.95);
-            border: none; 
+            background: #ffffff;
+            border: 1px solid #e5e5e5; 
             border-radius: 12px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         }
         
         /* 1. Quick Setup */
@@ -99,15 +103,15 @@
             align-items: center;
             gap: 10px;
             padding: 8px 12px;
-            border: 2px solid #ecf0f1;
+            border: 2px solid #e5e5e5;
             border-radius: 8px;
             background: white;
             transition: border-color 0.3s;
         }
         
         .data-type:has(input[type="radio"]:checked) {
-            border-color: #3498db;
-            background: #ebf7ff;
+            border-color: #0066cc;
+            background: #f0f8ff;
         }
         
         .image-input {
@@ -139,26 +143,26 @@
             margin: 0 0 20px 0;
             padding: 0;
             background: none;
-            color: #34495e;
+            color: #1a1a1a;
             border-radius: 0;
             font-size: 1.2em;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 1px;
-            border-bottom: 3px solid #3498db;
+            border-bottom: 3px solid #0066cc;
             padding-bottom: 8px;
         }
         
         .received-data h3 {
-            border-bottom-color: #27ae60;
+            border-bottom-color: #22c55e;
         }
         
         .data-preview {
             min-height: 120px;
             padding: 15px;
-            background: #f8f9fa;
+            background: #fafafa;
             border-radius: 8px;
-            border: 2px solid #ecf0f1;
+            border: 2px solid #e5e5e5;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -166,35 +170,35 @@
         }
         
         .sent-data .data-preview {
-            border-color: #3498db;
-            background: #ebf7ff;
+            border-color: #0066cc;
+            background: #f0f8ff;
         }
         
         .received-data .data-preview {
-            border-color: #27ae60;
-            background: #eafaf1;
+            border-color: #22c55e;
+            background: #f0fdf4;
         }
         
         .text-preview {
             font-weight: 600;
-            color: #2c3e50;
+            color: #1a1a1a;
             text-align: center;
             word-break: break-word;
         }
         
         .image-preview {
             border-radius: 6px;
-            border: 1px solid #bdc3c7;
+            border: 1px solid #e5e5e5;
         }
         
         .size-info {
             font-size: 12px;
-            color: #7f8c8d;
+            color: #666666;
             margin-top: 8px;
         }
         
         .placeholder {
-            color: #95a5a6;
+            color: #999999;
             font-style: italic;
         }
         
@@ -227,19 +231,19 @@
             margin: 0 0 20px 0;
             padding: 0;
             background: none;
-            color: #34495e;
+            color: #1a1a1a;
             border-radius: 0;
             text-align: center;
             font-size: 1.2em;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 1px;
-            border-bottom: 3px solid #3498db;
+            border-bottom: 3px solid #0066cc;
             padding-bottom: 8px;
         }
         
         .receiver-control h3 {
-            border-bottom-color: #27ae60;
+            border-bottom-color: #22c55e;
         }
         
         .control-buttons {
@@ -387,7 +391,7 @@
         button {
             padding: 12px 20px;
             margin: 5px;
-            background: linear-gradient(135deg, #3498db, #2980b9);
+            background: #1a1a1a;
             color: white;
             border: none;
             border-radius: 8px;
@@ -395,21 +399,21 @@
             font-size: 14px;
             font-weight: 500;
             text-transform: none;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.3px;
             cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         button:hover:not(:disabled) {
-            background: linear-gradient(135deg, #2980b9, #3498db);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+            background: #333333;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
         }
         
         button:disabled {
-            background: #bdc3c7 !important;
-            color: #7f8c8d !important;
+            background: #e5e5e5 !important;
+            color: #999999 !important;
             cursor: not-allowed;
             box-shadow: none !important;
             transform: none !important;
@@ -476,17 +480,17 @@
         
         h1 {
             text-align: center;
-            color: white;
-            margin-bottom: 30px;
+            color: #1a1a1a;
+            margin-bottom: 40px;
             font-size: 2.5em;
-            font-weight: 300;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            font-weight: 700;
+            letter-spacing: -0.02em;
         }
         
         h2 {
-            color: #2c3e50;
+            color: #1a1a1a;
             margin-top: 0;
-            border-bottom: 3px solid #3498db;
+            border-bottom: 2px solid #e5e5e5;
             padding-bottom: 12px;
             font-size: 1.4em;
             font-weight: 600;
@@ -496,7 +500,7 @@
         }
         
         h3 {
-            color: #34495e;
+            color: #1a1a1a;
             margin-top: 0;
             font-size: 1.1em;
             font-weight: 600;
@@ -506,11 +510,18 @@
         /* button { ... } は下の改善されたボタンスタイルで上書き */
         
         input, select { 
-            padding: 8px; 
+            padding: 10px 12px; 
             margin: 5px; 
-            border: 1px solid #ddd; 
-            border-radius: 3px; 
+            border: 2px solid #e5e5e5; 
+            border-radius: 8px; 
             font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s ease;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #0066cc;
         }
         
         input[type="text"] { 
