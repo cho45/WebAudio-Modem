@@ -13,8 +13,15 @@ interface WorkletMessage {
   data?: any;
 }
 
+interface PendingOperation {
+  resolve: Function;
+  reject: Function;
+  abortHandler?: () => void;
+  signal?: AbortSignal;
+}
+
 export class WebAudioDataChannel extends AudioWorkletNode implements IDataChannel {
-  private pendingOperations = new Map<string, { resolve: Function, reject: Function }>();
+  private pendingOperations = new Map<string, PendingOperation>();
   private operationCounter = 0;
   private instanceName: string;
   
@@ -53,10 +60,16 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
     const operation = this.pendingOperations.get(id);
+    console.log(`[WebAudioDataChannel:${this.instanceName}] Received message:`, { id, type, data });
     
     if (!operation) {
       console.warn(`[WebAudioDataChannel:${this.instanceName}] Received message for unknown operation: ${id}`);
       return;
+    }
+    
+    // Clean up abort handler if it exists (this is the key fix!)
+    if (operation.abortHandler && operation.signal) {
+      operation.signal.removeEventListener('abort', operation.abortHandler);
     }
     
     this.pendingOperations.delete(id);
@@ -71,11 +84,38 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
     }
   }
   
-  private sendMessage(type: string, data?: any): Promise<any> {
+  private sendMessage(type: string, data?: any, signal?: AbortSignal): Promise<any> {
     const id = `${this.instanceName}_op_${++this.operationCounter}`;
     
     return new Promise((resolve, reject) => {
-      this.pendingOperations.set(id, { resolve, reject });
+      // Check if already aborted
+      if (signal?.aborted) {
+        reject(new Error('Operation aborted'));
+        return;
+      }
+
+      let abortHandler: (() => void) | undefined;
+      
+      // Set up abort handling if signal provided
+      if (signal) {
+        abortHandler = () => {
+          const operation = this.pendingOperations.get(id);
+          if (operation) {
+            this.port.postMessage({ id: null, type: 'abort', data: {} });
+          }
+        };
+        
+        signal.addEventListener('abort', abortHandler, { once: true });
+      }
+
+      this.pendingOperations.set(id, { 
+        resolve, 
+        reject, 
+        abortHandler,
+        signal 
+      });
+      
+      console.log(`[WebAudioDataChannel:${this.instanceName}] Sending message:`, { id, type, data });
       this.port.postMessage({ id, type, data });
     });
   }
@@ -92,24 +132,36 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    */
   async modulate(data: Uint8Array, options?: {signal?: AbortSignal }): Promise<void> {
     console.log(`[WebAudioDataChannel:${this.instanceName}] Modulating ${data.length} bytes`);
-    options?.signal?.addEventListener('abort', async () => {
-      console.warn(`[WebAudioDataChannel:${this.instanceName}] Modulation aborted`);
-      await this.sendMessage('abort', {});
-    }, { once: true });
 
-    const result = await this.sendMessage('modulate', { bytes: Array.from(data) });
-    
-    if (!result.success) {
-      throw new Error('Modulation failed');
+    try {
+      const result = await this.sendMessage('modulate', { bytes: Array.from(data) }, options?.signal);
+      
+      if (!result.success) {
+        throw new Error('Modulation failed');
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Operation aborted') {
+        console.warn(`[WebAudioDataChannel:${this.instanceName}] Modulation aborted`);
+        throw new Error('FSK Processor Modulation aborted');
+      }
+      throw error;
     }
   }
   
   /**
    * 復調されたデータを取得（データが利用可能になるまで待機）
    */
-  async demodulate(): Promise<Uint8Array> {
-    const result = await this.sendMessage('demodulate', {});
-    return new Uint8Array(result.bytes || []);
+  async demodulate(options?: {signal?: AbortSignal}): Promise<Uint8Array> {
+    try {
+      const result = await this.sendMessage('demodulate', {}, options?.signal);
+      return new Uint8Array(result.bytes || []);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Operation aborted') {
+        console.warn(`[WebAudioDataChannel:${this.instanceName}] Demodulation aborted`);
+        throw new Error('Demodulation aborted');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -124,10 +176,15 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
    */
   async reset(): Promise<void> {
     await this.sendMessage('abort', {});
-    // Clear pending operations
-    // abort によって reject されるので たぶんいらない
+    // Clear pending operations with proper AbortSignal cleanup
     for (const [_id, operation] of this.pendingOperations) {
       console.warn(`[WebAudioDataChannel:${this.instanceName}] Resetting operation: ${_id}`);
+      
+      // Clean up abort handler if it exists
+      if (operation.abortHandler && operation.signal) {
+        operation.signal.removeEventListener('abort', operation.abortHandler);
+      }
+      
       operation.reject(new Error('DataChannel reset'));
     }
     this.pendingOperations.clear();

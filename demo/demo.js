@@ -488,7 +488,6 @@ const app = createApp({
       
       // 接続をリセット（マイクストリーム自体は保持）
       if (senderDataChannel.value) {
-        senderDataChannel.value.disconnect();
         logSend('Disconnected sender and reset connections');
       }
       
@@ -837,7 +836,6 @@ const app = createApp({
       
       // 接続をリセット（マイクストリーム自体は保持）
       if (receiverDataChannel.value) {
-        receiverDataChannel.value.disconnect();
         logReceive('Disconnected receiver and reset connections');
       }
       

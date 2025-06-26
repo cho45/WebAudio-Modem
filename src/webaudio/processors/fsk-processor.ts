@@ -204,7 +204,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             this.abortController.abort();
             this.abortController = null;
           }
-          this.port.postMessage({ id, type: 'result', data: { success: true } });
+          if (id) this.port.postMessage({ id, type: 'result', data: { success: true } });
           break;
         }
 

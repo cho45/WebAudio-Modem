@@ -105,6 +105,10 @@ export class XModemTransport extends BaseTransport {
         await this.waitAndSkipForControl(ControlType.NAK, { signal: this.createTimeoutSignal(externalSignal) });
         console.log(`[XModemTransport] Initial NAK received`);
       } catch (error) {
+        // Check if it's an abort error first
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted at sendData');
+        }
         console.warn(`[XModemTransport] No initial NAK received (standalone mode): ${error}`);
         // Continue without initial NAK for standalone operation
       }
@@ -143,16 +147,21 @@ export class XModemTransport extends BaseTransport {
         }
       } catch (error: any) {
         console.warn(`[XModemTransport] Error waiting for ACK/NAK: ${error}`);
+        
+        // Check if it's an abort error first - don't retry abort errors
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted at sendData');
+        }
+        
         if (++this.retries > this.config.maxRetries) {
           console.warn(`[XModemTransport] Max retries (${this.config.maxRetries}) exceeded, retries=${this.retries}`);
           throw new Error('Timeout - max retries exceeded');
         }
-        if (error?.message?.includes('Operation aborted')) {
-          // Timeout occurred, retry the same fragment
-          this.statistics.packetsRetransmitted++;
-          console.warn(`[XModemTransport] Timeout, retrying fragment ${this.fragmentIndex + 1}, retries=${this.retries}`);
-          continue;
-        }
+        
+        // Timeout occurred, retry the same fragment
+        this.statistics.packetsRetransmitted++;
+        console.warn(`[XModemTransport] Timeout, retrying fragment ${this.fragmentIndex + 1}, retries=${this.retries}`);
+        continue;
       }
     }
 
@@ -400,9 +409,18 @@ export class XModemTransport extends BaseTransport {
   private async waitAndSkipForControl(controlType: ControlType, options: {signal: AbortSignal }): Promise<void> {
     for (;;) {
       if (options.signal.aborted) throw new Error('Operation aborted at waitForControl');
-      const byte = await this.waitForControlByte(options)
-      if (byte === controlType)
-        return;
+      try {
+        const byte = await this.waitForControlByte(options);
+        if (byte === controlType)
+          return;
+      } catch (error) {
+        // Propagate abort errors immediately
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted at waitAndSkipForControl');
+        }
+        // For other errors, re-throw to let caller handle
+        throw error;
+      }
     }
   }
 
@@ -427,8 +445,8 @@ export class XModemTransport extends BaseTransport {
         if (options.signal.aborted) {
           throw new Error('Operation aborted at waitForControlByte');
         }
-        // If it's a timeout from MockDataChannel, we should propagate it as timeout
-        if (error instanceof Error && (error.message.includes('timeout') || error.message.includes('aborted'))) {
+        // Handle abort exceptions from demodulate()
+        if (error instanceof Error && this.isAbortError(error)) {
           throw new Error('Operation aborted at waitForControlByte');
         }
         // For other errors, continue the loop (but this might lead to infinite retry)
@@ -444,10 +462,24 @@ export class XModemTransport extends BaseTransport {
 
   private async waitForBytes(count: number, options: {signal: AbortSignal }): Promise<Uint8Array> {
     while (this.receiveBuffer.length < count) {
-      const data = await this.dataChannel.demodulate({ signal: options.signal });
-      if (options.signal.aborted) throw new Error('Operation aborted at waitForBytes');
-      for (const byte of data) {
-        this.receiveBuffer.push(byte);
+      try {
+        const data = await this.dataChannel.demodulate({ signal: options.signal });
+        if (options.signal.aborted) throw new Error('Operation aborted at waitForBytes');
+        for (const byte of data) {
+          this.receiveBuffer.push(byte);
+        }
+      } catch (error) {
+        // Handle demodulate() timeout/error - check AbortSignal to prevent infinite retry
+        if (options.signal.aborted) {
+          throw new Error('Operation aborted at waitForBytes');
+        }
+        // Handle abort exceptions from demodulate()
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted at waitForBytes');
+        }
+        // For other errors, continue the loop (but this might lead to infinite retry)
+        console.warn(`[XModemTransport] demodulate() error in waitForBytes: ${error}`);
+        throw error; // Propagate non-abort errors
       }
     }
     const result = this.receiveBuffer.slice(0, count);
@@ -526,6 +558,19 @@ export class XModemTransport extends BaseTransport {
     if (this.state !== State.IDLE) {
       throw new Error(`Transport busy: ${operation} cannot start while in ${State[this.state]} state`);
     }
+  }
+
+  /**
+   * Check if an error is an abort-related error
+   */
+  private isAbortError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('aborted') ||
+      message.includes('abort') ||
+      error.name === 'AbortError' ||
+      error.name === 'DOMException'
+    );
   }
 
 
