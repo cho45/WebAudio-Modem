@@ -6,6 +6,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 export default defineConfig({
   root: '.',
+  base: '',
   publicDir: 'demo/assets',
   
   build: {
