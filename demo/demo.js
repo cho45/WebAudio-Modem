@@ -43,13 +43,13 @@ const app = createApp({
     // Reactive設定管理
     const fskConfig = reactive({
       ...DEFAULT_FSK_CONFIG,
-      baudRate: 1200,
+      baudRate: 300,
       // sampleRateは初期化時に設定
     });
     
     const xmodemConfig = reactive({
       timeoutMs: 3000,
-      maxRetries: 5,
+      maxRetries: 3,
       maxPayloadSize: 255
     });
     
@@ -438,6 +438,8 @@ const app = createApp({
         sendAbortController.value = new AbortController();
         
         // Transport準備と接続設定
+        fskConfig.baudRate = 300; // ループバックテスト用にFSKを1200bpsに設定
+        xmodemConfig.timeoutMs = 5000; // ループバックテスト用にタイムアウトを短く設定
         await setupSender();
         
         logSend(`Sending ${data.length} bytes via XModem protocol`);
@@ -511,7 +513,10 @@ const app = createApp({
         // AbortControllerを作成
         sendAbortController.value = new AbortController();
         receiveAbortController.value = new AbortController();
-        
+
+        fskConfig.baudRate = 1200; // ループバックテスト用にFSKを1200bpsに設定
+        xmodemConfig.timeoutMs = 3000; // ループバックテスト用にタイムアウトを短く設定
+
         // Transport準備と接続設定
         await setupSender();
         await setupReceiver();
@@ -712,6 +717,10 @@ const app = createApp({
         receiveAbortController.value = new AbortController();
         
         // Transport準備と接続設定
+        fskConfig.baudRate = 300; // ループバックテスト用にFSKを1200bpsに設定
+        xmodemConfig.timeoutMs = 5000; // ループバックテスト用にタイムアウトを短く設定
+        xmodemConfig.maxPayloadSize = 128;
+        xmodemConfig.maxRetries= 5;
         await setupReceiver();
         
         // フラグメント受信リスナーを登録

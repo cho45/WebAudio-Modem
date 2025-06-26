@@ -48,19 +48,11 @@ export class XModemTransport extends BaseTransport {
     maxPayloadSize: 128
   };
 
-  private state = State.IDLE;
-  private sequence = 1;
-  private fragments: Uint8Array[] = [];
-  private fragmentIndex = 0;
-  private retries = 0;
-  private receivedData: Uint8Array[] = [];
-  private expectedSequence = 1;
-  
-  // Operation abortion control
-  private currentOperationController?: AbortController;
-  
-  // Simple receive buffer for byte-by-byte assembly
-  private receiveBuffer: number[] = [];
+  // Grouped state management for better organization
+  private readonly protocol = { state: State.IDLE };
+  private readonly send = { sequence: 1, fragments: [] as Uint8Array[], fragmentIndex: 0, retries: 0 };
+  private readonly receive = { expectedSequence: 1, data: [] as Uint8Array[], buffer: [] as number[] };
+  private readonly operation = { controller: undefined as AbortController | undefined };
 
   constructor(dataChannel: IDataChannel) {
     super(dataChannel);
@@ -78,127 +70,25 @@ export class XModemTransport extends BaseTransport {
     this.ensureIdle('sendData');
     
     // Create operation controller for this send operation
-    this.currentOperationController = new AbortController();
-    const operationSignal = this.currentOperationController.signal;
-    
+    this.operation.controller = new AbortController();
     const externalSignal = options?.signal;
 
     // Check if operation was aborted before starting
-    if (operationSignal.aborted || externalSignal?.aborted) {
+    if (this.operation.controller.signal.aborted || externalSignal?.aborted) {
       throw new Error('Operation aborted before start');
     }
-    
-    // Initialize sending state
-    this.stateChanged(State.SENDING_WAIT_NAK, `Starting transmission of ${data.length} bytes`);
-    this.sequence = 1;
-    this.fragmentIndex = 0;
-    this.retries = 0;
-    this.fragments = this.createFragments(data);
     
     let totalBytesSent = 0;
     
     try {
-      console.log(`[XModemTransport] Created ${this.fragments.length} fragments for ${data.length} bytes`);
-      
-      // Wait for initial NAK only once (optional for standalone operation)
-      try {
-        await this.waitAndSkipForControl(ControlType.NAK, { signal: this.createTimeoutSignal(externalSignal) });
-        console.log(`[XModemTransport] Initial NAK received`);
-      } catch (error) {
-        // Check if it's an abort error first
-        if (error instanceof Error && this.isAbortError(error)) {
-          throw new Error('Operation aborted at sendData');
-        }
-        console.warn(`[XModemTransport] No initial NAK received (standalone mode): ${error}`);
-        // Continue without initial NAK for standalone operation
-      }
-    
-    fragment: while (this.fragmentIndex < this.fragments.length) {
-      console.log(`[XModemTransport] Processing fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
-
-      const fragment = this.fragments[this.fragmentIndex];
-      const packet = XModemPacket.createData(this.sequence, fragment);
-      const serialized = XModemPacket.serialize(packet);
-      console.log(`[XModemTransport] Sending fragment ${this.fragmentIndex + 1}/${this.fragments.length}, sequence: ${this.sequence}`);
-      await this.dataChannel.modulate(serialized);
-      this.statistics.packetsSent++;
-      
-      this.stateChanged(State.SENDING_WAIT_ACK, `Waiting for ACK for fragment ${this.fragmentIndex + 1}/${this.fragments.length}`);
-      
-      try {
-        for (;;) {
-          if (externalSignal?.aborted || operationSignal.aborted) throw new Error('Operation aborted at sendData');
-          const byte = await this.waitForControlByte({ signal: this.createTimeoutSignal(externalSignal) });
-          
-          if (byte === ControlType.ACK) {
-            this.retries = 0;
-            this.fragmentIndex++;
-            this.sequence = (this.sequence % 255) + 1;  // Update sequence number
-            continue fragment;
-          } else
-          if (byte === ControlType.NAK) {
-            if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded');
-            this.statistics.packetsRetransmitted++;
-            console.warn(`[XModemTransport] Retransmitting fragment ${this.fragmentIndex + 1}`);
-            continue fragment;
-          } else {
-            continue;
-          }
-        }
-      } catch (error: any) {
-        console.warn(`[XModemTransport] Error waiting for ACK/NAK: ${error}`);
-        
-        // Check if it's an abort error first - don't retry abort errors
-        if (error instanceof Error && this.isAbortError(error)) {
-          throw new Error('Operation aborted at sendData');
-        }
-        
-        if (++this.retries > this.config.maxRetries) {
-          console.warn(`[XModemTransport] Max retries (${this.config.maxRetries}) exceeded, retries=${this.retries}`);
-          throw new Error('Timeout - max retries exceeded');
-        }
-        
-        // Timeout occurred, retry the same fragment
-        this.statistics.packetsRetransmitted++;
-        console.warn(`[XModemTransport] Timeout, retrying fragment ${this.fragmentIndex + 1}, retries=${this.retries}`);
-        continue;
-      }
-    }
-
-    console.log(`[XModemTransport] Exited fragment loop: fragmentIndex=${this.fragmentIndex}, fragmentsLength=${this.fragments.length}`);
-    // Reset retries for EOT phase
-    this.retries = 0;
-    
-    for (;;) {
-      if (externalSignal?.aborted || operationSignal.aborted) throw new Error('Operation aborted at sendData');
-      this.stateChanged(State.SENDING_WAIT_FINAL_ACK, 'Sending EOT, waiting for final ACK');
-      await this.sendControl('EOT');
-
-      try {
-        const byte = await this.waitForControlByte({ signal: this.createTimeoutSignal(externalSignal) });
-        
-        if (byte === ControlType.ACK) {
-          console.log(`[XModemTransport] Final ACK received`);
-          // Success - will update statistics in finally block
-          totalBytesSent = data.length;
-          break;
-        } else {
-          if (++this.retries > this.config.maxRetries) throw new Error('Max retries exceeded for final ACK');
-          continue;
-        }
-      } catch (error) {
-        if (++this.retries > this.config.maxRetries) {
-          console.warn(`[XModemTransport] Final ACK max retries (${this.config.maxRetries}) exceeded, retries=${this.retries}`);
-          throw new Error(`Final ACK timeout after max retries: ${error}`);
-        }
-        // Timeout occurred, retry EOT
-        console.warn(`[XModemTransport] Final ACK timeout, retrying EOT, retries=${this.retries}`);
-        continue;
-      }
-    }
+      this.initializeSend(data);
+      await this.waitForInitialNAK(externalSignal);
+      await this.sendAllFragments(externalSignal);
+      await this.sendEOTAndConfirm(externalSignal);
+      totalBytesSent = data.length;
     } finally {
       // Clear operation controller
-      this.currentOperationController = undefined;
+      this.operation.controller = undefined;
       
       // Always restore state to IDLE, regardless of success or failure
       this.stateChanged(State.IDLE, totalBytesSent > 0 ? `Send completed: ${totalBytesSent} bytes` : 'Send failed or aborted');
@@ -210,140 +100,114 @@ export class XModemTransport extends BaseTransport {
     }
   }
 
+  private initializeSend(data: Uint8Array): void {
+    this.stateChanged(State.SENDING_WAIT_NAK, `Starting transmission of ${data.length} bytes`);
+    Object.assign(this.send, { sequence: 1, fragmentIndex: 0, retries: 0, fragments: this.createFragments(data) });
+    console.log(`[XModemTransport] Created ${this.send.fragments.length} fragments for ${data.length} bytes`);
+  }
+
+  private async waitForInitialNAK(externalSignal?: AbortSignal): Promise<void> {
+    try {
+      await this.waitAndSkipForControl(ControlType.NAK, { signal: this.createTimeoutSignal(externalSignal) });
+      console.log(`[XModemTransport] Initial NAK received`);
+    } catch (error) {
+      // Check if it's an abort error first
+      if (error instanceof Error && this.isAbortError(error)) {
+        throw new Error('Operation aborted at sendData');
+      }
+      console.warn(`[XModemTransport] No initial NAK received (standalone mode): ${error}`);
+      // Continue without initial NAK for standalone operation
+    }
+  }
+
+  private async sendAllFragments(externalSignal?: AbortSignal): Promise<void> {
+    while (this.send.fragmentIndex < this.send.fragments.length) {
+      console.log(`[XModemTransport] Processing fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
+
+      const fragment = this.send.fragments[this.send.fragmentIndex];
+      const packet = XModemPacket.createData(this.send.sequence, fragment);
+      const serialized = XModemPacket.serialize(packet);
+      console.log(`[XModemTransport] Sending fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}, sequence: ${this.send.sequence}`);
+      await this.dataChannel.modulate(serialized);
+      this.statistics.packetsSent++;
+      
+      this.stateChanged(State.SENDING_WAIT_ACK, `Waiting for ACK for fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
+      
+      await this.withRetry(
+        async () => {
+          for (;;) {
+            const byte = await this.waitForControlByte({ signal: this.createTimeoutSignal(externalSignal) });
+            
+            if (byte === ControlType.ACK) {
+              this.send.retries = 0;
+              this.send.fragmentIndex++;
+              this.send.sequence = (this.send.sequence % 255) + 1;
+              return; // Success, exit retry loop
+            } else if (byte === ControlType.NAK) {
+              this.statistics.packetsRetransmitted++;
+              console.warn(`[XModemTransport] Retransmitting fragment ${this.send.fragmentIndex + 1}`);
+              throw new Error('NAK received, retry fragment');
+            }
+            // Continue for other bytes
+          }
+        },
+        this.config.maxRetries,
+        (_retryCount) => {
+          this.statistics.packetsRetransmitted++;
+          console.warn(`[XModemTransport] Timeout, retrying fragment ${this.send.fragmentIndex + 1}, retries=${_retryCount}`);
+        },
+        externalSignal
+      );
+    }
+    console.log(`[XModemTransport] Exited fragment loop: fragmentIndex=${this.send.fragmentIndex}, fragmentsLength=${this.send.fragments.length}`);
+  }
+
+  private async sendEOTAndConfirm(externalSignal?: AbortSignal): Promise<void> {
+    // Reset retries for EOT phase
+    this.send.retries = 0;
+    
+    await this.withRetry(
+      async () => {
+        this.stateChanged(State.SENDING_WAIT_FINAL_ACK, 'Sending EOT, waiting for final ACK');
+        await this.sendControl('EOT');
+        
+        // Use ACK-specific wait to avoid echo-back of our own EOT
+        await this.waitForACK({ signal: this.createTimeoutSignal(externalSignal) });
+        console.log(`[XModemTransport] Final ACK received`);
+        return; // Success
+      },
+      this.config.maxRetries,
+      (_retryCount) => {
+        console.warn(`[XModemTransport] Final ACK timeout, retrying EOT, retries=${_retryCount}`);
+      },
+      externalSignal
+    );
+  }
+
   async receiveData(options?: {signal?: AbortSignal}): Promise<Uint8Array> {
     this.ensureIdle('receiveData');
     
     // Create operation controller for this receive operation
-    this.currentOperationController = new AbortController();
-    const operationSignal = this.currentOperationController.signal;
-    
+    this.operation.controller = new AbortController();
     const externalSignal = options?.signal;
 
     // Check if operation was aborted before starting
-    if (operationSignal.aborted || externalSignal?.aborted) {
+    if (this.operation.controller.signal.aborted || externalSignal?.aborted) {
       throw new Error('Operation aborted before start');
     }
-    
-    // Initialize receiving state  
-    this.stateChanged(State.RECEIVING_SEND_NAK, 'Starting receive, sending initial NAK');
-    this.expectedSequence = 1;
-    this.receivedData = [];
-    this.retries = 0;
     
     let totalBytesReceived = 0;
     
     try {
-      // Send initial NAK to start transfer
-      await this.sendControl('NAK');
-      this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for data blocks');
-
-    // Receive data packets loop
-    fragment: for (;;) {
-      if (externalSignal?.aborted || operationSignal.aborted) throw new Error('Operation aborted at receiveData');
-
-      // Note: Don't reset here as it may clear test data
-      // this.dataChannel.reset();
-      try {
-        // Read first byte to determine if it's EOT or SOH
-        const firstByte = await this.waitForByte({ signal: this.createTimeoutSignal(externalSignal) });
-        
-        if (firstByte === ControlType.EOT) {
-          console.log(`[XModemTransport] EOT Received byte: ${firstByte}`);
-          await this.sendControl('ACK'); // Send final ACK for EOT
-          break fragment;
-        } else if (firstByte === ControlType.SOH) {
-          console.log(`[XModemTransport] SOH Received byte: ${firstByte}`);
-          // Continue to read packet structure
-        } else {
-          console.log(`[XModemTransport] receiveData/received byte ignored: ${firstByte}`);
-          continue; // Ignore any other byte
-        }
-
-        // Read packet structure: seq, nseq, len
-        const bytes = await this.waitForBytes(3, { signal: this.createTimeoutSignal(externalSignal) });
-        const [seq, nseq, len] = [bytes[0], bytes[1], bytes[2]];
-        if ((seq + nseq) !== 255) {
-          this.statistics.packetsDropped++;
-          // Emit error event for test verification
-          this.emit('error', new Event({ error: 'Invalid sequence number', seq, nseq }));
-          throw new Error('Invalid sequence number');
-        }
-        console.log(`[XModemTransport] Received packet: seq=${seq}, nseq=${nseq}, len=${len}`);
-        if (seq === this.expectedSequence) {
-          const payloadWithCRC = await this.waitForBytes(len + 2, { signal: this.createTimeoutSignal(externalSignal) }); // Wait for payload + CRC
-          this.statistics.packetsReceived++;
-
-          const payload = payloadWithCRC.slice(0, len);
-          const crc = (payloadWithCRC[len] << 8) | payloadWithCRC[len + 1];
-          console.log(`[XModemTransport] Received payload with CRC: seq=${seq}, len=${len}, crc=${crc} (== ${CRC16.calculate(payload)})`);
-
-          if (CRC16.calculate(payload) !== crc) {
-            this.statistics.packetsDropped++;
-            // Emit error event for test verification
-            this.emit('error', new Event({ error: 'Invalid CRC', seq, crc, calculatedCrc: CRC16.calculate(payload) }));
-            throw new Error('Invalid CRC');
-          }
-          this.receivedData.push(payload);
-
-          // Emit fragment received event
-          this.emit('fragmentReceived', new Event({
-            seqNum: seq,
-            fragment: payload,
-            totalFragments: this.receivedData.length,
-            totalBytesReceived: this.receivedData.reduce((sum, data) => sum + data.length, 0),
-            timestamp: Date.now()
-          }));
-
-          this.expectedSequence = (this.expectedSequence % 255) + 1;
-          this.retries = 0; // Reset retries after successful packet
-          this.stateChanged(State.RECEIVING_SEND_ACK, `Sending ACK for sequence ${seq}`);
-          console.log(`[XModemTransport] Sending ACK for seq=${seq}`);
-          await this.sendControl('ACK');
-          this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for next block');
-        } else
-        if (this.isPreviousSequence(seq, this.expectedSequence)) {
-          // Duplicate packet - ACK and ignore
-          this.statistics.packetsDropped++;
-          await this.sendControl('ACK');
-          continue;
-        } else {
-          // Unexpected sequence - cannot recover
-          this.statistics.packetsDropped++;
-          // Emit error event for test verification
-          this.emit('error', new Event({ error: 'Unexpected sequence number', expected: this.expectedSequence, received: seq }));
-          throw new Error(`Unexpected sequence number: expected ${this.expectedSequence}, got ${seq}`);
-        }
-      } catch (error) {
-        console.log(`[XModemTransport] Error during receiveData: ${error}`);
-        if (++this.retries > this.config.maxRetries) {
-          throw new Error(`Receive failed after max retries: ${error}`);
-        }
-        // Clear receive buffer to avoid payload bytes being misinterpreted as control bytes
-        this.receiveBuffer = [];
-        // Send NAK to request retransmission
-        await this.sendControl('NAK');
-      }
-    }
-
-      // Reassemble received data
-      const totalLength = this.receivedData.reduce((sum, d) => sum + d.length, 0);
-      const result = new Uint8Array(totalLength);
-      let offset = 0;
-      
-      for (const data of this.receivedData) {
-        result.set(data, offset);
-        offset += data.length;
-      }
-
-      console.log(`[XModemTransport] Received total data length: ${result.length} bytes`);
-      
-      // Success - will update statistics in finally block
+      this.initializeReceive();
+      await this.sendInitialNAK();
+      const packets = await this.receiveAllPackets(externalSignal);
+      const result = this.assembleData(packets);
       totalBytesReceived = result.length;
-      
       return result;
     } finally {
       // Clear operation controller
-      this.currentOperationController = undefined;
+      this.operation.controller = undefined;
       
       // Always restore state to IDLE, regardless of success or failure
       this.stateChanged(State.IDLE, totalBytesReceived > 0 ? `Receive completed: ${totalBytesReceived} bytes` : 'Receive failed or aborted');
@@ -354,52 +218,167 @@ export class XModemTransport extends BaseTransport {
       }
     }
   }
+
+  private initializeReceive(): void {
+    this.stateChanged(State.RECEIVING_SEND_NAK, 'Starting receive, sending initial NAK');
+    Object.assign(this.receive, { expectedSequence: 1, data: [], buffer: [] });
+    this.send.retries = 0;
+  }
+
+  private async sendInitialNAK(): Promise<void> {
+    await this.sendControl('NAK');
+    this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for data blocks');
+  }
+
+  private async receiveAllPackets(externalSignal?: AbortSignal): Promise<Uint8Array[]> {
+    fragment: for (;;) {
+      this.checkAbort(externalSignal);
+
+      try {
+        // Read first byte to determine if it's EOT or SOH
+        const firstByte = await this.waitForByte({ signal: this.createTimeoutSignal(externalSignal) });
+        
+        if (firstByte === ControlType.EOT) {
+          console.log(`[XModemTransport] EOT Received byte: ${firstByte}`);
+          await this.sendControl('ACK'); // Send final ACK for EOT
+          break fragment;
+        } else if (firstByte === ControlType.SOH) {
+          console.log(`[XModemTransport] SOH Received byte: ${firstByte}`);
+          await this.receiveAndProcessPacket(externalSignal);
+        } else {
+          console.log(`[XModemTransport] receiveData/received byte ignored: ${firstByte}`);
+          continue; // Ignore any other byte
+        }
+      } catch (error) {
+        console.log(`[XModemTransport] Error during receiveData: ${error}`);
+        if (++this.send.retries > this.config.maxRetries) {
+          throw new Error(`Receive failed after max retries: ${error}`);
+        }
+        // Clear receive buffer to avoid payload bytes being misinterpreted as control bytes
+        this.receive.buffer = [];
+        // Send NAK to request retransmission
+        await this.sendControl('NAK');
+      }
+    }
+    return this.receive.data;
+  }
+
+  private async receiveAndProcessPacket(externalSignal?: AbortSignal): Promise<void> {
+    // Read packet structure: seq, nseq, len
+    const bytes = await this.waitForBytes(3, { signal: this.createTimeoutSignal(externalSignal) });
+    const [seq, nseq, len] = [bytes[0], bytes[1], bytes[2]];
+    
+    if ((seq + nseq) !== 255) {
+      this.statistics.packetsDropped++;
+      this.emit('error', new Event({ error: 'Invalid sequence number', seq, nseq }));
+      throw new Error('Invalid sequence number');
+    }
+    
+    console.log(`[XModemTransport] Received packet: seq=${seq}, nseq=${nseq}, len=${len}`);
+    
+    if (seq === this.receive.expectedSequence) {
+      const payloadWithCRC = await this.waitForBytes(len + 2, { signal: this.createTimeoutSignal(externalSignal) });
+      this.statistics.packetsReceived++;
+
+      const payload = payloadWithCRC.slice(0, len);
+      const crc = (payloadWithCRC[len] << 8) | payloadWithCRC[len + 1];
+      console.log(`[XModemTransport] Received payload with CRC: seq=${seq}, len=${len}, crc=${crc} (== ${CRC16.calculate(payload)})`);
+
+      if (CRC16.calculate(payload) !== crc) {
+        this.statistics.packetsDropped++;
+        this.emit('error', new Event({ error: 'Invalid CRC', seq, crc, calculatedCrc: CRC16.calculate(payload) }));
+        throw new Error('Invalid CRC');
+      }
+      
+      this.receive.data.push(payload);
+
+      // Emit fragment received event
+      this.emit('fragmentReceived', new Event({
+        seqNum: seq,
+        fragment: payload,
+        totalFragments: this.receive.data.length,
+        totalBytesReceived: this.receive.data.reduce((sum, data) => sum + data.length, 0),
+        timestamp: Date.now()
+      }));
+
+      this.receive.expectedSequence = (this.receive.expectedSequence % 255) + 1;
+      this.send.retries = 0; // Reset retries after successful packet
+      this.stateChanged(State.RECEIVING_SEND_ACK, `Sending ACK for sequence ${seq}`);
+      console.log(`[XModemTransport] Sending ACK for seq=${seq}`);
+      await this.sendControl('ACK');
+      this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for next block');
+    } else if (this.isPreviousSequence(seq, this.receive.expectedSequence)) {
+      // Duplicate packet - ACK and ignore
+      this.statistics.packetsDropped++;
+      await this.sendControl('ACK');
+    } else {
+      // Unexpected sequence - cannot recover
+      this.statistics.packetsDropped++;
+      this.emit('error', new Event({ error: 'Unexpected sequence number', expected: this.receive.expectedSequence, received: seq }));
+      throw new Error(`Unexpected sequence number: expected ${this.receive.expectedSequence}, got ${seq}`);
+    }
+  }
+
+  private assembleData(packets: Uint8Array[]): Uint8Array {
+    const totalLength = packets.reduce((sum, d) => sum + d.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    
+    for (const data of packets) {
+      result.set(data, offset);
+      offset += data.length;
+    }
+
+    console.log(`[XModemTransport] Received total data length: ${result.length} bytes`);
+    return result;
+  }
   
   async sendControl(command: string): Promise<void> {
     // Check if current operation is aborted
-    if (this.currentOperationController?.signal.aborted) {
+    if (this.operation.controller?.signal.aborted) {
       throw new Error('Operation aborted at sendControl');
     }
     
     const controlType = this.parseControlCommand(command);
     const serialized = XModemPacket.serializeControl(controlType);
+    
+    // Only proceed if not aborted
+    if (this.operation.controller?.signal.aborted) {
+      throw new Error('Operation aborted at sendControl');
+    }
+    
     await this.dataChannel.modulate(serialized);
     
-    // Only update statistics if operation is not aborted
-    if (!this.currentOperationController?.signal.aborted) {
+    // Only update statistics if operation is still not aborted
+    if (!this.operation.controller?.signal.aborted) {
       this.statistics.packetsSent++;
     }
   }
 
   isReady(): boolean {
-    return this.state === State.IDLE;
+    return this.protocol.state === State.IDLE;
   }
   
   /**
    * Get current state as human-readable string
    */
   getCurrentState(): string {
-    return State[this.state];
+    return State[this.protocol.state];
   }
 
   reset(): void {
-    // Clear statistics first (before abort to prevent further updates)
-    super.reset();
-    
-    // Abort any ongoing operation
-    if (this.currentOperationController) {
-      this.currentOperationController.abort();
-      this.currentOperationController = undefined;
+    // Abort any ongoing operation first
+    if (this.operation.controller) {
+      this.operation.controller.abort();
+      this.operation.controller = undefined;
     }
     
+    // Clear statistics after abort to prevent further updates
+    super.reset();
+    
     this.stateChanged(State.IDLE, 'Reset called - clearing all state');
-    this.sequence = 1;
-    this.fragmentIndex = 0;
-    this.retries = 0;
-    this.fragments = [];
-    this.receivedData = [];
-    this.expectedSequence = 1;
-    this.receiveBuffer = [];
+    Object.assign(this.send, { sequence: 1, fragmentIndex: 0, retries: 0, fragments: [] });
+    Object.assign(this.receive, { expectedSequence: 1, data: [], buffer: [] });
   }
 
   dispose(): void {
@@ -455,18 +434,52 @@ export class XModemTransport extends BaseTransport {
     }
   }
 
+  /**
+   * Wait specifically for ACK, ignoring echo-back of our own transmissions
+   * This prevents the sender from receiving its own EOT when waiting for final ACK
+   */
+  private async waitForACK(options: {signal: AbortSignal}): Promise<void> {
+    for (;;) {
+      if (options.signal.aborted) throw new Error('Operation aborted at waitForACK');
+      
+      try {
+        const data = await this.dataChannel.demodulate({ signal: options.signal });
+        for (const byte of data) {
+          if (byte === ControlType.ACK) {
+            console.log(`[XModemTransport] ACK received: ${byte}`);
+            return; // Success - ACK received
+          } else {
+            // Ignore all other bytes including our own EOT echo-back
+            console.log(`[XModemTransport] Non-ACK byte ignored while waiting for ACK: ${byte}`);
+          }
+        }
+      } catch (error) {
+        // Handle demodulate() timeout/error - check AbortSignal to prevent infinite retry
+        if (options.signal.aborted) {
+          throw new Error('Operation aborted at waitForACK');
+        }
+        // Handle abort exceptions from demodulate()
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted at waitForACK');
+        }
+        // For other errors, continue the loop (but this might lead to infinite retry)
+        console.warn(`[XModemTransport] demodulate() error in waitForACK: ${error}`);
+      }
+    }
+  }
+
   private async waitForByte(options: {signal: AbortSignal }): Promise<number> {
     const bytes = await this.waitForBytes(1, options);
     return bytes[0];
   }
 
   private async waitForBytes(count: number, options: {signal: AbortSignal }): Promise<Uint8Array> {
-    while (this.receiveBuffer.length < count) {
+    while (this.receive.buffer.length < count) {
       try {
         const data = await this.dataChannel.demodulate({ signal: options.signal });
         if (options.signal.aborted) throw new Error('Operation aborted at waitForBytes');
         for (const byte of data) {
-          this.receiveBuffer.push(byte);
+          this.receive.buffer.push(byte);
         }
       } catch (error) {
         // Handle demodulate() timeout/error - check AbortSignal to prevent infinite retry
@@ -482,8 +495,8 @@ export class XModemTransport extends BaseTransport {
         throw error; // Propagate non-abort errors
       }
     }
-    const result = this.receiveBuffer.slice(0, count);
-    this.receiveBuffer = this.receiveBuffer.slice(count);
+    const result = this.receive.buffer.slice(0, count);
+    this.receive.buffer = this.receive.buffer.slice(count);
     return new Uint8Array(result);
   }
 
@@ -523,7 +536,7 @@ export class XModemTransport extends BaseTransport {
     const signals = [timeoutSignal];
     
     if (externalSignal) signals.push(externalSignal);
-    if (this.currentOperationController) signals.push(this.currentOperationController.signal);
+    if (this.operation.controller) signals.push(this.operation.controller.signal);
     
     return signals.length > 1 ? AbortSignal.any(signals) : timeoutSignal;
   }
@@ -532,8 +545,8 @@ export class XModemTransport extends BaseTransport {
    * Centralized state change management with logging and events
    */
   private stateChanged(newState: State, context?: string): void {
-    const oldState = this.state;
-    this.state = newState;
+    const oldState = this.protocol.state;
+    this.protocol.state = newState;
     
     // Create state change event
     const stateEvent = new Event({
@@ -555,8 +568,8 @@ export class XModemTransport extends BaseTransport {
    * Ensure transport is in IDLE state before starting new operation
    */
   private ensureIdle(operation: string): void {
-    if (this.state !== State.IDLE) {
-      throw new Error(`Transport busy: ${operation} cannot start while in ${State[this.state]} state`);
+    if (this.protocol.state !== State.IDLE) {
+      throw new Error(`Transport busy: ${operation} cannot start while in ${State[this.protocol.state]} state`);
     }
   }
 
@@ -571,6 +584,46 @@ export class XModemTransport extends BaseTransport {
       error.name === 'AbortError' ||
       error.name === 'DOMException'
     );
+  }
+
+  /**
+   * Unified abort checking
+   */
+  private checkAbort(externalSignal?: AbortSignal): void {
+    if (externalSignal?.aborted || this.operation.controller?.signal.aborted) {
+      throw new Error('Operation aborted');
+    }
+  }
+
+  /**
+   * Execute operation with retry logic and abort checking
+   */
+  private async withRetry<T>(
+    operation: () => Promise<T>,
+    maxRetries: number,
+    onRetry?: (_retryCount: number) => void,
+    externalSignal?: AbortSignal
+  ): Promise<T> {
+    let retries = 0;
+    
+    for (;;) {
+      this.checkAbort(externalSignal);
+      
+      try {
+        return await operation();
+      } catch (error) {
+        // Check if it's an abort error - don't retry abort errors
+        if (error instanceof Error && this.isAbortError(error)) {
+          throw new Error('Operation aborted');
+        }
+        
+        if (++retries > maxRetries) {
+          throw new Error('Timeout - max retries exceeded');
+        }
+        
+        onRetry?.(retries);
+      }
+    }
   }
 
 
