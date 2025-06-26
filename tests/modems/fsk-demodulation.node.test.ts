@@ -467,7 +467,7 @@ describe('FSK Core Demodulation', () => {
           const dataStart = findDataStart(new Uint8Array(chunks), originalData);
           if (dataStart >= 0) {
             console.log(`Offset ${offset}: SUCCESS - chunks=${chunkCount}, syncDetections=${status.syncDetections}`);
-            results.push({ offset, success: true, syncDetections: status.syncDetections });
+            results.push({ offset, success: true });
           } else {
             console.log(`Offset ${offset}: FAILED - data not found in result`);
             results.push({ offset, success: false });
@@ -575,7 +575,6 @@ describe('FSK Core Demodulation', () => {
       console.log(`Final status:`, {
         syncDetections: status.syncDetections,
         frameStarted: status.frameStarted,
-        bitBoundaryLearned: status.bitBoundaryLearned,
         globalSampleCounter: status.globalSampleCounter
       });
     });
@@ -809,8 +808,6 @@ describe('FSK Core Demodulation', () => {
       // Simulate WebAudio-style processing: 128-sample chunks processed concurrently
       const CHUNK_SIZE = 128;
       const results: number[] = [];
-      let modulationComplete = false;
-      let outputChunkIndex = 0;
       let inputChunkIndex = 0;
       
       // WebAudio processes audio in both directions simultaneously

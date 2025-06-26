@@ -17,7 +17,7 @@ describe('SimpleSync Pattern Matching', () => {
   };
 
   beforeEach(() => {
-    fskCore = new FSKCore(testConfig);
+    fskCore = new FSKCore();
     fskCore.configure(testConfig);
   });
 

@@ -6,7 +6,7 @@
  */
 
 import { CRC16 } from '../../utils/crc16';
-import { DataPacket, ControlType, ControlParseResult, PacketConstants } from './types';
+import { DataPacket, ControlType, PacketConstants } from './types';
 
 /**
  * XModem packet handler - Simple and focused

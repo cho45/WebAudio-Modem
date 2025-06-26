@@ -213,7 +213,7 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
             this.abortController.abort();
           }
           this.abortController = new MyAbortController();
-          console.log(`[FSKProcessor:${this.instanceName}] Modulating ${data.bytes.length} bytes: [${data.bytes.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          console.log(`[FSKProcessor:${this.instanceName}] Modulating ${data.bytes.length} bytes: [${data.bytes.map((b: number) => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
           // @ts-expect-error 
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
           // Clear receive buffer after modulation to avoid self-reception

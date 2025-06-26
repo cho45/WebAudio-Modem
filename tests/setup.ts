@@ -2,12 +2,7 @@
 import { vi } from 'vitest'
 
 // Mock AudioWorkletProcessor for testing
-class MockAudioWorkletProcessor {
-  process(_inputs: Float32Array[][], _outputs: Float32Array[][]): boolean {
-    return true
-  }
-}
-
+// class MockAudioWorkletProcessor {}
 // Mock AudioContext APIs
 class MockAudioContext {
   sampleRate = 44100
@@ -58,7 +53,7 @@ class MockAudioContext {
 }
 
 // Setup global mocks
-global.AudioWorkletProcessor = MockAudioWorkletProcessor
+// global.AudioWorkletProcessor = MockAudioWorkletProcessor
 global.AudioContext = MockAudioContext as any
 global.registerProcessor = vi.fn()
 

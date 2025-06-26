@@ -249,19 +249,6 @@ describe('FSK Core Modulation', () => {
   });
 });
 
-// Helper functions for testing
-function generateSineWave(frequency: number, sampleRate: number, duration: number): Float32Array {
-  const numSamples = Math.floor(sampleRate * duration);
-  const signal = new Float32Array(numSamples);
-  const omega = 2 * Math.PI * frequency / sampleRate;
-  
-  for (let i = 0; i < numSamples; i++) {
-    signal[i] = Math.sin(omega * i);
-  }
-  
-  return signal;
-}
-
 function computeCorrelation(signal1: Float32Array, signal2: Float32Array): number {
   const length = Math.min(signal1.length, signal2.length);
   let correlation = 0;
