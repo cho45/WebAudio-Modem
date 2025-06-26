@@ -826,6 +826,86 @@ describe('XModem Transport', () => {
       expect(transport.getStatistics().packetsDropped).toBeGreaterThan(0);
     }, 5000);
 
+    test('Duplicate packet handling: Basic duplicate packet ignored with ACK', async () => {
+      const testData = new Uint8Array([0x42, 0x43]);
+      
+      // Prepare packets: packet 1, duplicate packet 1, EOT
+      const packet1 = XModemPacket.createData(1, testData);
+      const duplicatePacket1 = XModemPacket.createData(1, testData);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet1));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(duplicatePacket1)); 
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await transport.receiveData();
+      
+      // Should receive the data only once (no duplication)
+      expect(result).toEqual(testData);
+      expect(result.length).toBe(2); // Original data, not duplicated
+      
+      // Should send: NAK + ACK for packet 1 + ACK for duplicate + ACK for EOT = 4 total
+      expect(mockDataChannel.sentData.length).toBe(4);
+      
+      // Verify statistics
+      const stats = transport.getStatistics();
+      expect(stats.packetsReceived).toBe(1); // Only original packet counted
+      expect(stats.packetsDropped).toBe(1); // Duplicate packet dropped
+    });
+
+    test('Duplicate packet handling: Multiple packet transfer with duplicate', async () => {
+      const packet1Data = new Uint8Array([0x41]);
+      const packet2Data = new Uint8Array([0x42]);
+      const packet3Data = new Uint8Array([0x43]);
+      
+      // Prepare packets: 1, 2, duplicate 2, 3, EOT
+      const packet1 = XModemPacket.createData(1, packet1Data);
+      const packet2 = XModemPacket.createData(2, packet2Data);
+      const duplicatePacket2 = XModemPacket.createData(2, packet2Data);
+      const packet3 = XModemPacket.createData(3, packet3Data);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet1));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet2));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(duplicatePacket2));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet3));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await transport.receiveData();
+      
+      // Should receive all three packets in correct order (no duplication)
+      const expected = new Uint8Array([0x41, 0x42, 0x43]);
+      expect(result).toEqual(expected);
+      
+      // Should send: NAK + ACK*3 + duplicate ACK + final ACK = 6 total
+      expect(mockDataChannel.sentData.length).toBe(6);
+      
+      // Verify statistics
+      const stats = transport.getStatistics();
+      expect(stats.packetsReceived).toBe(3); // Three unique packets
+      expect(stats.packetsDropped).toBe(1); // One duplicate packet
+    });
+
+    test('Duplicate packet handling: First packet duplication', async () => {
+      const testData = new Uint8Array([0x55]);
+      
+      // Prepare packets: packet 1, duplicate packet 1, EOT
+      const packet1 = XModemPacket.createData(1, testData);
+      const duplicatePacket1 = XModemPacket.createData(1, testData);
+      
+      mockDataChannel.addReceivedData(XModemPacket.serialize(packet1));
+      mockDataChannel.addReceivedData(XModemPacket.serialize(duplicatePacket1));
+      mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.EOT));
+      
+      const result = await transport.receiveData();
+      
+      // Should receive the data only once
+      expect(result).toEqual(testData);
+      
+      // Verify duplicate handling worked correctly
+      const stats = transport.getStatistics();
+      expect(stats.packetsReceived).toBe(1);
+      expect(stats.packetsDropped).toBe(1);
+    });
+
     test('Receive single packet byte-by-byte (simulates WebAudio FSK)', async () => {
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]);
       

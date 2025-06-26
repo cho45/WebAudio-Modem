@@ -308,8 +308,10 @@ export class XModemTransport extends BaseTransport {
       await this.sendControl('ACK');
       this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for next block');
     } else if (this.isPreviousSequence(seq, this.receive.expectedSequence)) {
-      // Duplicate packet - ACK and ignore
+      // Duplicate packet - read payload to consume it from stream, then ACK and ignore
+      await this.waitForBytes(len + 2, { signal: this.createTimeoutSignal(externalSignal) }); // Skip payload+CRC
       this.statistics.packetsDropped++;
+      console.log(`[XModemTransport] Duplicate packet ignored: seq=${seq} (expected=${this.receive.expectedSequence})`);
       await this.sendControl('ACK');
     } else {
       // Unexpected sequence - cannot recover
