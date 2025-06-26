@@ -26,8 +26,7 @@ interface WorkletMessage {
 class MyAbortSignal {
   private _aborted = false;
   private listeners: (() => void)[] = [];
-  onabort: (() => any) | null = null;
-  reason: any = undefined;
+  onabort: (() => void) | null = null;
 
   get aborted() { return this._aborted; }
 
@@ -40,8 +39,8 @@ class MyAbortSignal {
   }
 
   dispatchEvent() {
-    if (this.onabort) this.onabort.call(this);
-    for (const listener of this.listeners) listener();
+    this.onabort?.();
+    this.listeners.forEach(l => l());
     this.listeners = [];
   }
 
@@ -51,7 +50,7 @@ class MyAbortSignal {
 }
 
 class MyAbortController {
-  public signal = new MyAbortSignal();
+  signal = new MyAbortSignal();
 
   abort() {
     if (!this.signal.aborted) {
@@ -81,28 +80,19 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     // Initialize FSK core (will be configured via message)
     this.fskCore = new FSKCore();
     
-    // Create buffer for demodulated data storage
-
     // 復調されたデータを保持するリングバッファ
     this.demodulatedBuffer = new RingBuffer(Uint8Array, 1024);
-    // console.log(`[FSKProcessor:${this.instanceName}] Buffers initialized - demodulatedBuffer length:`, this.demodulatedBuffer.length);
     
     this.port.onmessage = this.handleMessage.bind(this);
   }
 
   async modulate(data: Uint8Array, options: {signal: AbortSignal }): Promise<void> {
-    /**
-     * 変調リクエスト: バイト列を受けとり、変調キューに入れる
-     * 変調は非同期に行われ、process内で必要に応じて行われoutputに書き出される
-     */
     console.log(`[FSKProcessor:${this.instanceName}] modulate() called with ${data.length} bytes: [${Array.from(data).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
-   //  console.log(`[FSKProcessor:${this.instanceName}] Current demodulatedBuffer length before modulation: ${this.demodulatedBuffer.length}`);
     
     if (this.pendingModulation) {
       throw new Error('Modulation already in progress');
     }
     
-    // console.log(`[FSKProcessor:${this.instanceName}] Queuing modulation of ${data.length} bytes`);
     this.pendingModulation = new ChunkedModulator(this.fskCore);
     await this.pendingModulation.startModulation(data);
     await new Promise<void>((resolve, reject) => {
@@ -121,12 +111,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
   }
 
   async demodulate(options: {signal: AbortSignal }): Promise<Uint8Array> {
-      /**
-       * 復調リクエスト: 復調済みのデータを返す
-       * 復調自体は非同期に process 内で行われるため、復調済みのバイト列をリクエストがきたら返す
-       */
-      // console.log(`[FSKProcessor:${this.instanceName}] === demodulate() ENTRY === buffer length: ${this.demodulatedBuffer.length}, awaitingCallback: ${!!this.awaitingCallback}`);
-      
       // Return currently buffered demodulated data
       const availableBytes = this.demodulatedBuffer.length;
       if (availableBytes === 0) {
@@ -158,17 +142,24 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
       this.modulationWaitCallback = () => {};
   }
   
+  private resetAbortController(): void {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new MyAbortController();
+  }
+  
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const input = inputs[0];
     const output = outputs[0];
     
     // Handle input for demodulation
-    if (input && input[0]) {
+    if (input?.[0]) {
       this.demodulateFrom(input[0]);
     }
     
     // Handle output for modulation
-    if (output && output[0]) {
+    if (output?.[0]) {
       this.modulateTo(output[0]);
     }
     
@@ -209,13 +200,10 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
         }
 
         case 'modulate': {
-          if (this.abortController) {
-            this.abortController.abort();
-          }
-          this.abortController = new MyAbortController();
-          console.log(`[FSKProcessor:${this.instanceName}] Modulating ${data.bytes.length} bytes: [${data.bytes.map((b: number) => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
+          this.resetAbortController();
+          // console.log(`[FSKProcessor:${this.instanceName}] Modulating ${data.bytes.length} bytes: [${data.bytes.map((b: number) => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`);
           // @ts-expect-error 
-          await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController.signal });
+          await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController!.signal });
           // Clear receive buffer after modulation to avoid self-reception
           this.demodulatedBuffer.clear();
           this.port.postMessage({ id, type: 'result', data: { success: true } });
@@ -223,13 +211,10 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
         }
           
         case 'demodulate': {
-          if (this.abortController) {
-            this.abortController.abort();
-          }
-          this.abortController = new MyAbortController();
-          console.log(`[FSKProcessor:${this.instanceName}] Demodulating data request received`);
+          this.resetAbortController();
+          // console.log(`[FSKProcessor:${this.instanceName}] Demodulating data request received`);
           // @ts-expect-error 
-          const demodulatedBytes = await this.demodulate({ signal: this.abortController.signal });
+          const demodulatedBytes = await this.demodulate({ signal: this.abortController!.signal });
           this.port.postMessage({ id, type: 'result', data: { bytes: Array.from(demodulatedBytes) } });
           break;
         }
@@ -268,14 +253,10 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
 
   private hasLoggedAudioInput = false;
   
-  /**
-   * Process incoming audio samples for demodulation
-   */
   private demodulateFrom(inputSamples: Float32Array): void {
     // Check if we're receiving audio data (log only once)
     const hasNonZero = inputSamples.some(sample => Math.abs(sample) > 0.001);
     if (hasNonZero && !this.hasLoggedAudioInput) {
-      // console.log(`[FSKProcessor] *** AUDIO INPUT DETECTED *** First non-zero samples received`);
       this.hasLoggedAudioInput = true;
     }
     
@@ -284,9 +265,6 @@ export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcess
     this.processDemodulation(inputSamples);
   }
   
-  /**
-   * Generate outgoing audio samples for modulation
-   */
   private modulateTo(outputSamples: Float32Array): void {
     // Fill output with zeros first
     outputSamples.fill(0);
