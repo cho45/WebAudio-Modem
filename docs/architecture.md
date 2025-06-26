@@ -2,37 +2,56 @@
 
 ## Overview
 
-WebAudio-Modemは音声通信モデムライブラリで、複数のレイヤーに分離された設計を採用しています。各レイヤーは明確な責務を持ち、適切な抽象化によって疎結合を実現しています。
+WebAudio-Modemは音声通信モデムライブラリで、3つの重要な抽象化レイヤーと適切なアダプターパターンによる設計を採用しています。各レイヤーは明確な責務を持ち、WebAudio APIの制約に最適化された構造となっています。
 
-## Layer Architecture
+## Core Architecture
+
+### 3つの重要なインターフェース
+
+WebAudio-Modemの設計は以下の3つの重要なインターフェースを中心に構築されています：
+
+1. **IModulator** - 復調変調インターフェース（純粋な信号処理）
+2. **ITransport** - データフレーム化インターフェース（プロトコル処理）  
+3. **IDataChannel** - バイト⇔変調・復調インターフェース（音声通信抽象化）
+
+### レイヤー構造
 
 ```
 ┌─────────────────────────────────────┐
 │         Application Layer           │
-│  ┌─────────────┐ ┌─────────────────┐│
-│  │   Demo UI   │ │ Other Apps      ││
-│  └─────────────┘ └─────────────────┘│
+│    ┌───────────┐ ┌───────────────┐  │
+│    │  Demo UI  │ │  Other Apps   │  │
+│    └───────────┘ └───────────────┘  │
 └─────────────────┬───────────────────┘
-                  │
+                  │ ITransport
 ┌─────────────────▼───────────────────┐
 │         Transport Layer             │
 │  ┌─────────────────────────────────┐│
-│  │        XModemTransport          ││  ← パケット処理・フロー制御
-│  │    (Protocol Implementation)   ││
+│  │       XModemTransport           ││  ← プロトコル制御・ARQ・CRC
+│  │    implements ITransport        ││
 │  └─────────────────────────────────┘│
 └─────────────────┬───────────────────┘
-                  │ IAudioProcessor
+                  │ IDataChannel
 ┌─────────────────▼───────────────────┐
-│     Audio Processing Layer          │
+│       Data Channel Layer            │
 │  ┌─────────────────────────────────┐│
-│  │        FSKProcessor             ││  ← リアルタイム処理 + バッファリング
-│  │   ┌─────────────────────────┐   ││  ← process() + modulate/demodulate()
-│  │   │       FSKCore           │   ││
-│  │   │   (IModulator実装)      │   ││  ← 純粋な変復調計算
-│  │   └─────────────────────────┘   ││
+│  │     WebAudioDataChannel         ││  ← AudioWorkletNodeアダプター
+│  │    (FSKProcessor adapter)       ││  ← postMessage通信
+│  │    implements IDataChannel      ││
 │  └─────────────────────────────────┘│
 └─────────────────┬───────────────────┘
-                  │ AudioWorkletProcessor.process()
+                  │ AudioWorklet postMessage
+┌─────────────────▼───────────────────┐
+│    Audio Processing Layer           │
+│  ┌─────────────────────────────────┐│
+│  │        FSKProcessor             ││  ← AudioWorkletProcessor
+│  │  ┌───────────────────────────┐  ││  ← リアルタイム音声処理
+│  │  │       FSKCore             │  ││
+│  │  │  implements IModulator    │  ││  ← 純粋な変復調計算
+│  │  └───────────────────────────┘  ││
+│  └─────────────────────────────────┘│
+└─────────────────┬───────────────────┘
+                  │ process(inputs, outputs)
 ┌─────────────────▼───────────────────┐
 │        Audio Hardware Layer         │
 │      (Web Audio API / 実際の音声)    │
@@ -41,269 +60,297 @@ WebAudio-Modemは音声通信モデムライブラリで、複数のレイヤー
 
 ## Key Principles
 
-### 1. Domain Separation
+### 1. WebAudio Adapter Pattern
 
-各レイヤーは異なるドメインを担当し、詳細を隠蔽します：
-
-- **Transport Layer**: パケット通信プロトコル（XModem）
-- **Data Channel Layer**: 抽象的なデータ送受信
-- **Audio Processing Layer**: 音声信号処理（FSK変復調）
-
-### 2. 重要な新インターフェース: IAudioProcessor
-
-音声通信において最も重要な発見は、**AudioWorkletProcessorレベルでの抽象化**が必要だということです：
+**重要な設計原則**: WebAudioDataChannel は FSKProcessor のアダプターとして機能し、postMessage による通信でスレッド間のデータ交換を実現しています。
 
 ```typescript
-interface IAudioProcessor {
-  // リアルタイム音声処理（AudioWorkletProcessor.process()相当）
-  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
+// メインスレッド側（WebAudioDataChannel）
+class WebAudioDataChannel extends AudioWorkletNode implements IDataChannel {
+  async modulate(data: Uint8Array): Promise<void> {
+    return this.sendMessage('modulate', data); // postMessage
+  }
   
-  // アプリケーションレベルの変調要求（非同期）
-  modulate(data: Uint8Array): Promise<void>;
-  
-  // アプリケーションレベルの復調データ取得（非同期・待機付き）
-  demodulate(): Promise<Uint8Array>;
+  async demodulate(): Promise<Uint8Array> {
+    return this.sendMessage('demodulate'); // postMessage
+  }
 }
-```
 
-#### なぜIAudioProcessorが重要なのか
-
-**リアルタイム処理とアプリケーション処理の橋渡し**：
-```typescript
-class FSKProcessor implements IAudioProcessor {
-  private fskCore: IModulator; // 純粋な変復調計算
-  private outputQueue: Float32Array[] = []; // 送信待ちキュー
-  private demodulatedBuffer: Uint8Array[] = []; // 受信バッファ
+// ワーカースレッド側（FSKProcessor）
+class FSKProcessor extends AudioWorkletProcessor {
+  private fskCore: FSKCore; // IModulator実装
   
-  // 128サンプル/チャンクのリアルタイム処理
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    // 継続的な復調 + キューされた変調信号の出力
+    // リアルタイム音声処理
     const samples = inputs[0][0];
     const demodulated = this.fskCore.demodulateData(samples);
-    if (demodulated.length > 0) {
-      this.demodulatedBuffer.push(demodulated);
-    }
-    
-    if (this.outputQueue.length > 0) {
-      outputs[0][0].set(this.outputQueue.shift()!);
-    }
+    // バッファリング処理...
     return true;
   }
-  
-  // アプリケーションからの変調要求
-  async modulate(data: Uint8Array): Promise<void> {
-    const signal = await this.fskCore.modulateData(data);
-    this.chunkAndQueue(signal); // 128サンプル単位に分割してキュー
-  }
-  
-  // アプリケーションへの復調データ提供
-  async demodulate(): Promise<Uint8Array> {
-    return await this.waitForBufferedData();
-  }
 }
 ```
 
-### 3. シンプルな責務分離
+### 2. 3層の責務分離
 
-新しい設計では、各インターフェースが明確な責務を持ちます：
+各レイヤーは異なるドメインを担当し、適切な抽象化によって分離されています：
+
+#### Transport Layer (ITransport)
+- **責務**: プロトコル制御・パケット処理・再送制御
+- **実装**: XModemTransport
+- **依存**: IDataChannel インターフェースのみ
+- **知らないこと**: 音声処理・サンプル・WebAudio API
+
+#### Data Channel Layer (IDataChannel)  
+- **責務**: バイト⇔変調・復調の抽象化・スレッド間通信
+- **実装**: WebAudioDataChannel（AudioWorkletNodeアダプター）
+- **特徴**: FSKProcessor との postMessage 通信
+- **知らないこと**: プロトコル詳細・パケット構造
+
+#### Modulator Layer (IModulator)
+- **責務**: 純粋な信号処理・変復調計算
+- **実装**: FSKCore
+- **特徴**: 環境非依存・テスト容易
+- **知らないこと**: WebAudio制約・プロトコル・スレッド
+
+### 3. postMessage通信の重要性
+
+WebAudio APIの制約により、音声処理はワーカースレッドで実行する必要があります：
+
+```
+┌─────────────────┐    postMessage    ┌─────────────────┐
+│   Main Thread   │ ←─────────────→ │ AudioWorklet    │
+│                 │                  │   Thread        │
+│ XModemTransport │                  │  FSKProcessor   │
+│       ↓         │                  │       ↓         │
+│WebAudioDataChannel│                │    FSKCore      │
+└─────────────────┘                  └─────────────────┘
+```
+
+**通信フロー**:
+1. **送信**: Transport → WebAudioDataChannel → postMessage → FSKProcessor → FSKCore
+2. **受信**: FSKCore → FSKProcessor → postMessage → WebAudioDataChannel → Transport
+
+## Data Flow Architecture
+
+### 送信フロー (Modulation Flow)
+
+```
+Application Data
+      ↓
+┌─────────────────────────────────────┐
+│        XModemTransport              │ ← ITransport実装
+│  • パケット作成 (SOH|SEQ|~SEQ|LEN|DATA|CRC)
+│  • シーケンス番号管理
+│  • 再送制御
+└─────────────┬───────────────────────┘
+              ↓ sendData(packetBytes)
+┌─────────────────────────────────────┐
+│     WebAudioDataChannel             │ ← IDataChannel実装
+│  • AudioWorkletNodeアダプター
+│  • postMessage送信
+└─────────────┬───────────────────────┘
+              ↓ postMessage('modulate', data)
+┌─────────────────────────────────────┐
+│        FSKProcessor                 │ ← AudioWorkletProcessor
+│  • メッセージハンドリング               │ ← ワーカースレッド
+│  • 送信キュー管理                     │
+└─────────────┬───────────────────────┘
+              ↓ modulateData(data)
+┌─────────────────────────────────────┐
+│          FSKCore                    │ ← IModulator実装
+│  • 純粋な変調計算                     │ ← 環境非依存
+│  • データ → 音声信号変換               │
+└─────────────┬───────────────────────┘
+              ↓ Float32Array signal
+              AudioContext Output
+```
+
+### 受信フロー (Demodulation Flow)
+
+```
+AudioContext Input
+      ↓ Float32Array samples
+┌─────────────────────────────────────┐
+│          FSKCore                    │ ← IModulator実装
+│  • 純粋な復調計算                     │
+│  • 音声信号 → データ変換               │
+└─────────────┬───────────────────────┘
+              ↓ demodulateData(samples)
+┌─────────────────────────────────────┐
+│        FSKProcessor                 │ ← AudioWorkletProcessor
+│  • 受信バッファ管理                   │ ← process()内で継続実行
+│  • postMessage応答                   │
+└─────────────┬───────────────────────┘
+              ↓ postMessage('result', demodulatedData)
+┌─────────────────────────────────────┐
+│     WebAudioDataChannel             │ ← IDataChannel実装
+│  • AudioWorkletNodeアダプター
+│  • Promise解決
+└─────────────┬───────────────────────┘
+              ↓ receiveData() returns
+┌─────────────────────────────────────┐
+│        XModemTransport              │ ← ITransport実装
+│  • パケット解析 (CRC検証)              │
+│  • ACK/NAK送信
+│  • データ再構築
+└─────────────┬───────────────────────┘
+              ↓
+        Application Data
+```
+
+## Interface Definitions
+
+### IModulator - 純粋な信号処理層
 
 ```typescript
-// Transport層 - プロトコル処理のみ
-class XModemTransport {
-  constructor(private audioProcessor: IAudioProcessor) {}
+interface IModulator {
+  // データ → 音声信号変換（純粋計算）
+  modulateData(data: Uint8Array): Promise<Float32Array>;
   
-  async receiveData(): Promise<Uint8Array> {
-    return await this.audioProcessor.demodulate(); // 音声詳細を知らない
-  }
-}
-
-// FSKCore - 純粋な変復調計算のみ
-class FSKCore implements IModulator {
-  modulateData(data: Uint8Array): Promise<Float32Array> { /* 純粋計算 */ }
-  demodulateData(samples: Float32Array): Promise<Uint8Array> { /* 純粋計算 */ }
-}
-
-// FSKProcessor - リアルタイム処理 + バッファリング
-class FSKProcessor implements IAudioProcessor {
-  // process() + modulate() + demodulate()の統合
-}
-```
-
-**Design Rationale**: この設計により、**WebAudioの制約**（リアルタイム処理）と**アプリケーションの要求**（非同期データ送受信）を自然に両立できます。
-
-### 4. Simplified Data Flow
-
-新しい設計では、データフローが大幅にシンプルになります：
-
-```
-Send Flow:
-App → Transport → FSKProcessor.modulate() → outputQueue → process() → AudioHW
-
-Receive Flow:  
-AudioHW → process() → demodulatedBuffer → FSKProcessor.demodulate() → Transport → App
-```
-
-**重要な特徴**:
-- **IDataChannelレイヤーが削除**され、Transport層がFSKProcessorと直接通信
-- **FSKProcessor内でリアルタイム処理とバッファリングが統合**
-- **WebAudioの制約に最適化**された設計
-
-## Layer Responsibilities
-
-### Application Layer
-- ユーザーインターフェース
-- ファイル送受信ロジック
-- エラーハンドリング・表示
-
-### Transport Layer (XModemTransport)
-- **責務**: 
-  - パケットの組み立て・分解
-  - ACK/NAK処理
-  - 再送制御
-  - フロー制御
-- **依存**: IAudioProcessor のみ
-- **知らないこと**: 音声処理、サンプル処理、リアルタイム制約
-
-### Audio Processing Layer (FSKProcessor)
-- **責務**:
-  - **二重責務の統合**:
-    1. リアルタイム音声処理（process()）
-    2. アプリケーション通信（modulate()/demodulate()）
-  - 送信データのキューイング・チャンク分割
-  - 受信データのバッファリング・待機制御
-  - WebAudio制約への適合
-- **実行環境**: AudioWorkletProcessor (ワーカースレッド)
-- **内部依存**: IModulator (純粋計算)
-
-### Signal Processing Layer (FSKCore)
-- **責務**:
-  - **純粋な変復調計算**のみ
-  - データ → 音声信号変換
-  - 音声信号 → データ変換
-  - アルゴリズムの実装
-- **特徴**: 
-  - 環境非依存
-  - 状態を持つストリーム処理
-  - テスト容易性
-
-## Benefits
-
-### 1. Testability
-各レイヤーが独立してテスト可能：
-- Transport層: モックDataChannelでテスト
-- Audio層: 純粋な信号処理テスト
-
-### 2. Extensibility
-新しい実装を容易に追加可能：
-- 新しい変調方式（PSK、QAM）
-- 新しい通信チャネル（Serial、TCP）
-- 新しいプロトコル（Zmodem、Kermit）
-
-### 3. Platform Independence
-Transport層はプラットフォーム非依存：
-- 同じXModemTransportをNode.js、Browser、モバイルで使用可能
-
-### 4. Performance
-適切なレイヤー分離により：
-- 音声処理はワーカースレッドで実行
-- UI は音声処理に影響されない
-- 各レイヤーで最適なバッファリング
-
-## Implementation Guidelines
-
-### DO
-- 各レイヤーは抽象インターフェースに依存する
-- 下位レイヤーの詳細を上位レイヤーに漏らさない
-- 適切な非同期処理でデータフローを管理する
-
-### DON'T  
-- Transport層で音声サンプルを直接処理しない
-- Audio層でパケット構造を意識しない
-- レイヤーを跨いだ直接的な依存関係を作らない
-
-## Architecture Evolution
-
-### 設計議論の記録
-
-この設計に至るまでの重要な議論と決定事項：
-
-#### 1. Transport層とModulator層の分離
-
-**課題**: XModemTransportがIModulatorに直接依存し、音声samplesを知る必要が生じていた
-```typescript
-// 問題のあった設計
-class XModemTransport {
-  async receiveData() {
-    const samples = ???; // Transportはsamplesをどこから得るのか？
-    const data = await this.modulator.demodulateData(samples);
-  }
-}
-```
-
-**解決**: IDataChannelレイヤーの導入により、Transport層は音声詳細を知らなくて済むように
-
-#### 2. IDataChannel は必要か？
-
-**議論**: 
-- Option A: Transport → IDataChannel → IModulator (抽象化レイヤー追加)
-- Option B: Transport → IModulator (with receive()) (シンプル設計)
-
-**結論**: IModulatorに`receive()`を追加するだけでは不十分。FSKCoreの2面性を活かすためにIDataChannelは有効。
-
-#### 3. BasicDataChannelの実装問題
-
-**課題**: BasicDataChannelでsamplesの提供者が不明確
-```typescript
-// 問題: samplesをどこから得るのか？
-const emptySignal = new Float32Array(0); // 意味がない
-const demodulated = await this.modulator.demodulateData(emptySignal);
-```
-
-**議論の結果**: BasicDataChannelは音声処理を含むべきではなく、FSKCore自体が2面性を持つことで解決
-
-#### 4. IDataChannelの再評価
-
-**課題**: IDataChannelレイヤーが実際には必要ない可能性
-```typescript
-// 問題: IDataChannelは単なる転送レイヤーになってしまう
-class WebAudioDataChannel implements IDataChannel {
-  async send(data: Uint8Array): Promise<void> {
-    return await this.audioProcessor.modulate(data); // 単純な転送
-  }
+  // 音声信号 → データ変換（ストリーム処理）
+  demodulateData(samples: Float32Array): Promise<Uint8Array>;
   
-  async receive(): Promise<Uint8Array> {
-    return await this.audioProcessor.demodulate(); // 単純な転送
-  }
+  // 設定管理・状態管理
+  configure(config: ModulatorConfig): void;
+  reset(): void;
+  isReady(): boolean;
+  
+  // 信号品質監視
+  getSignalQuality(): SignalQuality;
 }
 ```
 
-**最終決定**: IDataChannelを削除し、Transport層がFSKProcessorと直接通信
+### IDataChannel - スレッド間通信抽象化
 
-#### 5. IAudioProcessorの発見
+```typescript
+interface IDataChannel {
+  // アプリケーション → 音声出力（非同期・完了待機）
+  modulate(data: Uint8Array, options?: {signal?: AbortSignal}): Promise<void>;
+  
+  // 音声入力 → アプリケーション（非同期・データ待機）
+  demodulate(options?: {signal?: AbortSignal}): Promise<Uint8Array>;
+  
+  // 状態リセット
+  reset(): Promise<void>;
+}
+```
 
-**重要な気づき**: 「誰がsamplesを与えるか」「誰が変調済みsamplesを出力するか」の分析により、**FSKProcessorレベルでの抽象化**が最も重要であることが判明
+### ITransport - プロトコル制御層
 
-**根拠**:
-1. WebAudioの制約（リアルタイム処理）に対応
-2. アプリケーション要求（非同期通信）に対応
-3. 責務の適切な統合（過度な分離を避ける）
-4. テスタビリティの確保
+```typescript
+interface ITransport {
+  // 信頼性のあるデータ送信（パケット化・再送制御）
+  sendData(data: Uint8Array, options?: {signal?: AbortSignal}): Promise<void>;
+  
+  // 信頼性のあるデータ受信（パケット解析・重複排除）
+  receiveData(options?: {signal?: AbortSignal}): Promise<Uint8Array>;
+  
+  // プロトコル制御・状態管理
+  sendControl(command: string): Promise<void>;
+  isReady(): boolean;
+  getStatistics(): TransportStatistics;
+  reset(): void;
+}
+```
 
-### 設計原則の確立
+## Key Architecture Benefits
 
-この議論を通じて確立された原則：
+### 1. WebAudio最適化設計
 
-1. **WebAudio First Design**: WebAudioの制約を設計の中心に据える
-2. **適切な抽象化レベル**: 過度に細分化せず、実用的な単位で抽象化
-3. **責務の統合**: 密結合な要素は無理に分離しない（FSKProcessorの二重責務）
-4. **環境依存性の明確化**: 環境固有部分と汎用部分を明確に分離
+- **AudioWorkletProcessor**: リアルタイム音声処理に最適化
+- **postMessage通信**: メインスレッドをブロックしない非同期通信
+- **適切なバッファリング**: 128サンプル/チャンクに最適化されたキューイング
 
-## Current Status
+### 2. テスタビリティ
 
-- ✅ FSKCore: 完全実装済み（IModulator）
-- ✅ XModemTransport: 完全実装済み（従来版）
-- 🔄 IAudioProcessor: インターフェース定義が必要
-- 🔄 FSKProcessor: IAudioProcessor実装への拡張が必要
-- 🔄 XModemTransport: IAudioProcessor依存への移行が必要
-- ⚠️ テスト: 新アーキテクチャのテスト実装が必要
-- ❌ IDataChannel: 削除予定（不要と判断）
+```typescript
+// 各レイヤーが独立してテスト可能
+describe('FSKCore (IModulator)', () => {
+  // 純粋な信号処理テスト - Node.jsで実行可能
+});
+
+describe('XModemTransport (ITransport)', () => {
+  // MockDataChannelを使用したプロトコルテスト
+});
+
+describe('WebAudioDataChannel (IDataChannel)', () => {
+  // ブラウザ環境でのpostMessage通信テスト
+});
+```
+
+### 3. 拡張性
+
+**新しい変調方式の追加**:
+```typescript
+class PSKCore implements IModulator {
+  // PSK変調・復調の実装
+}
+
+class PSKProcessor extends AudioWorkletProcessor {
+  private pskCore = new PSKCore();
+  // PSK用のAudioWorkletProcessor実装
+}
+
+// 既存のXModemTransportをそのまま使用可能
+const transport = new XModemTransport(new WebAudioDataChannel(pskProcessor));
+```
+
+### 4. 環境非依存性
+
+- **FSKCore (IModulator)**: 純粋計算のため完全に環境非依存
+- **XModemTransport (ITransport)**: IDataChannelに依存するため異なる環境で使用可能
+- **WebAudioDataChannel**: ブラウザ専用だが、Node.js用の代替実装が可能
+
+## 実装ガイドライン
+
+### ✅ DO
+
+1. **インターフェース依存**: 具象クラスではなく抽象インターフェースに依存
+2. **適切な非同期処理**: AbortSignalによるキャンセル対応
+3. **レイヤー境界の尊重**: 上位レイヤーは下位の実装詳細を知らない
+4. **WebAudio制約の考慮**: リアルタイム処理とアプリケーション処理の分離
+
+### ❌ DON'T
+
+1. **レイヤー跨ぎ**: Transport層で音声サンプルを直接処理
+2. **責務の混在**: IModulator内でプロトコル処理
+3. **同期処理**: リアルタイム制約を無視したブロッキング処理
+4. **環境依存**: 純粋計算レイヤーでWebAudio APIを使用
+
+## Current Implementation Status
+
+### ✅ 完全実装済み
+
+- **FSKCore**: IModulator完全実装、包括的テスト済み
+- **XModemTransport**: ITransport完全実装、ARQ・CRC対応
+- **WebAudioDataChannel**: IDataChannel完全実装、postMessage通信
+- **FSKProcessor**: AudioWorkletProcessor実装、リアルタイム処理
+
+### 🔄 実装中・改善中
+
+- **AbortSignal対応**: 全レイヤーでのキャンセル機能強化
+- **エラーハンドリング**: より堅牢なエラー処理とリカバリ
+- **パフォーマンス最適化**: バッファリング効率の改善
+
+### 📊 テスト状況
+
+- **Node.jsテスト**: FSKCore、XModem、DSPフィルター、ユーティリティ
+- **ブラウザテスト**: WebAudioDataChannel、FSKProcessor統合
+
+### 🔮 将来の拡張計画
+
+- **PSK/QAM変調**: 新しい変調方式の追加
+- **エラー訂正**: Reed-Solomon符号の実装
+- **マルチチャンネル**: 複数チャンネル同時通信
+
+## Architecture Philosophy
+
+この設計は以下の哲学に基づいています：
+
+1. **WebAudio First**: WebAudio APIの制約を設計の中心に据える
+2. **適切な抽象化**: 過度に細分化せず、実用的な単位での抽象化
+3. **テスタビリティ**: 各レイヤーが独立してテスト可能
+4. **拡張性**: 新しい変調方式・プロトコルの追加が容易
+5. **責務の明確化**: 各レイヤーが単一の明確な責務を持つ
+
+この設計により、WebAudio APIの複雑性を適切に抽象化し、音声通信アプリケーションの開発を大幅に簡素化することができます。
