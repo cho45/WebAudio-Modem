@@ -28,7 +28,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   constructor(context: AudioContext, processorName: string, options: AudioWorkletNodeOptions = {}) {
     const instanceName = options.processorOptions?.name || 'unnamed';
     
-    console.log(`[WebAudioDataChannel:${instanceName}] Initializing with processor: ${processorName} and options:`, options);
+    // console.log(`[WebAudioDataChannel:${instanceName}] Initializing with processor: ${processorName} and options:`, options);
     super(context, processorName, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -76,7 +76,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   private handleMessage(event: MessageEvent<WorkletMessage>) {
     const { id, type, data } = event.data;
     const operation = this.pendingOperations.get(id);
-    console.log(`[WebAudioDataChannel:${this.instanceName}] Received message:`, { id, type, data });
+    // console.log(`[WebAudioDataChannel:${this.instanceName}] Received message:`, { id, type, data });
     
     if (!operation) {
       console.warn(`[WebAudioDataChannel:${this.instanceName}] Received message for unknown operation: ${id}`);
@@ -125,7 +125,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
         signal 
       });
       
-      console.log(`[WebAudioDataChannel:${this.instanceName}] Sending message:`, { id, type, data });
+      // console.log(`[WebAudioDataChannel:${this.instanceName}] Sending message:`, { id, type, data });
       this.port.postMessage({ id, type, data });
     });
   }
@@ -135,7 +135,7 @@ export class WebAudioDataChannel extends AudioWorkletNode implements IDataChanne
   }
   
   async modulate(data: Uint8Array, options?: {signal?: AbortSignal }): Promise<void> {
-    console.log(`[WebAudioDataChannel:${this.instanceName}] Modulating ${data.length} bytes`);
+    // console.log(`[WebAudioDataChannel:${this.instanceName}] Modulating ${data.length} bytes`);
     
     const result = await this.sendOperationWithAbortHandling(
       'modulate', 
