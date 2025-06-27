@@ -122,19 +122,18 @@ export class XModemTransport extends BaseTransport {
 
   private async sendAllFragments(externalSignal?: AbortSignal): Promise<void> {
     while (this.send.fragmentIndex < this.send.fragments.length) {
-      console.log(`[XModemTransport] Processing fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
-
-      const fragment = this.send.fragments[this.send.fragmentIndex];
-      const packet = XModemPacket.createData(this.send.sequence, fragment);
-      const serialized = XModemPacket.serialize(packet);
-      console.log(`[XModemTransport] Sending fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}, sequence: ${this.send.sequence}`);
-      await this.dataChannel.modulate(serialized);
-      this.statistics.packetsSent++;
-      
-      this.stateChanged(State.SENDING_WAIT_ACK, `Waiting for ACK for fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
-      
       await this.withRetry(
         async () => {
+          console.log(`[XModemTransport] Processing fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
+
+          const fragment = this.send.fragments[this.send.fragmentIndex];
+          const packet = XModemPacket.createData(this.send.sequence, fragment);
+          const serialized = XModemPacket.serialize(packet);
+          console.log(`[XModemTransport] Sending fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}, sequence: ${this.send.sequence}`);
+          await this.dataChannel.modulate(serialized);
+          this.statistics.packetsSent++;
+          
+          this.stateChanged(State.SENDING_WAIT_ACK, `Waiting for ACK for fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
           for (;;) {
             const byte = await this.waitForControlByte({ signal: this.createTimeoutSignal(externalSignal) });
             

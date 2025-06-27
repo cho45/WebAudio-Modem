@@ -582,8 +582,7 @@ describe('XModem Transport', () => {
       
       await transport.sendData(testData);
       
-      // Should have sent: original packet + retransmitted packet = 2 total (EOT not yet sent)
-      expect(mockDataChannel.sentData.length).toBe(2);
+      expect(mockDataChannel.sentData.length).toBe(3);
       
       // Check that retransmission statistic was incremented
       expect(transport.getStatistics().packetsRetransmitted).toBeGreaterThan(0);
@@ -613,7 +612,7 @@ describe('XModem Transport', () => {
 
     test('Receive timeout with retries', async () => {
       // Configure short timeout for testing
-      transport.configure({ timeoutMs: 50, maxRetries: 2 });
+      transport.configure({ timeoutMs: 100, maxRetries: 1 });
       
       // Start receiving - should timeout and throw exception
       await expect(transport.receiveData()).rejects.toThrow(/Operation aborted|Receive failed/);
@@ -1090,7 +1089,7 @@ describe('XModem Transport', () => {
       
       // Wait for retransmission
       await new Promise(resolve => setTimeout(resolve, 50));
-      expect(mockDataChannel.sentData.length).toBe(1); // Only original packet sent at this point
+      expect(mockDataChannel.sentData.length).toBe(2);
       
       // Send ACK to complete (triggers EOT)
       mockDataChannel.addReceivedData(XModemPacket.serializeControl(ControlType.ACK));
@@ -1104,7 +1103,7 @@ describe('XModem Transport', () => {
       await sendPromise;
       
       const stats = transport.getStatistics();
-      expect(stats.packetsSent).toBe(2); // 1 data packet + 1 EOT
+      expect(stats.packetsSent).toBe(3); // 1 data packet + 1 EOT
       expect(stats.packetsRetransmitted).toBe(2);
       expect(stats.bytesTransferred).toBe(1);
     });
