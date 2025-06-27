@@ -43,6 +43,8 @@ const app = createApp({
     // Reactive設定管理
     const fskConfig = reactive({
       ...DEFAULT_FSK_CONFIG,
+      markFrequency: 1650,
+      spaceFrequency: 1850,
       baudRate: 300,
       // sampleRateは初期化時に設定
     });
@@ -985,7 +987,7 @@ const app = createApp({
         if (!sampleFile || !sampleFile.value) return;
         
         // サンプルファイルをfetchで取得
-        const response = await fetch(`/sample-files/${sampleFile.value}`);
+        const response = await fetch(`../sample-files/${sampleFile.value}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
