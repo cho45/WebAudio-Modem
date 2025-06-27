@@ -4,7 +4,7 @@
 
 音声チャンネルを通じてデータ伝送を実現する、TypeScript実装のオーディオモデムです。FSK（周波数偏移変調）とXModem風プロトコルによるデータ通信を提供します。
 
-🎯 **[デモを試す](https://webaudio-modem.github.io/WebAudio-Modem/demo/)**
+🎯 **[デモを試す](https://cho45.github.io/WebAudio-Modem/demo/)**
 
 ## ✨ 主要機能
 
