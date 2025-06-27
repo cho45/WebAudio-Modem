@@ -985,7 +985,7 @@ const app = createApp({
         if (!sampleFile || !sampleFile.value) return;
         
         // サンプルファイルをfetchで取得
-        const response = await fetch(`./assets/sample-files/${sampleFile.value}`);
+        const response = await fetch(`/sample-files/${sampleFile.value}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
