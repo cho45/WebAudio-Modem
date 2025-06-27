@@ -49,15 +49,13 @@ class AGCProcessor {
     this.releaseRate = 1.0 - Math.exp(-1.0 / (sampleRate * 0.01)); // 10ms release
   }
 
-  process(samples: Float32Array): Float32Array {
-    const output = new Float32Array(samples.length);
-    
+  process(samples: Float32Array): void {
     for (let i = 0; i < samples.length; i++) {
-      // Apply current gain
-      output[i] = samples[i] * this.currentGain;
+      // Apply current gain in-place
+      samples[i] *= this.currentGain;
       
       // Measure output level
-      const outputLevel = Math.abs(output[i]);
+      const outputLevel = Math.abs(samples[i]);
       
       // Update gain based on output level
       if (outputLevel > this.targetLevel) {
@@ -75,8 +73,6 @@ class AGCProcessor {
       // Limit gain to reasonable bounds
       this.currentGain = Math.max(0.1, Math.min(10.0, this.currentGain));
     }
-    
-    return output;
   }
 }
 
@@ -193,7 +189,7 @@ export class FSKCore extends BaseModulator<FSKConfig> {
     try {
       // Process samples through AGC and preFilter
       let processedSamples = samples;
-      if (this.dsp.agc) processedSamples = this.dsp.agc.process(processedSamples);
+      if (this.dsp.agc) this.dsp.agc.process(processedSamples);
       if (this.dsp.preFilter) processedSamples = this.dsp.preFilter.processBuffer(processedSamples);
       
       // Stream processing: process each sample individually
