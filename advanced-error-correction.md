@@ -1,3 +1,13 @@
+---
+```mermaid
+graph TD
+    A[アプリ/上位層] --> B[FEC/Framer]
+    B --> C{DSSS層\n(任意)}
+    C --> D[MODEM層\n(FSK/BPSK/QPSK等)]
+    D --> E[物理層(音声)]
+```
+---
+
 # 高度なエラー訂正を持つ復調器・データフレーム伝送の設計メモ（2025/06整理）
 
 ## 目的
@@ -174,6 +184,552 @@ interface FrameDecoder {
 
 - **共通して必要な情報**
   - ブロック/フレーム境界、有効データ長、FECパラメータ（符号長・レート等）、soft value列（ソフト判定復号時）
+
+---
+
+## 直接スペクトラム拡散（DSSS）による高度な誤り訂正
+
+### DSSSの理論的基礎と実装方針
+
+直接スペクトラム拡散は、従来のFSK/DPSK変調に比べて大幅に向上した誤り訂正能力と干渉耐性を提供する。
+
+#### 基本動作原理
+1. **拡散（Spreading）**: 元データビットを疑似ランダム符号（PN符号）で拡散
+2. **変調**: 拡散後の信号をBPSKで変調して送信
+3. **逆拡散（Despreading）**: 受信側で同じPN符号を用いて逆拡散
+4. **復調**: 元のデータビットを復元
+
+#### 主要な技術的利点
+- **処理利得**: 拡散率に応じたSNR改善
+  - 31チップ拡散: 15dB利得
+  - 127チップ拡散: 21dB利得
+  - 511チップ拡散: 27dB利得
+- **干渉耐性**: 狭帯域干渉に対する堅牢性
+- **多重アクセス**: 異なるPN符号による複数信号の同時伝送
+- **セキュリティ**: PN符号を知らない限り復調困難
+
+### 既存WebAudio-Modemアーキテクチャとの統合設計
+
+DSSSは既存の`IModulator`インターフェースに完全に統合可能な設計とする。
+
+```typescript
+// DSSS設定インターフェース
+interface DSSSConfig extends BaseModulatorConfig {
+  chipRate: number;              // チップレート（Hz）
+  spreadingFactor: number;       // 拡散率（PN符号長）
+  pnSequence?: number[];         // PN系列（手動指定時）
+  pnType: 'maxLength' | 'gold' | 'walsh' | 'manual';
+  carrierFrequency: number;      // 搬送波周波数
+  syncThreshold: number;         // 同期検出閾値
+  acquisitionMode: 'sliding' | 'matched'; // 同期取得方式
+}
+
+// DSSS実装クラス（IModulatorインターフェース準拠）
+class DSSSModulator extends BaseModulator<DSSSConfig> {
+  readonly name = 'DSSS';
+  readonly type = 'PSK' as ModulationType;
+  
+  // 変調: データビット → 拡散 → BPSK変調
+  async modulateData(data: Uint8Array): Promise<Float32Array> {
+    const bits = this.bytesToBits(data);
+    const spreadBits = this.spreadData(bits);
+    return this.bpskModulate(spreadBits);
+  }
+  
+  // 復調: BPSK復調 → 逆拡散 → データビット
+  async demodulateData(samples: Float32Array): Promise<Uint8Array> {
+    const softBits = this.bpskDemodulate(samples);
+    const despreadBits = this.despreadData(softBits);
+    return this.bitsToBytes(despreadBits);
+  }
+}
+```
+
+### PN系列生成アルゴリズム設計
+
+#### 1. M系列生成器（最大長系列）
+線形フィードバックシフトレジスタ（LFSR）による実装。
+
+```typescript
+class MaxLengthSequenceGenerator {
+  private lfsr: LinearFeedbackShiftRegister;
+  
+  // M系列の特性: 周期 = 2^n - 1, 優れた自己相関特性
+  generateSequence(length: number, polynomial: number): number[] {
+    const sequence: number[] = [];
+    const periods = Math.pow(2, length) - 1;
+    
+    for (let i = 0; i < periods; i++) {
+      sequence.push(this.lfsr.shift());
+    }
+    return sequence;
+  }
+}
+
+// LFSR実装
+class LinearFeedbackShiftRegister {
+  private register: number;
+  
+  constructor(private config: { taps: number[], seed: number, length: number }) {
+    this.register = config.seed || 1; // 0は避ける
+  }
+  
+  shift(): number {
+    const output = this.register & 1; // LSB出力
+    
+    // フィードバック計算
+    let feedback = 0;
+    for (const tap of this.config.taps) {
+      feedback ^= (this.register >> tap) & 1;
+    }
+    
+    // レジスタシフト
+    this.register = (this.register >> 1) | (feedback << (this.config.length - 1));
+    return output;
+  }
+}
+```
+
+#### 2. Gold符号生成器（多重アクセス対応）
+2つのM系列のXORによる相互相関特性改善。
+
+```typescript
+class GoldSequenceGenerator {
+  // 2つのM系列の組み合わせで相互相関を最小化
+  generateGoldSequence(preferred1: number[], preferred2: number[]): number[] {
+    const sequence: number[] = [];
+    for (let i = 0; i < preferred1.length; i++) {
+      sequence.push(preferred1[i] ^ preferred2[i]);
+    }
+    return sequence;
+  }
+}
+```
+
+#### 3. Walsh符号生成器（直交符号）
+アダマール行列による完全直交符号生成。
+
+```typescript
+class WalshSequenceGenerator {
+  // Hadamard行列による直交符号
+  generateWalshSequence(length: number, index: number): number[] {
+    const matrix = this.generateHadamardMatrix(length);
+    return matrix[index].map(x => x > 0 ? 1 : 0);
+  }
+}
+```
+
+### 同期取得アルゴリズム
+
+#### 1. スライディング相関法
+```typescript
+class SlidingCorrelator {
+  acquireSync(samples: Float32Array, pnSequence: number[]): { 
+    synchronized: boolean, 
+    offset: number, 
+    correlation: number 
+  } {
+    let maxCorrelation = 0;
+    let bestOffset = -1;
+    
+    // 1チップずつ位相をずらして相関計算
+    for (let offset = 0; offset < samples.length - pnSequence.length; offset++) {
+      const correlation = this.calculateCorrelation(samples, pnSequence, offset);
+      
+      if (correlation > maxCorrelation) {
+        maxCorrelation = correlation;
+        bestOffset = offset;
+      }
+    }
+    
+    return {
+      synchronized: maxCorrelation > this.syncThreshold,
+      offset: bestOffset,
+      correlation: maxCorrelation
+    };
+  }
+}
+```
+
+#### 2. 遅延ロックループ（符号追跡）
+```typescript
+class DelayLockedLoop {
+  // Early-Prompt-Late相関による高精度符号追跡
+  trackCode(earlyChips: number[], promptChips: number[], lateChips: number[]): {
+    codePhaseError: number,
+    trackingError: number
+  } {
+    const earlyCorr = this.correlate(earlyChips, this.referenceCode);
+    const lateCorr = this.correlate(lateChips, this.referenceCode);
+    
+    const discriminator = earlyCorr - lateCorr;
+    const codePhaseError = discriminator / (earlyCorr + lateCorr);
+    
+    return {
+      codePhaseError,
+      trackingError: Math.abs(codePhaseError)
+    };
+  }
+}
+```
+
+### 実装計画（4段階）
+
+#### 第1段階: 基礎コンポーネント
+**実装ファイル**:
+- `src/dsp/pn-sequences.ts` - PN系列生成器
+- `src/dsp/bpsk.ts` - BPSK変復調エンジン
+- `src/dsp/correlators.ts` - 相関演算器
+
+#### 第2段階: DSSS基本機能
+**実装ファイル**:
+- `src/modems/dsss.ts` - DSSSメイン実装
+- `src/modems/dsss-config.ts` - DSSS設定定義
+
+#### 第3段階: 高度な同期・信号品質機能
+- マルチ閾値同期アルゴリズム
+- 符号追跡ループ（Code Tracking Loop）
+- SNR・BER推定
+- 適応閾値制御
+
+#### 第4段階: 統合・最適化・拡張機能
+- XModem Transport層での動作確認
+- WebAudio APIとの統合
+- 性能最適化（FFTベース高速相関）
+- Gold符号による多重アクセス対応
+
+### 期待される性能指標
+
+**処理利得**:
+- 31チップ: 15dB利得
+- 127チップ: 21dB利得
+- 511チップ: 27dB利得
+
+**同期性能**:
+- 取得時間: < 2秒（SNR > 0dB時）
+- 追跡精度: ±0.1チップ
+- 誤検出率: < 10^-6
+
+**計算負荷**:
+- リアルタイム率: > 95%（48kHz, 127チップ）
+- メモリ使用量: < 10MB
+
+### DSSSと従来FECとの組み合わせ
+
+DSSSは物理層での処理利得を提供し、上位層のFEC（Reed-Solomon、畳み込み符号等）と組み合わせることで、段階的な誤り訂正が可能となる。
+
+**組み合わせ効果**:
+1. **DSSS**: 物理層での干渉・フェージング耐性
+2. **FEC**: 符号層での系統的誤り訂正
+3. **ARQ**: トランスポート層での確実性保証
+
+この階層的アプローチにより、極めて劣悪な通信環境でも高い信頼性を確保できる。
+
+---
+
+## 音声帯域DSSSの現実的性能分析
+
+### 音声デバイスの実際の帯域制約
+
+実際の音声通信で利用可能な帯域幅は理論値よりも大幅に狭い：
+
+```typescript
+interface AudioDeviceConstraints {
+  telephoneQuality: {
+    bandwidth: 3100;        // 300Hz - 3.4kHz
+    description: "電話、VoIP";
+    practicalChipRate: 1722; // Hz
+  };
+  
+  pcBuiltinAudio: {
+    bandwidth: 7900;        // 100Hz - 8kHz  
+    description: "PC内蔵、安価なヘッドセット";
+    practicalChipRate: 4385; // Hz
+  };
+  
+  standardHeadset: {
+    bandwidth: 14950;       // 50Hz - 15kHz
+    description: "標準的なヘッドセット";
+    practicalChipRate: 8296; // Hz
+  };
+  
+  highQualityAudio: {
+    bandwidth: 19980;       // 20Hz - 20kHz
+    description: "高品質オーディオ機器";
+    practicalChipRate: 11096; // Hz
+  };
+}
+```
+
+**実用チップレート計算式**:
+```
+実用チップレート = (帯域幅 × 2) ÷ (1 + ロールオフ率) × 0.75
+ロールオフ率 = 0.35 (Root Raised Cosineフィルタ標準値)
+0.75係数 = 隣接干渉・ハードウェア特性考慮
+```
+
+### 現実的なDSSS性能表
+
+#### 電話品質 (3.1kHz帯域)
+```
+実用チップレート: 1,722 Hz
+
+拡散率7   → 246 bps  (8.5dB利得)
+拡散率15  → 114 bps  (11.8dB利得)  
+拡散率31  → 55 bps   (14.9dB利得)
+拡散率63  → 27 bps   (18.0dB利得)
+拡散率127 → 13 bps   (21.0dB利得)
+```
+
+#### PC標準 (7.9kHz帯域)  
+```
+実用チップレート: 4,385 Hz
+
+拡散率7   → 626 bps  (8.5dB利得)
+拡散率15  → 292 bps  (11.8dB利得)
+拡散率31  → 141 bps  (14.9dB利得) 
+拡散率63  → 69 bps   (18.0dB利得)
+拡散率127 → 34 bps   (21.0dB利得)
+```
+
+#### 標準ヘッドセット (15kHz帯域)
+```
+実用チップレート: 8,296 Hz
+
+拡散率7   → 1,185 bps (8.5dB利得)
+拡散率15  → 553 bps   (11.8dB利得)
+拡散率31  → 267 bps   (14.9dB利得)
+拡散率63  → 131 bps   (18.0dB利得) 
+拡散率127 → 65 bps    (21.0dB利得)
+```
+
+#### 高品質オーディオ (20kHz帯域)
+```
+実用チップレート: 11,096 Hz
+
+拡散率7   → 1,585 bps (8.5dB利得)
+拡散率15  → 739 bps   (11.8dB利得)
+拡散率31  → 357 bps   (14.9dB利得)
+拡散率63  → 176 bps   (18.0dB利得)
+拡散率127 → 87 bps    (21.0dB利得)
+```
+
+### 用途別推奨設定
+
+#### IoT/センサーデータ通信（高信頼性優先）
+```typescript
+const iotSensorConfig = {
+  targetDevice: "PC標準 (7.9kHz)",
+  chipRate: 4385,
+  spreadingFactor: 63,
+  dataRate: 69, // bps
+  processingGain: 18.0, // dB
+  useCase: "温度センサー、制御信号",
+  reliability: "極高",
+  batteryLife: "重要"
+};
+```
+
+#### テキスト通信（バランス重視）
+```typescript
+const textMessagingConfig = {
+  targetDevice: "標準ヘッドセット (15kHz)",
+  chipRate: 8296,
+  spreadingFactor: 31,
+  dataRate: 267, // bps
+  processingGain: 14.9, // dB
+  useCase: "チャット、ショートメッセージ",
+  reliability: "高",
+  latency: "許容可能"
+};
+```
+
+#### ファイル転送（速度優先）
+```typescript
+const fileTransferConfig = {
+  targetDevice: "高品質オーディオ (20kHz)",
+  chipRate: 11096,
+  spreadingFactor: 15,
+  dataRate: 739, // bps
+  processingGain: 11.8, // dB
+  useCase: "小サイズファイル、音声データ",
+  reliability: "中",
+  throughput: "重要"
+};
+```
+
+### 既存システムとの性能比較
+
+```typescript
+interface SystemComparison {
+  currentFSK: {
+    dataRate: 1200; // bps
+    processingGain: 0; // dB
+    interferenceResistance: "低";
+    implementation: "完成";
+    complexity: "低";
+  };
+  
+  dsssHighSpeed: {
+    dataRate: 739; // bps (20kHz, 拡散率15)
+    processingGain: 11.8; // dB
+    interferenceResistance: "中";
+    implementation: "要開発";
+    complexity: "高";
+    speedRatio: 0.62; // vs FSK
+  };
+  
+  dsssBalanced: {
+    dataRate: 267; // bps (15kHz, 拡散率31)
+    processingGain: 14.9; // dB  
+    interferenceResistance: "高";
+    implementation: "要開発";
+    complexity: "高";
+    speedRatio: 0.22; // vs FSK
+  };
+  
+  dsssHighReliability: {
+    dataRate: 69; // bps (7.9kHz, 拡散率63)
+    processingGain: 18.0; // dB
+    interferenceResistance: "極高";
+    implementation: "要開発";
+    complexity: "高";
+    speedRatio: 0.06; // vs FSK
+  };
+}
+```
+
+### 実装における現実的制約
+
+#### 技術的課題と解決策
+```typescript
+interface ImplementationChallenges {
+  synchronization: {
+    problem: "初期同期の困難さ（コード位相 + 搬送波位相）";
+    solutions: [
+      "階層的同期アルゴリズム",
+      "既存プリアンブル活用",
+      "二段階取得戦略"
+    ];
+    complexity: "高";
+  };
+  
+  computationalLoad: {
+    problem: "リアルタイム相関計算の負荷";
+    solutions: [
+      "FFTベース高速相関",
+      "間引き処理による負荷軽減",
+      "並列処理アーキテクチャ"
+    ];
+    complexity: "中";
+  };
+  
+  deviceVariability: {
+    problem: "音声デバイス特性のばらつき";
+    solutions: [
+      "適応的帯域検出",
+      "自動チップレート調整",
+      "デバイス特性学習"
+    ];
+    complexity: "中";
+  };
+  
+  webAudioConstraints: {
+    problem: "128サンプル単位処理制約";
+    solutions: [
+      "効率的バッファリング",
+      "状態管理最適化",
+      "部分処理対応"
+    ];
+    complexity: "中";
+  };
+}
+```
+
+### 段階的実装戦略
+
+#### フェーズ1: 概念実証（2-3週間）
+```typescript
+const phase1 = {
+  objective: "DSSSの基本動作確認",
+  specifications: {
+    chipRate: 4000, // Hz
+    spreadingFactor: 15,
+    dataRate: 266, // bps
+    pnSequence: "M系列（15チップ）",
+    modulation: "BPSK",
+    bandwidth: "8kHz"
+  },
+  deliverables: [
+    "PN系列生成器",
+    "基本的な拡散・逆拡散",
+    "シンプルなBPSK変復調",
+    "概念実証デモ"
+  ]
+};
+```
+
+#### フェーズ2: 実用プロトタイプ（1-2ヶ月）
+```typescript
+const phase2 = {
+  objective: "実用的なDSSSシステム",
+  specifications: {
+    adaptiveChipRate: true,
+    spreadingFactors: [7, 15, 31],
+    autoNegotiation: true,
+    advancedSync: "階層的同期",
+    qualityMonitoring: "SNR/BER推定"
+  },
+  deliverables: [
+    "適応制御システム",
+    "堅牢な同期アルゴリズム",
+    "性能監視機能",
+    "統合テストスイート"
+  ]
+};
+```
+
+#### フェーズ3: 製品レベル（2-3ヶ月）
+```typescript
+const phase3 = {
+  objective: "製品品質のDSSSシステム",
+  specifications: {
+    goldCodes: true,
+    multipleAccess: "複数ユーザー同時通信",
+    errorCorrection: "FEC統合",
+    security: "暗号化拡張",
+    optimization: "リアルタイム性能"
+  },
+  deliverables: [
+    "Gold符号生成器",
+    "多重アクセス機能",
+    "完全統合システム",
+    "製品ドキュメント"
+  ]
+};
+```
+
+### DSSSの現実的価値評価
+
+#### 利点
+- **干渉耐性**: 10-20dBの処理利得により劣悪環境でも通信可能
+- **セキュリティ**: PN符号による暗号化効果
+- **多重アクセス**: 複数信号の同時伝送
+- **将来性**: 次世代通信技術の基盤
+
+#### トレードオフ
+- **速度低下**: 既存FSKの20-60%に減速
+- **複雑性**: 実装・デバッグ・保守コストの増加
+- **計算負荷**: リアルタイム処理要求の増大
+- **同期困難**: 初期接続時間の延長
+
+#### 推奨用途
+- **IoT通信**: 低レート・高信頼性が要求される用途
+- **制御信号**: 産業制御・ロボット通信
+- **緊急通信**: 災害時・妨害環境下での通信
+- **セキュア通信**: 盗聴対策が必要な用途
+
+音声帯域DSSSは、**特定用途では既存FSKを大幅に上回る価値**を提供するが、汎用的な高速データ通信には適さない。用途を適切に選択することで、その真価を発揮できる技術である。
 
 ---
 
