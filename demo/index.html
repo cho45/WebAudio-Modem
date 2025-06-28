@@ -948,7 +948,7 @@
                         <button @click="initializeSystem" :disabled="systemReady">
                             {{ systemReady ? 'System Ready ✓' : 'Initialize System' }}
                         </button>
-                        <button @click="testXModemLoopback" :disabled="!systemReady || !canSend" 
+                        <button @click="testXModemLoopback" :disabled="!canSend" 
                                 :class="['test-loopback-btn', { 'pulse': systemReady && !microphonePermission }]">
                             🔄 Test Loopback
                         </button>
@@ -956,7 +956,7 @@
                     <div class="setup-right">
                         <span class="mode-indicator">
                             Using: {{ inputSource === 'loopback' ? '🔄 Loopback' : '🎤 Microphone' }}
-                            <button @click="toggleMicrophoneMode" :disabled="!systemReady" 
+                            <button @click="toggleMicrophoneMode" 
                                     :class="['mini', { 'success': !microphonePermission && systemReady }]">
                                 {{ microphonePermission ? 'Switch' : '🎤 Enable Mic' }}
                             </button>

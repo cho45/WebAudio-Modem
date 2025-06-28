@@ -108,7 +108,7 @@ const app = createApp({
     
     // Computed properties
     const canSend = computed(() => {
-      if (!systemReady.value || isSending.value) return false;
+      if (isSending.value) return false;
       if (sendDataType.value === 'text') return inputText.value.trim().length > 0;
       if (sendDataType.value === 'image') return selectedImage.value !== null;
       return false;
@@ -325,6 +325,10 @@ const app = createApp({
     
     // マイクロフォンモード切り替え（権限取得も含む）
     const toggleMicrophoneMode = async () => {
+      if (!systemReady.value) {
+        await initializeSystem();
+      }
+
       if (!microphonePermission.value) {
         // マイク権限がない場合は権限を取得
         await requestMicrophonePermission();
@@ -503,8 +507,7 @@ const app = createApp({
     // XModemループバックテスト
     const testXModemLoopback = async () => {
       if (!systemReady.value) {
-        updateStatus(systemStatus, 'System not initialized', 'error');
-        return;
+        await initializeSystem();
       }
       
       try {
