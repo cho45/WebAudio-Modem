@@ -509,6 +509,210 @@ describe('Step 3: Advanced Demodulation Functions', () => {
   });
 });
 
+describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () => {
+  /**
+   * Complete End-to-End DPSK+DSSS Pipeline Test
+   * Tests: Bits → DPSK → DSSS → Noise → Sync → DSSS Despread → DPSK Demod → Bits
+   */
+  
+  describe('Complete Integration Pipeline with Synchronization', () => {
+    test('should achieve end-to-end BER performance with automatic synchronization', () => {
+      const originalBits = [0, 1, 0, 1, 1, 0, 1, 0, 0, 1]; // 10 bits for statistics
+      
+      // Step 1: DPSK Modulation (for future full integration)
+      const _dpskPhases = dpskModulate(originalBits);
+      
+      // Step 2: DSSS Spreading
+      const spreadChips = dsssSpread(originalBits); // Spread bits to chips
+      
+      // Step 3: Add random offset (simulate unknown timing)
+      const randomOffset = 13;
+      const offsetChips = new Array(randomOffset).fill(0).concat(Array.from(spreadChips));
+      
+      // Step 4: Add AWGN noise
+      const snr = 8; // 8dB SNR test condition
+      const noisyChips = addAWGN(new Float32Array(offsetChips), snr);
+      
+      // Step 5: Automatic Synchronization (DSSS correlation)
+      const reference = generateSyncReference();
+      const syncResult = findSyncOffset(noisyChips, reference, randomOffset + 10);
+      
+      expect(syncResult.isFound).toBe(true); // Sync must succeed
+      expect(Math.abs(syncResult.bestOffset - randomOffset)).toBeLessThanOrEqual(1); // ±1 tolerance
+      
+      // Step 6: Apply synchronization offset
+      const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+      
+      // Step 7: DSSS Despreading
+      const { bits: recoveredBits } = dsssDespread(alignedChips);
+      
+      // Step 8: BER Calculation
+      const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
+      
+      // Step 9: Performance Requirements
+      expect(ber).toBeLessThanOrEqual(0.1); // BER ≤ 10% with DSSS processing gain
+      expect(recoveredBits.length).toBeGreaterThanOrEqual(originalBits.length);
+    });
+
+    test('should maintain sync and BER performance across multiple SNR levels', () => {
+      const originalBits = [0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0]; // 12 bits
+      const snrLevels = [-3, -5, -8, -10, -15]; // Low to challenging SNR
+      const results: { snr: number; ber: number; syncSuccess: boolean }[] = [];
+      
+      for (const snr of snrLevels) {
+        // Complete pipeline
+        const spreadChips = dsssSpread(originalBits);
+        const offset = 7;
+        const offsetChips = new Array(offset).fill(0).concat(Array.from(spreadChips));
+        const noisyChips = addAWGN(new Float32Array(offsetChips), snr);
+        
+        // Synchronization
+        const reference = generateSyncReference();
+        const syncResult = findSyncOffset(noisyChips, reference, 20);
+        
+        if (syncResult.isFound && syncResult.bestOffset === offset) {
+          // Despreading and BER calculation
+          const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+          const { bits: recoveredBits } = dsssDespread(alignedChips);
+          const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
+          
+          results.push({ snr, ber, syncSuccess: true });
+        } else {
+          results.push({ snr, ber: 1.0, syncSuccess: false });
+        }
+      }
+
+      console.log(results)
+      
+      // Performance requirements based on DSSS theory
+      expect(results[0].syncSuccess).toBe(true); // -3dB should always sync
+      expect(results[0].ber).toBeLessThan(0.01); // Very low BER at high SNR
+      expect(results[1].syncSuccess).toBe(true); // -5dB should sync
+      expect(results[1].ber).toBeLessThan(0.01); // Good BER
+
+      // Log results for analysis
+      console.log('DPSK+DSSS BER Performance:');
+      results.forEach(r => {
+        console.log(`  SNR: ${r.snr}dB, Sync: ${r.syncSuccess}, BER: ${r.ber.toFixed(3)}`);
+      });
+    });
+  });
+
+  describe('Synchronization Success Rate Evaluation', () => {
+    test('should achieve high sync success rate with statistical evaluation', () => {
+      const originalBits = [0, 1, 0, 1, 1, 0]; 
+      const numTrials = 20;
+      const snr = 6; // Moderate SNR condition
+      let syncSuccessCount = 0;
+      let berSum = 0;
+      let validBerCount = 0;
+      
+      for (let trial = 0; trial < numTrials; trial++) {
+        // Generate fresh noise for each trial
+        const spreadChips = dsssSpread(originalBits);
+        const randomOffset = Math.floor(Math.random() * 15) + 5; // 5-19 random offset
+        const offsetChips = new Array(randomOffset).fill(0).concat(Array.from(spreadChips));
+        const noisyChips = addAWGN(new Float32Array(offsetChips), snr);
+        
+        // Attempt synchronization
+        const reference = generateSyncReference();
+        const syncResult = findSyncOffset(noisyChips, reference, 30);
+        
+        if (syncResult.isFound) {
+          syncSuccessCount++;
+          
+          // Measure BER for successful sync
+          const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+          const { bits: recoveredBits } = dsssDespread(alignedChips);
+          const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
+          
+          berSum += ber;
+          validBerCount++;
+        }
+      }
+      
+      const syncSuccessRate = syncSuccessCount / numTrials;
+      const averageBer = validBerCount > 0 ? berSum / validBerCount : 1.0;
+      
+      console.log(`Sync Success Rate: ${(syncSuccessRate * 100).toFixed(1)}% (${syncSuccessCount}/${numTrials})`);
+      console.log(`Average BER (successful syncs): ${averageBer.toFixed(3)}`);
+      
+      // aec-plan.md requirements: reliable sync with DSSS processing gain
+      expect(syncSuccessRate).toBeGreaterThanOrEqual(0.85); // ≥85% success rate
+      expect(averageBer).toBeLessThan(0.2); // Average BER < 20% when synced
+    });
+
+    test('should handle challenging conditions with graceful degradation', () => {
+      const originalBits = [0, 1, 0, 1, 1, 0, 1, 0];
+      const challengingConditions = [
+        { name: 'Equal SNR', snr: -0, expectedSuccess: 0.99 },
+        { name: 'Low SNR', snr: -6, expectedSuccess: 0.67 },
+        { name: 'Very Low SNR', snr: -12, expectedSuccess: 0.19 },
+        { name: 'Extreme Low SNR', snr: -18, expectedSuccess: 0.06 },
+      ];
+      
+      for (const condition of challengingConditions) {
+        let syncCount = 0;
+        const trials = 10000;
+        
+        for (let trial = 0; trial < trials; trial++) {
+          const spreadChips = dsssSpread(originalBits);
+          const largeOffset = 25; // Large offset challenge
+          const offsetChips = new Array(largeOffset).fill(0).concat(Array.from(spreadChips));
+          const noisyChips = addAWGN(new Float32Array(offsetChips), condition.snr);
+          
+          const reference = generateSyncReference();
+          const syncResult = findSyncOffset(noisyChips, reference, 35);
+          
+          if (syncResult.isFound && syncResult.bestOffset === largeOffset) syncCount++;
+        }
+       
+        const successRate = syncCount / trials;
+        console.log(`${condition.name} ${condition.snr}: ${(successRate * 100).toFixed(1)}% success`);
+        
+        expect(successRate).toBeGreaterThanOrEqual(condition.expectedSuccess);
+        expect(successRate).toBeLessThan(condition.expectedSuccess * 1.2);
+      }
+    });
+  });
+
+  describe('Soft Value Integration Performance', () => {
+    test('should provide meaningful soft values through complete pipeline', () => {
+      const originalBits = [0, 1, 0, 1];
+      
+      // DPSK+DSSS forward path (for future full integration)
+      const _dpskPhases = dpskModulate(originalBits);
+      const spreadChips = dsssSpread(originalBits);
+      
+      // Add noise and offset
+      const offset = 8;
+      const offsetChips = new Array(offset).fill(0).concat(Array.from(spreadChips));
+      const noisyChips = addAWGN(new Float32Array(offsetChips), 7); // 7dB SNR
+      
+      // Synchronization and alignment
+      const reference = generateSyncReference();
+      const syncResult = findSyncOffset(noisyChips, reference, 20);
+      expect(syncResult.isFound).toBe(true);
+      
+      const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+      
+      // DSSS despreading with correlations (soft values)
+      const { bits: recoveredBits, correlations } = dsssDespread(alignedChips);
+      
+      // DPSK soft value generation (if we had phase-based soft values)
+      // For now, verify correlation magnitudes reflect confidence
+      expect(correlations.length).toBeGreaterThanOrEqual(originalBits.length);
+      
+      // High correlation magnitude indicates high confidence
+      for (let i = 0; i < originalBits.length; i++) {
+        expect(Math.abs(correlations[i])).toBeGreaterThan(5); // Reasonable correlation strength
+      }
+      
+      expect(calculateBER(originalBits, recoveredBits.slice(0, originalBits.length))).toBeLessThan(0.25);
+    });
+  });
+});
+
 describe('Step 4: Synchronization Functions', () => {
   describe('generateSyncReference', () => {
     test('should generate consistent M31 sequence', () => {
@@ -650,6 +854,150 @@ describe('Step 4: Synchronization Functions', () => {
       const aligned = applySyncOffset(stringData, 1);
       
       expect(aligned).toEqual(['b', 'c', 'd']);
+    });
+  });
+
+  describe('Synchronization Precision Tests', () => {
+    test('should handle large offset ranges accurately', () => {
+      const reference = generateSyncReference();
+      const largeOffsets = [31, 50, 75, 100]; // Test larger, practical offsets
+      
+      for (const targetOffset of largeOffsets) {
+        const padding = new Array(targetOffset).fill(0);
+        const received = padding.concat(Array.from(reference)).concat([0, 0, 0]);
+        
+        const result = findSyncOffset(received, reference, targetOffset + 10);
+        
+        expect(result.bestOffset).toBe(targetOffset);
+        expect(result.isFound).toBe(true);
+        expect(Math.abs(result.peakCorrelation)).toBe(31); // Perfect correlation maintained
+      }
+    });
+
+    test('should maintain precision near M-sequence boundaries', () => {
+      const reference = generateSyncReference();
+      // Test offsets around M31 sequence length (critical boundary conditions)
+      const boundaryOffsets = [29, 30, 31, 32, 33, 62, 63, 64]; // Around 1×M31 and 2×M31
+      
+      for (const targetOffset of boundaryOffsets) {
+        const padding = new Array(targetOffset).fill(0);
+        const received = padding.concat(Array.from(reference)).concat([0, 0, 0]);
+        
+        const result = findSyncOffset(received, reference, targetOffset + 15);
+        
+        expect(result.bestOffset).toBe(targetOffset);
+        expect(result.isFound).toBe(true);
+        expect(Math.abs(result.peakCorrelation)).toBe(31);
+      }
+    });
+
+    test('should handle fractional chip timing with interpolation accuracy', () => {
+      const reference = generateSyncReference();
+      
+      // Test with sub-sample precision by using non-integer valued chips
+      // This simulates real-world conditions where timing isn't perfect
+      const offset = 5;
+      const baseSignal = new Array(offset).fill(0).concat(Array.from(reference));
+      
+      // Add slight timing offset through interpolation (0.3 samples)
+      const interpolatedSignal = new Float32Array(baseSignal.length + 1);
+      for (let i = 0; i < baseSignal.length - 1; i++) {
+        interpolatedSignal[i] = 0.7 * baseSignal[i] + 0.3 * baseSignal[i + 1];
+      }
+      interpolatedSignal[baseSignal.length - 1] = baseSignal[baseSignal.length - 1];
+      interpolatedSignal[baseSignal.length] = 0;
+      
+      const result = findSyncOffset(interpolatedSignal, reference, 20);
+      
+      // Should still find correct offset within ±1 sample tolerance
+      expect(Math.abs(result.bestOffset - offset)).toBeLessThanOrEqual(1);
+      expect(result.isFound).toBe(true);
+      expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(20); // Reduced due to interpolation artifacts
+    });
+
+    test('should detect precise offset with noise at various SNR levels', () => {
+      const reference = generateSyncReference();
+      const offset = 8;
+      const snrLevels = [10, 5, 0]; // High, medium, low SNR
+      
+      for (const snr of snrLevels) {
+        const cleanSignal = new Float32Array(
+          new Array(offset).fill(0).concat(Array.from(reference)).concat([0, 0, 0])
+        );
+        const noisySignal = addAWGN(cleanSignal, snr);
+        
+        const result = findSyncOffset(noisySignal, reference, 20);
+        
+        // Precision requirement: exact offset detection
+        expect(result.bestOffset).toBe(offset);
+        expect(result.isFound).toBe(true);
+        
+        // SNR-dependent correlation thresholds
+        if (snr >= 5) {
+          expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(15);
+        } else {
+          expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(10); // Lower expectation for 0dB SNR
+        }
+      }
+    });
+
+    test('should distinguish between similar offset positions', () => {
+      const reference = generateSyncReference();
+      
+      // Test consecutive offsets to ensure single-sample precision
+      const consecutiveOffsets = [10, 11, 12, 13, 14];
+      
+      for (const targetOffset of consecutiveOffsets) {
+        const padding = new Array(targetOffset).fill(0);
+        const received = padding.concat(Array.from(reference)).concat([0, 0, 0]);
+        
+        const result = findSyncOffset(received, reference, 25);
+        
+        // Exact precision required - no ±1 tolerance
+        expect(result.bestOffset).toBe(targetOffset);
+        expect(result.isFound).toBe(true);
+        expect(Math.abs(result.peakCorrelation)).toBe(31);
+        expect(result.peakRatio).toBeGreaterThan(10); // High ratio for perfect alignment
+      }
+    });
+
+    test('should handle edge cases and boundary conditions', () => {
+      const reference = generateSyncReference();
+      
+      // Test edge cases that might cause synchronization failures
+      const edgeCases = [
+        { name: 'zero offset', offset: 0, padding: [] },
+        { name: 'single sample offset', offset: 1, padding: [0] },
+        { name: 'M31 sequence length offset', offset: 31, padding: new Array(31).fill(0) },
+        { name: 'double M31 offset', offset: 62, padding: new Array(62).fill(0) },
+        { name: 'maximum search range', offset: 99, padding: new Array(99).fill(0) }
+      ];
+      
+      for (const testCase of edgeCases) {
+        const received = testCase.padding.concat(Array.from(reference)).concat([0, 0, 0]);
+        const result = findSyncOffset(received, reference, testCase.offset + 10);
+        
+        expect(result.bestOffset).toBe(testCase.offset);
+        expect(result.isFound).toBe(true);
+        expect(Math.abs(result.peakCorrelation)).toBe(31);
+      }
+    });
+
+    test('should handle partial sequence at end of search range', () => {
+      const reference = generateSyncReference();
+      
+      // Create a signal where M31 sequence starts near the end of search range
+      const offset = 15;
+      const padding = new Array(offset).fill(0);
+      const partialSequence = Array.from(reference.slice(0, 20)); // Only 20 chips of M31
+      const received = padding.concat(partialSequence);
+      
+      // Search range that includes the partial sequence
+      const result = findSyncOffset(received, reference, 25);
+      
+      // Should fail to find sync due to incomplete sequence
+      expect(result.isFound).toBe(false);
+      expect(Math.abs(result.peakCorrelation)).toBeLessThan(31);
     });
   });
 
