@@ -5,16 +5,17 @@ import { globSync } from 'node:fs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
-const processorFiles = globSync('src/webaudio/processors/*.ts');
+const processorFiles = globSync('src/webaudio/processors/*processor.ts');
 const input = {
   main: resolve(__dirname, 'demo/index.html'),
   ...Object.fromEntries(
     processorFiles.map(f => [
-      f.replace(/\\.ts$/, ''), // 拡張子なしでエントリ名
+      f.replace(/\.ts$/, ''), // 拡張子なしでエントリ名
       resolve(__dirname, f)
     ])
   ),
 };
+console.log(input);
 
 export default defineConfig({
   root: '.',
