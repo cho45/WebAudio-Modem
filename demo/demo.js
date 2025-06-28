@@ -4,7 +4,8 @@
  * Vue3 Composition APIを使用したテキスト・画像送受信デモ
  */
 
-import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+// import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'vue';
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
