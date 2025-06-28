@@ -415,14 +415,14 @@ function generateGaussianNoise(): number {
 
 /**
  * Find synchronization offset using DSSS correlation peak detection
- * Exploits DSSS processing gain to detect signals below noise level
+ * Exploits M-sequence autocorrelation properties for signal detection
  * @param receivedChips Received chip sequence 
  * @param referenceSequence Known M-sequence for correlation
  * @param maxOffset Maximum offset to search
  * @returns Object with best offset, correlation peak, and detection metrics
  */
 export function findSyncOffset(
-  receivedChips: Int8Array | Float32Array | number[], 
+  receivedChips: Float32Array,
   referenceSequence: Int8Array, 
   maxOffset: number = 100
 ): {
@@ -432,11 +432,7 @@ export function findSyncOffset(
   isFound: boolean;
   peakRatio: number;
 } {
-  // Convert input to Float32Array for consistent processing
-  const received = receivedChips instanceof Float32Array ? receivedChips : 
-                   new Float32Array(receivedChips);
-  
-  if (received.length < referenceSequence.length) {
+  if (receivedChips.length < referenceSequence.length) {
     return {
       bestOffset: -1,
       peakCorrelation: 0,
@@ -447,57 +443,53 @@ export function findSyncOffset(
   }
   
   const sequenceLength = referenceSequence.length;
-  const searchLimit = Math.min(maxOffset, received.length - sequenceLength);
+  const searchLimit = Math.min(maxOffset, receivedChips.length - sequenceLength);
   const correlations = new Float32Array(searchLimit + 1);
   
   let bestOffset = 0;
   let peakCorrelation = 0;
-  let maxAbsCorrelation = 0;
   
-  // Compute correlation for each offset
+  // Compute raw correlation for each offset
   for (let offset = 0; offset <= searchLimit; offset++) {
     let correlation = 0;
     
-    // Standard correlation sum
+    // Calculate raw cross-correlation
     for (let i = 0; i < sequenceLength; i++) {
-      correlation += received[offset + i] * referenceSequence[i];
+      correlation += receivedChips[offset + i] * referenceSequence[i];
     }
     
     correlations[offset] = correlation;
     
-    // Track best correlation (can be negative for inverted sequences)
-    const absCorrelation = Math.abs(correlation);
-    if (absCorrelation > maxAbsCorrelation) {
-      maxAbsCorrelation = absCorrelation;
+    // Track peak absolute correlation
+    if (Math.abs(correlation) > Math.abs(peakCorrelation)) {
       peakCorrelation = correlation;
       bestOffset = offset;
     }
   }
   
-  // DSSS peak detection: measure peak-to-average ratio
-  // This exploits the processing gain - correlation peak stands out even in noise
-  const peakRatio = calculatePeakRatio(correlations, bestOffset);
+  // M-sequence theoretical autocorrelation values:
+  // - Perfect alignment: ±N (±31 for M31)
+  // - 1-chip misalignment: -1
+  // - Processing gain: N (31 for M31)
+  //
+  // Detection threshold: approximately 50% of perfect correlation
+  // This allows for some noise while maintaining processing gain
+  const theoreticalPeak = sequenceLength; // ±31 for M31
+  const detectionThreshold = theoreticalPeak * 0.5; // 15.5 for M31
   
-  // DSSS detection criterion based on statistical theory
-  // Use adaptive thresholds: strict for pure noise rejection, relaxed for signal+noise detection
-  // M31 processing gain = 10*log10(31) ≈ 14.9dB
-  // For pure noise: use 3σ threshold for reliable rejection
-  // For signal+noise: relax threshold if peak ratio is very high (indicating signal presence)
-  const strictAbsCorrelation = 3 * Math.sqrt(sequenceLength); // 3σ = 16.7 for M31 (pure noise rejection)
-  const relaxedAbsCorrelation = 2 * Math.sqrt(sequenceLength); // 2σ = 11.1 for M31 (signal+noise detection)
-  const minPeakRatio = 2.0; // Theoretical minimum for signal vs noise detection
-  const highPeakRatio = 4.0; // Very high peak ratio indicates strong signal
+  const isFound = Math.abs(peakCorrelation) >= detectionThreshold;
   
-  // Adaptive threshold logic: 
-  // - High peak ratio (>4.0) indicates strong signal → use relaxed threshold
-  // - Low peak ratio indicates pure noise → use strict threshold
-  const useRelaxedThreshold = peakRatio >= highPeakRatio;
-  const requiredAbsCorrelation = useRelaxedThreshold ? relaxedAbsCorrelation : strictAbsCorrelation;
-  
-  const hasStrongCorrelation = Math.abs(peakCorrelation) >= requiredAbsCorrelation;
-  const hasGoodPeakRatio = peakRatio >= minPeakRatio;
-  
-  const isFound = hasStrongCorrelation && hasGoodPeakRatio;
+  // Calculate peak-to-average ratio for compatibility
+  let sumAbs = 0;
+  let count = 0;
+  for (let i = 0; i <= searchLimit; i++) {
+    if (i !== bestOffset) {
+      sumAbs += Math.abs(correlations[i]);
+      count++;
+    }
+  }
+  const averageCorrelation = count > 0 ? sumAbs / count : 0;
+  const peakRatio = averageCorrelation > 0 ? Math.abs(peakCorrelation) / averageCorrelation : 0;
   
   return {
     bestOffset,
