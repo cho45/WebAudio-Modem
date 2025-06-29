@@ -17,8 +17,8 @@ import {
 
 describe('DPSK Modulation', () => {
   test('should perform complete DPSK modulation', () => {
-    const bits = new Int8Array([1, -1, 1, -1]);
-    const phases = dpskModulate(bits);
+    const chips = new Int8Array([1, -1, 1, -1]);
+    const phases = dpskModulate(chips);
     
     expect(phases.length).toBe(4);
     expect(phases[0]).toBeCloseTo(0, 5); // initial phase
@@ -28,17 +28,17 @@ describe('DPSK Modulation', () => {
   });
 
   test('should work with custom initial phase', () => {
-    const bits = new Int8Array([-1, 1]);
+    const chips = new Int8Array([-1, 1]);
     const initialPhase = Math.PI / 4;
-    const phases = dpskModulate(bits, initialPhase);
+    const phases = dpskModulate(chips, initialPhase);
     
     expect(phases[0]).toBeCloseTo(Math.PI / 4, 5);
     expect(phases[1]).toBeCloseTo(Math.PI / 4 + Math.PI, 5); // π/4 + π
   });
 
   test('should handle alternating pattern correctly', () => {
-    const bits = new Int8Array([-1, -1, -1, -1]);
-    const phases = dpskModulate(bits);
+    const chips = new Int8Array([-1, -1, -1, -1]);
+    const phases = dpskModulate(chips);
     
     expect(phases[0]).toBeCloseTo(0, 5);
     expect(phases[1]).toBeCloseTo(Math.PI, 5);
@@ -47,8 +47,8 @@ describe('DPSK Modulation', () => {
   });
 
   test('should handle empty array', () => {
-    const bits = new Int8Array(0);
-    const phases = dpskModulate(bits);
+    const chips = new Int8Array(0);
+    const phases = dpskModulate(chips);
     
     expect(phases).toEqual(new Float32Array(0));
   });
@@ -328,8 +328,8 @@ describe('Step 2: Phase Continuity Analysis', () => {
   });
 
   test('should handle DPSK modulated phases correctly', () => {
-    const bits = new Int8Array([0, 1, 0, 1]);
-    const phases = dpskModulate(bits);
+    const chips = new Int8Array([1, -1, 1, -1]); // Changed to proper chip values
+    const phases = dpskModulate(chips);
     const result = checkPhaseContinuity(phases);
     
     // DPSK should have π jumps which are expected

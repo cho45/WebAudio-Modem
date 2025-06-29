@@ -1,6 +1,12 @@
 /**
  * DSSS + DPSK Modem Implementation
  * Complete DPSK modulation with DSSS spreading and carrier processing
+ * 
+ * 型分離ルール:
+ * - ビット: 2値データ (0/1) → Uint8Array  
+ * - ソフトビット: 確信度付きビット (-127≈0確実, +127≈1確実) → Int8Array
+ * - チップ: 拡散符号 (+1/-1) → Int8Array
+ * - サンプル: アナログ信号のデジタル表現 → Float32Array
  */
 
 import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutput } from '../utils/msequence';
@@ -17,9 +23,9 @@ function normalizePhase(phase: number): number {
 
 /**
  * DPSK modulation: chips (+1/-1) to accumulated phases
- * @param chips Input chip array (+1/-1)
+ * @param chips Input chip array (+1/-1) as Int8Array
  * @param initialPhase Starting phase (default: 0)
- * @returns Absolute phase array for carrier modulation
+ * @returns Absolute phase array for carrier modulation as Float32Array
  */
 export function dpskModulate(chips: Int8Array, initialPhase: number = 0): Float32Array {
   const phases = new Float32Array(chips.length);
@@ -33,7 +39,7 @@ export function dpskModulate(chips: Int8Array, initialPhase: number = 0): Float3
 
 /**
  * DSSS spreading: bits to spread chips using M-sequence
- * @param bits Input bit array (0 or 1)
+ * @param bits Input bit array (0 or 1) as Uint8Array
  * @param sequenceLength M-sequence length (15, 31, 63, 127, 255) - default: 31
  * @param seed LFSR seed (default: auto-select based on length)
  * @returns Spread chip array (+1/-1 values) as Int8Array
@@ -108,10 +114,10 @@ function getMSequenceConfig(length: number) {
 
 /**
  * DSSS despreading: correlate chips with M-sequence to recover bits
- * @param chips Received chip array (+1/-1 or noisy values)
+ * @param chips Received chip array (+1/-1 or noisy values) as Float32Array
  * @param sequenceLength M-sequence length (must match spreading) - default: 31
  * @param seed LFSR seed (must match spreading seed)
- * @returns Despread bit array (0 or 1) and correlation values
+ * @returns Despread bit array (0 or 1) as Uint8Array and correlation values as Float32Array
  */
 export function dsssDespread(
   chips: Float32Array, 
@@ -149,9 +155,9 @@ export function dsssDespread(
 
 /**
  * DPSK demodulation: convert phase differences to soft values (LLR)
- * @param phases Received phase array in radians
+ * @param phases Received phase array in radians as Float32Array
  * @param esN0Db Es/N0 ratio in dB (default: 10dB)
- * @returns Quantized soft values as Int8Array (-128 to +127)
+ * @returns Quantized soft values (LLR) as Int8Array (-128 to +127)
  */
 export function dpskDemodulate(
   phases: Float32Array, 
@@ -182,12 +188,12 @@ export function dpskDemodulate(
 
 /**
  * Modulate phases onto carrier frequency
- * @param phases Phase array in radians
+ * @param phases Phase array in radians as Float32Array
  * @param samplesPerPhase Number of samples per phase symbol
  * @param sampleRate Sample rate (Hz)
  * @param carrierFreq Carrier frequency (Hz)
  * @param startSample Starting sample number for phase continuity
- * @returns Real signal samples
+ * @returns Real signal samples as Float32Array
  */
 export function modulateCarrier(
   phases: Float32Array, 
@@ -214,12 +220,12 @@ export function modulateCarrier(
 
 /**
  * Demodulate carrier to extract phases
- * @param samples Real signal samples
+ * @param samples Real signal samples as Float32Array
  * @param samplesPerPhase Number of samples per phase symbol
  * @param sampleRate Sample rate (Hz)
  * @param carrierFreq Carrier frequency (Hz)
  * @param startSample Starting sample number for phase continuity
- * @returns Extracted phase array in radians
+ * @returns Extracted phase array in radians as Float32Array
  */
 export function demodulateCarrier(
   samples: Float32Array, 
@@ -262,7 +268,7 @@ export function demodulateCarrier(
 
 /**
  * Check phase continuity for discontinuity detection (Step 2 requirement)
- * @param phases Phase array in radians
+ * @param phases Phase array in radians as Float32Array
  * @param threshold Maximum allowed phase jump (default: π - 0.1)
  * @returns Object with continuity status and discontinuity locations
  */
@@ -297,8 +303,8 @@ export function checkPhaseContinuity(phases: Float32Array, threshold: number = M
  * >>> import numpy as np
  * >>> np.unwrap([0, np.pi, -np.pi, 0, np.pi])
  *  array([0.        , 3.14159265, 3.14159265, 6.28318531, 9.42477796])
- * @param wrappedPhases Wrapped phase array in [-π, π]
- * @returns Unwrapped continuous phase array
+ * @param wrappedPhases Wrapped phase array in [-π, π] as Float32Array
+ * @returns Unwrapped continuous phase array as Float32Array
  */
 export function phaseUnwrap(wrappedPhases: Float32Array): Float32Array {
   if (wrappedPhases.length === 0) return wrappedPhases;
@@ -318,8 +324,8 @@ export function phaseUnwrap(wrappedPhases: Float32Array): Float32Array {
 
 /**
  * Calculate Bit Error Rate between two bit arrays (Step 3 requirement)
- * @param originalBits Original transmitted bits
- * @param receivedBits Received/recovered bits
+ * @param originalBits Original transmitted bits as Uint8Array
+ * @param receivedBits Received/recovered bits as Uint8Array
  * @returns BER (0.0 to 1.0)
  */
 export function calculateBER(originalBits: Uint8Array, receivedBits: Uint8Array): number {
@@ -341,9 +347,9 @@ export function calculateBER(originalBits: Uint8Array, receivedBits: Uint8Array)
 
 /**
  * Add Additive White Gaussian Noise to signal (Step 3 requirement)
- * @param signal Input signal array
+ * @param signal Input signal array as Float32Array
  * @param snrDb Signal-to-Noise Ratio in dB
- * @returns Noisy signal array
+ * @returns Noisy signal array as Float32Array
  */
 export function addAWGN(signal: Float32Array, snrDb: number): Float32Array {
   const noisySignal = new Float32Array(signal.length);
@@ -383,8 +389,8 @@ function generateGaussianNoise(): number {
 /**
  * Find synchronization offset using DSSS correlation peak detection
  * Exploits M-sequence autocorrelation properties for signal detection
- * @param receivedChips Received chip sequence 
- * @param referenceSequence Known M-sequence for correlation
+ * @param receivedChips Received chip sequence as Float32Array
+ * @param referenceSequence Known M-sequence for correlation as Int8Array
  * @param maxOffset Maximum offset to search
  * @returns Object with best offset, correlation peak, and detection metrics
  */
@@ -470,9 +476,9 @@ export function findSyncOffset(
 
 /**
  * Apply synchronization offset to align received data (Step 4 requirement)
- * @param receivedData Received data array (chips or samples)
+ * @param receivedData Received data array (chips or samples) as Float32Array
  * @param offset Synchronization offset to apply
- * @returns Aligned data array starting from offset
+ * @returns Aligned data array starting from offset as Float32Array
  */
 export function applySyncOffset(receivedData: Float32Array, offset: number): Float32Array {
   if (offset < 0 || offset >= receivedData.length) {
