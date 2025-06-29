@@ -48,6 +48,13 @@
     <h2>6. 復調ビット列（時系列）</h2>
     <canvas id="canvas-bits-demod" width="600" height="100"></canvas>
   </div>
+  <div class="section">
+    <h2>7. WebAudio再生・リアルタイムデコード</h2>
+    <button id="play">再生</button>
+    <button id="stop">停止</button>
+    <span id="audio-status" class="label"></span>
+    <div id="audio-decode-info" class="label"></div>
+  </div>
   <script type="module">
     import * as modem from '../src/modems/dsss-dpsk.js';
 
@@ -174,16 +181,54 @@
       }
     }
 
+    let audioCtx = null;
+    let audioSource = null;
+    let playing = false;
+    let lastSamples = null;
+    let lastParams = null;
+    let lastBits = null;
+
+    function playAudio(samples, sampleRate) {
+      if (audioCtx) audioCtx.close();
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const buf = audioCtx.createBuffer(1, samples.length, sampleRate);
+      buf.getChannelData(0).set(samples);
+      audioSource = audioCtx.createBufferSource();
+      audioSource.buffer = buf;
+      audioSource.connect(audioCtx.destination);
+      audioSource.start();
+      playing = true;
+      document.getElementById('audio-status').textContent = '再生中...';
+      audioSource.onended = () => {
+        playing = false;
+        document.getElementById('audio-status').textContent = '停止';
+      };
+    }
+    function stopAudio() {
+      if (audioSource) audioSource.stop();
+      if (audioCtx) audioCtx.close();
+      playing = false;
+      document.getElementById('audio-status').textContent = '停止';
+    }
+
+    function getBitLengthFromQuery() {
+      const params = new URLSearchParams(window.location.search);
+      const v = params.get('bitLength');
+      const n = v ? parseInt(v, 10) : NaN;
+      return (Number.isFinite(n) && n > 0 && n < 1000) ? n : 8;
+    }
+
     function run() {
       // パラメータ
-      const bitLength = 8;
+      const bitLength = getBitLengthFromQuery();
       const sequenceLength = 15; // DSSS拡散長
       const samplesPerChip = 16; // 1チップあたりのサンプル数
       const sampleRate = 1600; // サンプルレート（任意）
-      const carrierFreq = 100; // キャリア周波数（Hz, 任意）
+      const carrierFreq = 10000; // キャリア周波数（Hz, 任意）
       const snrDb = 0; // AWGN SNR [dB]
       // 1. ランダムビット列
       const bits = randomBits(bitLength);
+      lastBits = bits;
       // 2. DSSS拡散
       const chips = modem.dsssSpread(bits, sequenceLength);
 	  console.log('chips:', chips);
@@ -221,9 +266,37 @@
       drawHistogram(document.getElementById('hist-soft'), softValues, 32, [-128, 127]);
       // 復調ビット列（時系列）
       drawSignal(document.getElementById('canvas-bits-demod'), demodBits, '#27ae60', [0,1]);
+      // WebAudio用に正規化（±1→±0.8）
+      const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+      lastSamples = audioSamples;
+      lastParams = { samplesPerChip, carrierFreq, sequenceLength };
+      document.getElementById('audio-status').textContent = '';
+      document.getElementById('audio-decode-info').textContent = '';
     }
 
     document.getElementById('rerun').onclick = run;
+    document.getElementById('play').onclick = () => {
+      if (!lastBits || !lastParams) return;
+      if (audioCtx) audioCtx.close();
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const sampleRate = audioCtx.sampleRate;
+      // 信号をWebAudioサンプルレートで再生成
+      const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
+      const chipPhases = modem.dpskModulate(chips, 0);
+      const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
+      const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+      lastSamples = audioSamples;
+      playAudio(audioSamples, sampleRate);
+      // 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
+      setTimeout(() => {
+        const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
+        const softValues = modem.dpskDemodulate(demodPhases, 1.0);
+        const softChips = Float32Array.from(softValues, v => v / 127);
+        const { bits: demodBits } = modem.dsssDespread(softChips, lastParams.sequenceLength);
+        document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
+      }, 500);
+    };
+    document.getElementById('stop').onclick = stopAudio;
     run();
   </script>
 </body>
