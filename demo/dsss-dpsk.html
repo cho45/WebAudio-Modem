@@ -328,7 +328,7 @@
 			// 8. DSSS復調: チップ系列→ビット系列
 			// softValues (Int8Array, -128〜127) を ±1スケールのFloat32Arrayに変換
 			const softChips = Float32Array.from(softValues, v => v / 127);
-			const { llr: demodBits, correlations } = modem.dsssDespread(softChips, sequenceLength);
+			const demodBits = modem.dsssDespread(softChips, sequenceLength);
 
 			// 入力ビット列
 			drawSignal(document.getElementById('canvas-bits'), bits, '#8e44ad', [0, 1]);
@@ -382,7 +382,7 @@
 				const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
 				const softValues = modem.dpskDemodulate(demodPhases, 1.0);
 				const softChips = Float32Array.from(softValues, v => v / 127);
-				const { bits: demodBits } = modem.dsssDespread(softChips, lastParams.sequenceLength);
+				const demodBits = modem.dsssDespread(softChips, lastParams.sequenceLength);
 				document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
 			}, 500);
 		};

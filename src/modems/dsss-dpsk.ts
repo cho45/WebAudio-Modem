@@ -117,13 +117,13 @@ function getMSequenceConfig(length: number) {
  * @param chips Received chip array (+1/-1 or noisy values) as Float32Array
  * @param sequenceLength M-sequence length (must match spreading) - default: 31
  * @param seed LFSR seed (must match spreading seed)
- * @returns Despread bit array (0 or 1) as Uint8Array, LLR as Int8Array, and correlation values as Float32Array
+ * @returns LLR as Int8Array
  */
 export function dsssDespread(
   chips: Float32Array, 
   sequenceLength: number = 31, 
   seed?: number
-): { bits: Uint8Array, llr: Int8Array, correlations: Float32Array } {
+): Int8Array {
   // Auto-select seed if not provided
   const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   
@@ -131,8 +131,6 @@ export function dsssDespread(
   const mSequence = generateMSequence(sequenceLength, actualSeed);
   
   const numBits = Math.floor(chips.length / sequenceLength);
-  const bits = new Uint8Array(numBits);
-  const correlations = new Float32Array(numBits);
   const llr = new Int8Array(numBits);
 
   // DSSSの理論最大相関値（±N）
@@ -147,17 +145,12 @@ export function dsssDespread(
       correlation += chips[startIdx + i] * mSequence[i];
     }
     
-    correlations[bitIndex] = correlation;
-    
-    // Convert correlation to bit: positive→0, negative→1
-    bits[bitIndex] = correlation > 0 ? 0 : 1;
-
     // LLR: 相関値を[-127, +127]にスケーリング（0=不確実, ±127=確実）
     let scaled = -Math.max(-1, Math.min(1, correlation / maxCorr));
     llr[bitIndex] = Math.round(scaled * 127);
   }
   
-  return { bits, llr, correlations };
+  return llr;
 }
 
 
