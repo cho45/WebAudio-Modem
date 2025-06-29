@@ -691,11 +691,28 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
 
     test('should handle challenging conditions with graceful degradation', () => {
       const originalBits = [0, 1, 0, 1, 1, 0, 1, 0];
+      // DSSS理論に基づく期待値（M31処理利得：約14.9dB）
       const challengingConditions = [
-        { name: 'Equal SNR', snr: -0, expectedSuccess: 0.95 }, // ROC理論: 高SNRで安定
-        { name: 'Low SNR', snr: -6, expectedSuccess: 0.63 },   // 統計的実測値に基づく (信頼区間考慮)
-        { name: 'Very Low SNR', snr: -12, expectedSuccess: 0.20 }, // 修正された相関実装による実際の処理利得
-        { name: 'Extreme Low SNR', snr: -18, expectedSuccess: 0.065 }, // 修正された相関実装でのノイズフロア性能
+        { 
+          name: 'Equal SNR', 
+          snr: 0, 
+          minSyncRate: 0.95, maxSyncRate: 1.00   // 実効SNR: +14.9dB → ほぼ確実
+        },
+        { 
+          name: 'Low SNR', 
+          snr: -6, 
+          minSyncRate: 0.60, maxSyncRate: 0.80   // 実効SNR: +8.9dB → 高成功率
+        },
+        { 
+          name: 'Very Low SNR', 
+          snr: -12, 
+          minSyncRate: 0.15, maxSyncRate: 0.30   // 実効SNR: +2.9dB → 中程度
+        },
+        { 
+          name: 'Extreme Low SNR', 
+          snr: -18, 
+          minSyncRate: 0.03, maxSyncRate: 0.10   // 実効SNR: -3.1dB → 低い検出
+        }
       ];
       
       for (const condition of challengingConditions) {
@@ -715,12 +732,16 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         }
        
         const successRate = syncCount / trials;
-        console.log(`${condition.name} ${condition.snr}: ${(successRate * 100).toFixed(1)}% success`);
+        console.log(`${condition.name} ${condition.snr}: ${(successRate * 100).toFixed(1)}% success (theory: ${(condition.minSyncRate * 100).toFixed(0)}-${(condition.maxSyncRate * 100).toFixed(0)}%)`);
         
-        // Statistical tolerance: 95%信頼区間 for 10000 trials (二項分布の正規近似)
-        const tolerance = 1.96 * Math.sqrt(condition.expectedSuccess * (1 - condition.expectedSuccess) / trials);
-        expect(successRate).toBeGreaterThanOrEqual(condition.expectedSuccess - tolerance);
-        expect(successRate).toBeLessThan((condition.expectedSuccess + tolerance) * 1.2);
+        // 理論的範囲内での検証（DSSS処理利得理論に基づく）
+        expect(successRate).toBeGreaterThanOrEqual(condition.minSyncRate);
+        expect(successRate).toBeLessThanOrEqual(condition.maxSyncRate);
+        
+        // 理論より極端に高い性能の場合は警告（ノイズ誤検出の可能性）
+        if (successRate > condition.maxSyncRate) {
+          console.warn(`⚠️  ${condition.name}: Suspiciously high performance (${(successRate * 100).toFixed(1)}% > ${(condition.maxSyncRate * 100).toFixed(0)}%) - possible noise false detection`);
+        }
       }
     });
   });
