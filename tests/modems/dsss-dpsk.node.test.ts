@@ -554,46 +554,94 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       expect(recoveredBits.length).toBeGreaterThanOrEqual(originalBits.length);
     });
 
-    test('should maintain sync and BER performance across multiple SNR levels', () => {
+    test('should maintain sync and BER performance across multiple SNR levels with statistical validation', () => {
       const originalBits = [0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0]; // 12 bits
-      const snrLevels = [0, -3, -5, -8, -10, -15]; // Low to challenging SNR
-      const results: { snr: number; ber: number; syncSuccess: boolean }[] = [];
       
-      for (const snr of snrLevels) {
-        // Complete pipeline
-        const spreadChips = dsssSpread(originalBits);
-        const offset = 7;
-        const offsetChips = new Array(offset).fill(0).concat(Array.from(spreadChips));
-        const noisyChips = addAWGN(new Float32Array(offsetChips), snr);
+      // DSSS理論に基づく期待値（M31処理利得：約14.9dB）
+      // 各SNRに処理利得を加算した実効SNRで期待性能を算出
+      const snrConditions = [
+        { 
+          snr: 0, 
+          minSyncRate: 0.95, maxSyncRate: 1.00,   // 実効SNR: +14.9dB → ほぼ確実
+          maxBER: 0.02 
+        },
+        { 
+          snr: -3, 
+          minSyncRate: 0.85, maxSyncRate: 0.98,   // 実効SNR: +11.9dB → 高成功率
+          maxBER: 0.05 
+        },
+        { 
+          snr: -5, 
+          minSyncRate: 0.70, maxSyncRate: 0.90,   // 実効SNR: +9.9dB → 中高成功率
+          maxBER: 0.10 
+        },
+        { 
+          snr: -8, 
+          minSyncRate: 0.35, maxSyncRate: 0.65,   // 実効SNR: +6.9dB → 中程度
+          maxBER: 0.25 
+        },
+        { 
+          snr: -10, 
+          minSyncRate: 0.15, maxSyncRate: 0.45,   // 実効SNR: +4.9dB → 低成功率
+          maxBER: 0.40 
+        },
+        { 
+          snr: -15, 
+          minSyncRate: 0.01, maxSyncRate: 0.16,   // 実効SNR: -0.1dB → 統計的誤差を考慮
+          maxBER: 0.70 
+        }
+      ];
+      
+      const trials = 1000; // 統計的に有意な試行回数
+      
+      for (const condition of snrConditions) {
+        let syncSuccessCount = 0;
+        let totalBER = 0;
+        let validBERCount = 0;
         
-        // Synchronization
-        const reference = generateSyncReference();
-        const syncResult = findSyncOffset(noisyChips, reference, 20);
-        
-        if (syncResult.isFound && syncResult.bestOffset === offset) {
-          // Despreading and BER calculation
-          const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
-          const { bits: recoveredBits } = dsssDespread(alignedChips);
-          const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
+        for (let trial = 0; trial < trials; trial++) {
+          // Complete pipeline for each trial
+          const spreadChips = dsssSpread(originalBits);
+          const offset = 7;
+          const offsetChips = new Array(offset).fill(0).concat(Array.from(spreadChips));
+          const noisyChips = addAWGN(new Float32Array(offsetChips), condition.snr);
           
-          results.push({ snr, ber, syncSuccess: true });
-        } else {
-          results.push({ snr, ber: 1.0, syncSuccess: false });
+          // Synchronization
+          const reference = generateSyncReference();
+          const syncResult = findSyncOffset(noisyChips, reference, 20);
+          
+          if (syncResult.isFound && syncResult.bestOffset === offset) {
+            syncSuccessCount++;
+            
+            // Despreading and BER calculation for successful syncs
+            const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+            const { bits: recoveredBits } = dsssDespread(alignedChips);
+            const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
+            
+            totalBER += ber;
+            validBERCount++;
+          }
+        }
+        
+        const actualSyncRate = syncSuccessCount / trials;
+        const averageBER = validBERCount > 0 ? totalBER / validBERCount : 1.0;
+        
+        console.log(`SNR ${condition.snr}dB: Sync ${(actualSyncRate * 100).toFixed(1)}% (theory: ${(condition.minSyncRate * 100).toFixed(0)}-${(condition.maxSyncRate * 100).toFixed(0)}%), BER ${averageBER.toFixed(3)} (max ${condition.maxBER.toFixed(2)})`);
+        
+        // 理論的範囲内での検証（DSSS処理利得理論に基づく）
+        expect(actualSyncRate).toBeGreaterThanOrEqual(condition.minSyncRate);
+        expect(actualSyncRate).toBeLessThanOrEqual(condition.maxSyncRate);
+        
+        // 理論より極端に高い性能の場合は警告（ノイズ誤検出の可能性）
+        if (actualSyncRate > condition.maxSyncRate) {
+          console.warn(`⚠️  SNR ${condition.snr}dB: Suspiciously high performance (${(actualSyncRate * 100).toFixed(1)}% > ${(condition.maxSyncRate * 100).toFixed(0)}%) - possible noise false detection`);
+        }
+        
+        // BER検証：理論的上限以下であることを確認
+        if (validBERCount > 10) { // 十分な成功データがある場合のみ
+          expect(averageBER).toBeLessThanOrEqual(condition.maxBER);
         }
       }
-
-      console.log(results)
-      
-      // Performance requirements based on statistical validation (1000-trial analysis)
-      expect(results[0].syncSuccess).toBe(true); // 0dB should reliably sync (98%+)
-      expect(results[0].ber).toBeLessThan(0.01); // Very low BER at high SNR
-      // Note: -3dB has ~80% statistical success rate, not 100% - single trials may fail
-
-      // Log results for analysis
-      console.log('DPSK+DSSS BER Performance:');
-      results.forEach(r => {
-        console.log(`  SNR: ${r.snr}dB, Sync: ${r.syncSuccess}, BER: ${r.ber.toFixed(3)}`);
-      });
     });
   });
 
@@ -681,8 +729,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
     test('should provide meaningful soft values through complete pipeline', () => {
       const originalBits = [0, 1, 0, 1];
       
-      // DPSK+DSSS forward path (for future full integration)
-      const _dpskPhases = dpskModulate(originalBits);
+      // DPSK+DSSS forward path (using DSSS only for current test)
       const spreadChips = dsssSpread(originalBits);
       
       // Add noise and offset
@@ -994,7 +1041,7 @@ describe('Step 4: Synchronization Functions', () => {
       const received = padding.concat(partialSequence);
       
       // Search range that includes the partial sequence
-      const result = findSyncOffset(received, reference, 25);
+      const result = findSyncOffset(new Float32Array(received), reference, 25);
       
       // Should fail to find sync due to incomplete sequence
       expect(result.isFound).toBe(false);
@@ -1014,7 +1061,7 @@ describe('Step 4: Synchronization Functions', () => {
       
       // Find synchronization
       const reference = generateSyncReference();
-      const syncResult = findSyncOffset(receivedChips, reference, 20);
+      const syncResult = findSyncOffset(new Float32Array(receivedChips), reference, 20);
       
       expect(syncResult.isFound).toBe(true);
       
