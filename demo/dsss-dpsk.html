@@ -1,303 +1,394 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
-  <meta charset="UTF-8">
-  <title>DSSS+DPSK 可視化デモ</title>
-  <style>
-    body { font-family: sans-serif; background: #f8f8f8; }
-    canvas { background: #fff; border: 1px solid #ccc; margin-bottom: 1em; }
-    .section { margin-bottom: 2em; }
-    .histogram-bar { display: inline-block; background: #3498db; margin-right: 1px; }
-    .label { font-size: 0.9em; color: #555; }
-  </style>
+	<meta charset="UTF-8">
+	<title>DSSS+DPSK 可視化デモ</title>
+	<style>
+		body {
+			font-family: sans-serif;
+			background: #f8f8f8;
+		}
+
+		canvas {
+			background: #fff;
+			border: 1px solid #ccc;
+			margin-bottom: 1em;
+		}
+
+		.section {
+			margin-bottom: 2em;
+		}
+
+		.histogram-bar {
+			display: inline-block;
+			background: #3498db;
+			margin-right: 1px;
+		}
+
+		.label {
+			font-size: 0.9em;
+			color: #555;
+		}
+	</style>
 </head>
+
 <body>
-  <h1>DSSS+DPSK 各段階スペクトラム・ヒストグラム可視化</h1>
-  <div class="section">
-    <button id="rerun">再生成</button>
-    <span class="label">（ビット列・ノイズは毎回ランダム）</span>
-  </div>
-  <div class="section">
-    <h2>0. 入力ビット列（時系列）</h2>
-    <canvas id="canvas-bits" width="600" height="100"></canvas>
-  </div>
-  <div class="section">
-    <h2>1. DSSSチップ列（時系列）</h2>
-    <canvas id="canvas-chips" width="600" height="100"></canvas>
-    <canvas id="canvas-chips-spectrum" width="600" height="100"></canvas>
-  </div>
-  <div class="section">
-    <h2>2. DPSK変調信号（時系列）</h2>
-    <canvas id="canvas-dpsk" width="600" height="100"></canvas>
-    <canvas id="canvas-dpsk-spectrum" width="600" height="100"></canvas>
-  </div>
-  <div class="section">
-    <h2>3. AWGN付加後の信号（時系列）</h2>
-    <canvas id="canvas-noisy" width="600" height="100"></canvas>
-    <canvas id="canvas-noisy-spectrum" width="600" height="100"></canvas>
-  </div>
-  <div class="section">
-    <h2>4. ソフトバリュー（信頼度）ヒストグラム</h2>
-    <div id="hist-soft"></div>
-  </div>
-  <div class="section">
-    <h2>5. 複合ビット（復調ビット）ヒストグラム</h2>
-    <div id="hist-bits"></div>
-  </div>
-  <div class="section">
-    <h2>6. 復調ビット列（時系列）</h2>
-    <canvas id="canvas-bits-demod" width="600" height="100"></canvas>
-  </div>
-  <div class="section">
-    <h2>7. WebAudio再生・リアルタイムデコード</h2>
-    <button id="play">再生</button>
-    <button id="stop">停止</button>
-    <span id="audio-status" class="label"></span>
-    <div id="audio-decode-info" class="label"></div>
-  </div>
-  <script type="module">
-    import * as modem from '../src/modems/dsss-dpsk.js';
+	<h1>DSSS+DPSK 各段階スペクトラム・ヒストグラム可視化</h1>
+	<div class="section">
+		<button id="rerun">再生成</button>
+		<span class="label">（ビット列・ノイズは毎回ランダム）</span>
+	</div>
+	<div class="section">
+		<h2>0. 入力ビット列（時系列）</h2>
+		<canvas id="canvas-bits" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
+		<h2>1. DSSSチップ列（時系列）</h2>
+		<canvas id="canvas-chips" width="600" height="100"></canvas>
+		<canvas id="canvas-chips-spectrum" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
+		<h2>2. DPSK変調信号（時系列）</h2>
+		<canvas id="canvas-dpsk" width="600" height="100"></canvas>
+		<canvas id="canvas-dpsk-spectrum" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
+		<h2>3. AWGN付加後の信号（時系列）</h2>
+		<canvas id="canvas-noisy" width="600" height="100"></canvas>
+		<canvas id="canvas-noisy-spectrum" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
+		<h2>4. ソフトバリュー（信頼度）ヒストグラム</h2>
+		<div id="hist-soft"></div>
+	</div>
+	<div class="section">
+		<h2>5. 複合ビット（復調ビット）ヒストグラム</h2>
+		<div id="hist-bits"></div>
+	</div>
+	<div class="section">
+		<h2>6. 復調ビット列（時系列）</h2>
+		<canvas id="canvas-bits-demod" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
+		<h2>7. WebAudio再生・リアルタイムデコード</h2>
+		<button id="play">再生</button>
+		<button id="stop">停止</button>
+		<span id="audio-status" class="label"></span>
+		<div id="audio-decode-info" class="label"></div>
+	</div>
+	<script type="module">
+		import * as modem from '../src/modems/dsss-dpsk.js';
 
-    function randomBits(n) {
-      const arr = new Int8Array(n);
-      for (let i = 0; i < n; i++) arr[i] = Math.random() > 0.5 ? 1 : 0;
-      return arr;
-    }
+		function randomBits(n) {
+			const arr = new Int8Array(n);
+			for (let i = 0; i < n; i++) arr[i] = Math.random() > 0.5 ? 1 : 0;
+			return arr;
+		}
 
-    function drawSignal(canvas, arr, color = '#2c3e50', yRange = null) {
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const h = canvas.height, w = canvas.width;
-      const N = arr.length;
-      let min = yRange ? yRange[0] : Math.min(...arr);
-      let max = yRange ? yRange[1] : Math.max(...arr);
-      if (min === max) { min -= 1; max += 1; }
-      ctx.beginPath();
-      // Y座標: min→h, max→0, 0→h/2
-      for (let i = 0; i < N; i++) {
-        const x = i / (N-1) * w;
-        const y = h - ((arr[i] - min) / (max - min)) * h;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-    }
+		function drawSignal(canvas, arr, color = '#2c3e50', yRange = null) {
+			const ctx = canvas.getContext('2d');
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			const h = canvas.height, w = canvas.width;
+			const N = arr.length;
+			let min = yRange ? yRange[0] : Math.min(...arr);
+			let max = yRange ? yRange[1] : Math.max(...arr);
+			if (min === max) { min -= 1; max += 1; }
+			ctx.beginPath();
+			if (canvas.id.includes('bits')) {
+				// 矩形波（ステップ状）で描画
+				for (let i = 0; i < N; i++) {
+					const x0 = i / N * w;
+					const x1 = (i + 1) / N * w;
+					const y = h - ((arr[i] - min) / (max - min)) * h;
+					if (i === 0) ctx.moveTo(x0, y);
+					else ctx.lineTo(x0, y);
+					ctx.lineTo(x1, y); // 水平線
+				}
+			} else {
+				// 通常の折れ線
+				for (let i = 0; i < N; i++) {
+					const x = i / (N - 1) * w;
+					const y = h - ((arr[i] - min) / (max - min)) * h;
+					if (i === 0) ctx.moveTo(x, y);
+					else ctx.lineTo(x, y);
+				}
+			}
+			ctx.strokeStyle = color;
+			ctx.lineWidth = 1.2;
+			ctx.stroke();
+		}
 
-    function fftMag(arr) {
-      // Zero pad to next power of 2
-      const N = 1 << Math.ceil(Math.log2(arr.length));
-      const re = new Float32Array(N);
-      const im = new Float32Array(N);
-      for (let i = 0; i < arr.length; i++) re[i] = arr[i];
-      // Simple radix-2 Cooley-Tukey FFT (real input)
-      function bitrev(x, bits) {
-        let y = 0;
-        for (let i = 0; i < bits; i++) y = (y << 1) | ((x >> i) & 1);
-        return y;
-      }
-      const bits = Math.log2(N);
-      for (let i = 0; i < N; i++) {
-        const j = bitrev(i, bits);
-        if (i < j) {
-          [re[i], re[j]] = [re[j], re[i]];
-          [im[i], im[j]] = [im[j], im[i]];
-        }
-      }
-      for (let s = 1; s <= bits; s++) {
-        const m = 1 << s;
-        const m2 = m >> 1;
-        const theta = -2 * Math.PI / m;
-        const wpr = Math.cos(theta);
-        const wpi = Math.sin(theta);
-        for (let k = 0; k < N; k += m) {
-          let wr = 1, wi = 0;
-          for (let j = 0; j < m2; j++) {
-            const tRe = wr * re[k + j + m2] - wi * im[k + j + m2];
-            const tIm = wr * im[k + j + m2] + wi * re[k + j + m2];
-            re[k + j + m2] = re[k + j] - tRe;
-            im[k + j + m2] = im[k + j] - tIm;
-            re[k + j] += tRe;
-            im[k + j] += tIm;
-            const tmp = wr;
-            wr = wr * wpr - wi * wpi;
-            wi = wi * wpr + tmp * wpi;
-          }
-        }
-      }
-      const mag = new Float32Array(N/2);
-      for (let i = 0; i < N/2; i++) {
-        mag[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i]);
-      }
-      return mag;
-    }
+		function fftMag(arr) {
+			// Zero pad to next power of 2
+			const N = 1 << Math.ceil(Math.log2(arr.length));
+			const re = new Float32Array(N);
+			const im = new Float32Array(N);
+			for (let i = 0; i < arr.length; i++) re[i] = arr[i];
+			// Simple radix-2 Cooley-Tukey FFT (real input)
+			function bitrev(x, bits) {
+				let y = 0;
+				for (let i = 0; i < bits; i++) y = (y << 1) | ((x >> i) & 1);
+				return y;
+			}
+			const bits = Math.log2(N);
+			for (let i = 0; i < N; i++) {
+				const j = bitrev(i, bits);
+				if (i < j) {
+					[re[i], re[j]] = [re[j], re[i]];
+					[im[i], im[j]] = [im[j], im[i]];
+				}
+			}
+			for (let s = 1; s <= bits; s++) {
+				const m = 1 << s;
+				const m2 = m >> 1;
+				const theta = -2 * Math.PI / m;
+				const wpr = Math.cos(theta);
+				const wpi = Math.sin(theta);
+				for (let k = 0; k < N; k += m) {
+					let wr = 1, wi = 0;
+					for (let j = 0; j < m2; j++) {
+						const tRe = wr * re[k + j + m2] - wi * im[k + j + m2];
+						const tIm = wr * im[k + j + m2] + wi * re[k + j + m2];
+						re[k + j + m2] = re[k + j] - tRe;
+						im[k + j + m2] = im[k + j] - tIm;
+						re[k + j] += tRe;
+						im[k + j] += tIm;
+						const tmp = wr;
+						wr = wr * wpr - wi * wpi;
+						wi = wi * wpr + tmp * wpi;
+					}
+				}
+			}
+			const mag = new Float32Array(N / 2);
+			for (let i = 0; i < N / 2; i++) {
+				mag[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+			}
+			return mag;
+		}
 
-    function drawSpectrum(canvas, arr) {
-      const mag = fftMag(arr);
-      // dBスケールに変換
-      const dbArr = Array.from(mag, v => 20 * Math.log10(v + 1e-12));
-      // min/max自動スケーリング
-      let minDb = Math.min(...dbArr);
-      let maxDb = Math.max(...dbArr);
-      // 余白を少し持たせる
-      const margin = 2;
-      minDb -= margin;
-      maxDb += margin;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const h = canvas.height, w = canvas.width;
-      const N = dbArr.length;
-      ctx.beginPath();
-      ctx.moveTo(0, h);
-      for (let i = 0; i < N; i++) {
-        const y = h - (dbArr[i] - minDb) / (maxDb - minDb) * h;
-        ctx.lineTo(i / (N-1) * w, y);
-      }
-      ctx.strokeStyle = '#e67e22';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
+		function drawSpectrum(canvas, arr) {
+			const mag = fftMag(arr);
+			// dBスケールに変換
+			const dbArr = Array.from(mag, v => 20 * Math.log10(v + 1e-12));
+			// min/max自動スケーリング
+			let minDb = Math.min(...dbArr);
+			let maxDb = Math.max(...dbArr);
+			// 余白を少し持たせる
+			const margin = 2;
+			minDb -= margin;
+			maxDb += margin;
+			const ctx = canvas.getContext('2d');
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			const h = canvas.height, w = canvas.width;
+			const N = dbArr.length;
+			ctx.beginPath();
+			ctx.moveTo(0, h);
+			for (let i = 0; i < N; i++) {
+				const y = h - (dbArr[i] - minDb) / (maxDb - minDb) * h;
+				ctx.lineTo(i / (N - 1) * w, y);
+			}
+			ctx.strokeStyle = '#e67e22';
+			ctx.lineWidth = 1.5;
+			ctx.stroke();
+		}
 
-    function drawHistogram(container, arr, bins = 32, range = null) {
-      container.innerHTML = '';
-      let min = range ? range[0] : Math.min(...arr);
-      let max = range ? range[1] : Math.max(...arr);
-      const hist = new Array(bins).fill(0);
-      for (const v of arr) {
-        let idx = Math.floor((v - min) / (max - min + 1e-9) * bins);
-        if (idx < 0) idx = 0;
-        if (idx >= bins) idx = bins - 1;
-        hist[idx]++;
-      }
-      const maxCount = Math.max(...hist);
-      for (let i = 0; i < bins; i++) {
-        const bar = document.createElement('div');
-        bar.className = 'histogram-bar';
-        bar.style.height = (hist[i] / maxCount * 80 + 2) + 'px';
-        bar.style.width = '10px';
-        bar.title = `${min + (max-min)*i/bins}〜${min + (max-min)*(i+1)/bins}: ${hist[i]}`;
-        container.appendChild(bar);
-      }
-    }
+		function drawHistogram(container, arr, bins = 32, range = null) {
+			container.innerHTML = '';
+			let min = range ? range[0] : Math.min(...arr);
+			let max = range ? range[1] : Math.max(...arr);
+			const hist = new Array(bins).fill(0);
+			for (const v of arr) {
+				let idx = Math.floor((v - min) / (max - min + 1e-9) * bins);
+				if (idx < 0) idx = 0;
+				if (idx >= bins) idx = bins - 1;
+				hist[idx]++;
+			}
+			const maxCount = Math.max(...hist);
+			for (let i = 0; i < bins; i++) {
+				const bar = document.createElement('div');
+				bar.className = 'histogram-bar';
+				bar.style.height = (hist[i] / maxCount * 80 + 2) + 'px';
+				bar.style.width = '10px';
+				bar.title = `${min + (max - min) * i / bins}〜${min + (max - min) * (i + 1) / bins}: ${hist[i]}`;
+				container.appendChild(bar);
+			}
+		}
 
-    let audioCtx = null;
-    let audioSource = null;
-    let playing = false;
-    let lastSamples = null;
-    let lastParams = null;
-    let lastBits = null;
+		let audioCtx = null;
+		let audioSource = null;
+		let playing = false;
+		let lastSamples = null;
+		let lastParams = null;
+		let lastBits = null;
 
-    function playAudio(samples, sampleRate) {
-      if (audioCtx) audioCtx.close();
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const buf = audioCtx.createBuffer(1, samples.length, sampleRate);
-      buf.getChannelData(0).set(samples);
-      audioSource = audioCtx.createBufferSource();
-      audioSource.buffer = buf;
-      audioSource.connect(audioCtx.destination);
-      audioSource.start();
-      playing = true;
-      document.getElementById('audio-status').textContent = '再生中...';
-      audioSource.onended = () => {
-        playing = false;
-        document.getElementById('audio-status').textContent = '停止';
-      };
-    }
-    function stopAudio() {
-      if (audioSource) audioSource.stop();
-      if (audioCtx) audioCtx.close();
-      playing = false;
-      document.getElementById('audio-status').textContent = '停止';
-    }
+		function playAudio(samples, sampleRate) {
+			if (audioCtx) audioCtx.close();
+			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+			const buf = audioCtx.createBuffer(1, samples.length, sampleRate);
+			buf.getChannelData(0).set(samples);
+			audioSource = audioCtx.createBufferSource();
+			audioSource.buffer = buf;
+			audioSource.connect(audioCtx.destination);
+			audioSource.start();
+			playing = true;
+			document.getElementById('audio-status').textContent = '再生中...';
+			audioSource.onended = () => {
+				playing = false;
+				document.getElementById('audio-status').textContent = '停止';
+			};
+		}
+		function stopAudio() {
+			if (audioSource) audioSource.stop();
+			if (audioCtx) audioCtx.close();
+			playing = false;
+			document.getElementById('audio-status').textContent = '停止';
+		}
 
-    function getBitLengthFromQuery() {
-      const params = new URLSearchParams(window.location.search);
-      const v = params.get('bitLength');
-      const n = v ? parseInt(v, 10) : NaN;
-      return (Number.isFinite(n) && n > 0 && n < 1000) ? n : 8;
-    }
+		function expandQueryParams() {
+			const params = new URLSearchParams(window.location.search);
+			const processParam = function (param, defaultValue = null) {
+				if (params.has(param)) {
+					const value = params.get(param);
+					if (value) {
+						const n = parseInt(value, 10);
+						return n;
+					} else {
+						return defaultValue; // 空文字列はデフォルト値を返す
+					}
+				}
+				return defaultValue;
+			}
 
-    function run() {
-      // パラメータ
-      const bitLength = getBitLengthFromQuery();
-      const sequenceLength = 15; // DSSS拡散長
-      const samplesPerChip = 6; // 1チップあたりのサンプル数
-      const sampleRate = 1600; // サンプルレート（任意）
-      const carrierFreq = 10000; // キャリア周波数（Hz, 任意）
-      const snrDb = 0; // AWGN SNR [dB]
-      // 1. ランダムビット列
-      const bits = randomBits(bitLength);
-      lastBits = bits;
-      // 2. DSSS拡散
-      const chips = modem.dsssSpread(bits, sequenceLength);
-	  console.log('chips:', chips);
-      // 3. DPSK変調: チップ列→位相系列（DPSK: 差動位相加算）
-      const chipPhases = modem.dpskModulate(chips, 0);
-      // 4. キャリア変調: 位相系列→サンプル列
-      const samples = modem.modulateCarrier(chipPhases, samplesPerChip, sampleRate, carrierFreq);
-      // 5. AWGN付加
-      const noisySamples = modem.addAWGN(samples, snrDb);
-      // 6. 復調: サンプル列→位相系列
-      const demodPhases = modem.demodulateCarrier(noisySamples, samplesPerChip, sampleRate, carrierFreq);
-      // 7. DPSK復調: 位相系列→ソフト値
-      const softValues = modem.dpskDemodulate(demodPhases, 1.0);
-	  console.log('softValues:', softValues);
-      // 8. DSSS復調: チップ系列→ビット系列
-      // softValues (Int8Array, -128〜127) を ±1スケールのFloat32Arrayに変換
-      const softChips = Float32Array.from(softValues, v => v / 127);
-      const { bits: demodBits, correlations } = modem.dsssDespread(softChips, sequenceLength);
-      // 9. ハード判定ビット（従来のソフト値からも一応）
-      const hardBits = new Int8Array(softValues.length);
-      for (let i = 0; i < softValues.length; i++) hardBits[i] = softValues[i] > 0 ? 0 : 1;
+			const bitLength = processParam('bitLength', 16);
+			const snr = processParam('snr', -6);
 
-      // 入力ビット列
-      drawSignal(document.getElementById('canvas-bits'), bits, '#8e44ad', [0,1]);
-      // DSSSチップ列
-      drawSignal(document.getElementById('canvas-chips'), chips, '#2c3e50', [-1,1]);
-      drawSpectrum(document.getElementById('canvas-chips-spectrum'), chips);
-      // サンプル単位DPSK変調信号
-      drawSignal(document.getElementById('canvas-dpsk'), samples, '#16a085', [-1,1]);
-      drawSpectrum(document.getElementById('canvas-dpsk-spectrum'), samples);
-      // AWGN付加後
-      drawSignal(document.getElementById('canvas-noisy'), noisySamples, '#e74c3c', [-1,1]);
-      drawSpectrum(document.getElementById('canvas-noisy-spectrum'), noisySamples);
-      // ソフトバリュー
-      drawHistogram(document.getElementById('hist-soft'), softValues, 32, [-128, 127]);
-      // 復調ビット列（時系列）
-      drawSignal(document.getElementById('canvas-bits-demod'), demodBits, '#27ae60', [0,1]);
-      // WebAudio用に正規化（±1→±0.8）
-      const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
-      lastSamples = audioSamples;
-      lastParams = { samplesPerChip, carrierFreq, sequenceLength };
-      document.getElementById('audio-status').textContent = '';
-      document.getElementById('audio-decode-info').textContent = '';
-    }
+			return {
+				bitLength,
+				snr,
+			}
+		}
 
-    document.getElementById('rerun').onclick = run;
-    document.getElementById('play').onclick = () => {
-      if (!lastBits || !lastParams) return;
-      if (audioCtx) audioCtx.close();
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const sampleRate = audioCtx.sampleRate;
-      // 信号をWebAudioサンプルレートで再生成
-      const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
-      const chipPhases = modem.dpskModulate(chips, 0);
-      const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
-      const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
-      lastSamples = audioSamples;
-      playAudio(audioSamples, sampleRate);
-      // 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
-      setTimeout(() => {
-        const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
-        const softValues = modem.dpskDemodulate(demodPhases, 1.0);
-        const softChips = Float32Array.from(softValues, v => v / 127);
-        const { bits: demodBits } = modem.dsssDespread(softChips, lastParams.sequenceLength);
-        document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
-      }, 500);
-    };
-    document.getElementById('stop').onclick = stopAudio;
-    run();
-  </script>
+		function calculateParameters(params) {
+			const { sampleRate, lowerBound, upperBound, sequenceLength } = params;
+
+			const carrierFreq = (upperBound - lowerBound) / 2 + lowerBound;
+			const bandwidth = upperBound - lowerBound;
+
+			if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('sampleRate must be > 0');
+			if (!Number.isFinite(lowerBound) || !Number.isFinite(upperBound) || lowerBound >= upperBound) throw new Error('lowerBound < upperBound required');
+			if (!Number.isFinite(sequenceLength) || sequenceLength < 1) throw new Error('sequenceLength must be >= 1');
+			if (bandwidth <= 0) throw new Error('bandwidth must be > 0');
+
+			const chipRate = bandwidth / 2;
+			if (chipRate <= 0) throw new Error('chipRate must be > 0');
+
+			let samplesPerChip = Math.floor(sampleRate / chipRate);
+			if (!Number.isFinite(samplesPerChip) || samplesPerChip < 1) {
+				console.warn('samplesPerChip < 1, forcing to 1');
+				samplesPerChip = 1;
+			}
+
+			return { sequenceLength, samplesPerChip, sampleRate, carrierFreq, bandwidth };
+		}
+
+		function run() {
+			// ここで必要なパラメータを計算・取
+			const { bitLength, snr } = expandQueryParams();
+			console.log('bitLength:', bitLength, 'snr:', snr);
+
+			const params = calculateParameters({
+				sampleRate: 4800, // サンプルレート（任意）
+				lowerBound: 10, // 下限周波数（Hz, 任意）
+				upperBound: 1500, // 上限周波数（Hz, 任意）
+				sequenceLength: 15 // DSSS拡散長
+			});
+			console.log('params:', params);
+			const { sequenceLength, samplesPerChip, sampleRate, carrierFreq, bandwidth } = params;
+
+			// パラメータ
+			const snrDb = snr; // AWGN SNR [dB]
+			// 1. ランダムビット列
+			const bits = randomBits(bitLength);
+			lastBits = bits;
+			// 2. DSSS拡散
+			const chips = modem.dsssSpread(bits, sequenceLength);
+			console.log('chips:', chips);
+			// 3. DPSK変調: チップ列→位相系列（DPSK: 差動位相加算）
+			const chipPhases = modem.dpskModulate(chips, 0);
+			// 4. キャリア変調: 位相系列→サンプル列
+			const samples = modem.modulateCarrier(chipPhases, samplesPerChip, sampleRate, carrierFreq);
+			// 5. AWGN付加
+			const noisySamples = modem.addAWGN(samples, snrDb);
+			// 6. 復調: サンプル列→位相系列
+			const demodPhases = modem.demodulateCarrier(noisySamples, samplesPerChip, sampleRate, carrierFreq);
+			// 7. DPSK復調: 位相系列→ソフト値
+			const softValues = modem.dpskDemodulate(demodPhases, 1.0);
+			console.log('softValues:', softValues);
+			// 8. DSSS復調: チップ系列→ビット系列
+			// softValues (Int8Array, -128〜127) を ±1スケールのFloat32Arrayに変換
+			const softChips = Float32Array.from(softValues, v => v / 127);
+			const { llr: demodBits, correlations } = modem.dsssDespread(softChips, sequenceLength);
+
+			// 入力ビット列
+			drawSignal(document.getElementById('canvas-bits'), bits, '#8e44ad', [0, 1]);
+			// DSSSチップ列
+			drawSignal(document.getElementById('canvas-chips'), chips, '#2c3e50', [-1, 1]);
+			drawSpectrum(document.getElementById('canvas-chips-spectrum'), chips);
+			// サンプル単位DPSK変調信号
+			drawSignal(document.getElementById('canvas-dpsk'), samples, '#16a085', [-1, 1]);
+			drawSpectrum(document.getElementById('canvas-dpsk-spectrum'), samples);
+			// AWGN付加後
+			drawSignal(document.getElementById('canvas-noisy'), noisySamples, '#e74c3c', [-1, 1]);
+			drawSpectrum(document.getElementById('canvas-noisy-spectrum'), noisySamples);
+			// ソフトバリュー
+			drawHistogram(document.getElementById('hist-soft'), softValues, 32, [-128, 127]);
+			// 復調ビット列（時系列）
+			drawSignal(document.getElementById('canvas-bits-demod'), demodBits, '#27ae60', [-128, 127]);
+			// WebAudio用に正規化（±1→±0.8）
+			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+			lastSamples = audioSamples;
+			lastParams = { samplesPerChip, carrierFreq, sequenceLength };
+			document.getElementById('audio-status').textContent = '';
+			document.getElementById('audio-decode-info').textContent = '';
+		}
+
+		document.getElementById('rerun').onclick = run;
+		document.getElementById('play').onclick = () => {
+			if (!lastBits || !lastParams) return;
+			if (audioCtx) audioCtx.close();
+			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+			const sampleRate = audioCtx.sampleRate;
+
+			// ここで必要なパラメータを計算・取
+			const { bitLength, snr } = expandQueryParams();
+			const params = calculateParameters({
+				sampleRate,
+				lowerBound: 100, // 下限周波数（Hz, 任意）
+				upperBound: 15000, // 上限周波数（Hz, 任意）
+				sequenceLength: 15 // DSSS拡散長
+			});
+			const { sequenceLength, samplesPerChip, carrierFreq, bandwidth } = params;
+
+			// 信号をWebAudioサンプルレートで再生成
+			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
+			const chipPhases = modem.dpskModulate(chips, 0);
+			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
+			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+			lastSamples = audioSamples;
+			playAudio(audioSamples, sampleRate);
+			// 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
+			setTimeout(() => {
+				const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
+				const softValues = modem.dpskDemodulate(demodPhases, 1.0);
+				const softChips = Float32Array.from(softValues, v => v / 127);
+				const { bits: demodBits } = modem.dsssDespread(softChips, lastParams.sequenceLength);
+				document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
+			}, 500);
+		};
+		document.getElementById('stop').onclick = stopAudio;
+		run();
+	</script>
 </body>
+
 </html>
