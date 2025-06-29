@@ -162,7 +162,7 @@ export function dpskDemodulate(
   const softValues = new Int8Array(phases.length - 1);
   
   // Fixed scale to preserve Es/N0 effect (corresponds to ~10dB Es/N0 * 4)
-  const fixedMaxValue = 40.0;
+  const fixedMaxValue = esN0Linear * 2;
   
   for (let i = 1; i < phases.length; i++) {
     // Calculate normalized phase difference
