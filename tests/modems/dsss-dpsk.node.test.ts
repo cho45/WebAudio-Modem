@@ -19,7 +19,7 @@ describe('DPSK Modulation', () => {
   const TOLERANCE = 0.01; // Phase tolerance in radians
 
   test('should perform complete DPSK modulation', () => {
-    const bits = [0, 1, 0, 1];
+    const bits = new Int8Array([0, 1, 0, 1]);
     const phases = dpskModulate(bits);
     
     expect(phases.length).toBe(4);
@@ -30,7 +30,7 @@ describe('DPSK Modulation', () => {
   });
 
   test('should work with custom initial phase', () => {
-    const bits = [1, 0];
+    const bits = new Int8Array([1, 0]);
     const initialPhase = Math.PI / 4;
     const phases = dpskModulate(bits, initialPhase);
     
@@ -39,7 +39,7 @@ describe('DPSK Modulation', () => {
   });
 
   test('should handle alternating pattern correctly', () => {
-    const bits = [1, 1, 1, 1];
+    const bits = new Int8Array([1, 1, 1, 1]);
     const phases = dpskModulate(bits);
     
     expect(phases[0]).toBeCloseTo(0, 5);
@@ -49,23 +49,23 @@ describe('DPSK Modulation', () => {
   });
 
   test('should handle empty array', () => {
-    const bits: number[] = [];
+    const bits = new Int8Array(0);
     const phases = dpskModulate(bits);
     
-    expect(phases).toEqual([]);
+    expect(phases).toEqual(new Float32Array(0));
   });
 });
 
 describe('DSSS Spreading', () => {
   test('should generate correct spread chip length', () => {
-    const bits = [0, 1, 0, 1];
+    const bits = new Int8Array([0, 1, 0, 1]);
     const chips = dsssSpread(bits);
     
     expect(chips.length).toBe(bits.length * 31); // 31-chip M-sequence (default)
   });
 
   test('should produce +1/-1 chips only', () => {
-    const bits = [0, 1];
+    const bits = new Int8Array([0, 1]);
     const chips = dsssSpread(bits);
     
     for (const chip of chips) {
@@ -74,7 +74,7 @@ describe('DSSS Spreading', () => {
   });
 
   test('should spread bit 0 as positive sequence', () => {
-    const bits = [0];
+    const bits = new Int8Array([0]);
     const chips = dsssSpread(bits);
     
     expect(chips.length).toBe(31);
@@ -83,7 +83,7 @@ describe('DSSS Spreading', () => {
   });
 
   test('should spread bit 1 as negative sequence', () => {
-    const bits = [1];
+    const bits = new Int8Array([1]);
     const chips = dsssSpread(bits);
     
     expect(chips.length).toBe(31);
@@ -92,8 +92,8 @@ describe('DSSS Spreading', () => {
   });
 
   test('should use consistent M31 sequence across calls', () => {
-    const bits1 = [0];
-    const bits2 = [0];
+    const bits1 = new Int8Array([0]);
+    const bits2 = new Int8Array([0]);
     const chips1 = dsssSpread(bits1);
     const chips2 = dsssSpread(bits2);
     
@@ -101,7 +101,7 @@ describe('DSSS Spreading', () => {
   });
 
   test('should handle different M-sequence lengths', () => {
-    const bits = [0];
+    const bits = new Int8Array([0]);
     const chips15 = dsssSpread(bits, 15);
     const chips31 = dsssSpread(bits, 31);
     
@@ -111,7 +111,7 @@ describe('DSSS Spreading', () => {
   });
 
   test('should handle different seeds', () => {
-    const bits = [0];
+    const bits = new Int8Array([0]);
     const chips1 = dsssSpread(bits, 31, 0b10101);
     const chips2 = dsssSpread(bits, 31, 0b01010);
     
@@ -121,7 +121,7 @@ describe('DSSS Spreading', () => {
   });
 
   test('should handle empty array', () => {
-    const bits: number[] = [];
+    const bits = new Int8Array(0);
     const chips = dsssSpread(bits);
     
     expect(chips.length).toBe(0);
@@ -133,9 +133,9 @@ describe('DSSS Despreading', () => {
   test('should recover original bits perfectly', () => {
     const originalBits = [0, 1, 0, 1];
     const chips = dsssSpread(originalBits);
-    const { bits, correlations } = dsssDespread(chips);
+    const { bits, correlations } = dsssDespread(new Float32Array(chips));
     
-    expect(bits).toEqual(originalBits);
+    expect(Array.from(bits)).toEqual(Array.from(originalBits));
     expect(correlations.length).toBe(originalBits.length);
     
     // Check correlation magnitudes (should be ±31 for perfect correlation with M31)
@@ -147,9 +147,9 @@ describe('DSSS Despreading', () => {
   test('should handle single bit', () => {
     const originalBits = [1];
     const chips = dsssSpread(originalBits);
-    const { bits, correlations } = dsssDespread(chips);
+    const { bits, correlations } = dsssDespread(new Float32Array(chips));
     
-    expect(bits).toEqual(originalBits);
+    expect(Array.from(bits)).toEqual(Array.from(originalBits));
     expect(correlations.length).toBe(1);
     expect(correlations[0]).toBe(-31); // Bit 1 → negative correlation
   });
@@ -159,9 +159,9 @@ describe('DSSS Despreading', () => {
     const seed = 0b01010;
     
     const chips = dsssSpread(originalBits, 31, seed);
-    const { bits } = dsssDespread(chips, 31, seed);
+    const { bits } = dsssDespread(new Float32Array(chips), 31, seed);
     
-    expect(bits).toEqual(originalBits);
+    expect(Array.from(bits)).toEqual(Array.from(originalBits));
   });
 
   test('should handle noisy chips', () => {
@@ -171,8 +171,8 @@ describe('DSSS Despreading', () => {
     // Add small amount of noise
     const noisyChips = chips.map(chip => chip + (Math.random() - 0.5) * 0.2);
     
-    const { bits } = dsssDespread(noisyChips);
-    expect(bits).toEqual(originalBits);
+    const { bits } = dsssDespread(new Float32Array(noisyChips));
+    expect(Array.from(bits)).toEqual(Array.from(originalBits));
   });
 
   test('should handle partial chip arrays', () => {
@@ -181,24 +181,24 @@ describe('DSSS Despreading', () => {
     
     // Take only first 2 complete symbols (62 chips for M31)
     const partialChips = chips.slice(0, 62);
-    const { bits } = dsssDespread(partialChips);
+    const { bits } = dsssDespread(new Float32Array(partialChips));
     
-    expect(bits).toEqual([0, 1]);
+    expect(Array.from(bits)).toEqual([0, 1]);
   });
 
   test('should handle empty chip array', () => {
-    const chips: number[] = [];
+    const chips = new Float32Array([]);
     const { bits, correlations } = dsssDespread(chips);
     
-    expect(bits).toEqual([]);
-    expect(correlations).toEqual([]);
+    expect(Array.from(bits)).toEqual([]);
+    expect(Array.from(correlations)).toEqual([]);
   });
 });
 
 describe('DPSK Demodulation', () => {
   test('should generate correct soft values for phase differences', () => {
     // Create phases with known phase differences
-    const phases = [0, 0, Math.PI, Math.PI, 0]; // Phase diffs: 0, π, 0, -π
+    const phases = new Float32Array([0, 0, Math.PI, Math.PI, 0]); // Phase diffs: 0, π, 0, -π
     const softValues = dpskDemodulate(phases);
     
     expect(softValues.length).toBe(4);
@@ -217,7 +217,7 @@ describe('DPSK Demodulation', () => {
   });
 
   test('should handle phase wraparound correctly', () => {
-    const phases = [0, 2 * Math.PI]; // Should be equivalent to [0, 0]
+    const phases = new Float32Array([0, 2 * Math.PI]); // Should be equivalent to [0, 0]
     const softValues = dpskDemodulate(phases);
     
     expect(softValues.length).toBe(1);
@@ -225,7 +225,7 @@ describe('DPSK Demodulation', () => {
   });
 
   test('should scale with noise variance', () => {
-    const phases = [0, Math.PI / 4]; // Phase diff = π/4 (intermediate value)
+    const phases = new Float32Array([0, Math.PI / 4]); // Phase diff = π/4 (intermediate value)
     
     const softValues1 = dpskDemodulate(phases, 15.0); // Higher Es/N0
     const softValues2 = dpskDemodulate(phases, 8.0);  // Lower Es/N0
@@ -235,14 +235,14 @@ describe('DPSK Demodulation', () => {
   });
 
   test('should handle single phase', () => {
-    const phases = [Math.PI / 4];
+    const phases = new Float32Array([Math.PI / 4]);
     const softValues = dpskDemodulate(phases);
     
     expect(softValues.length).toBe(0);
   });
 
   test('should handle intermediate phase differences', () => {
-    const phases = [0, Math.PI / 2]; // Phase diff = π/2 (ambiguous)
+    const phases = new Float32Array([0, Math.PI / 2]); // Phase diff = π/2 (ambiguous)
     const softValues = dpskDemodulate(phases);
     
     expect(softValues.length).toBe(1);
@@ -278,9 +278,9 @@ describe('Complete DSSS-DPSK Pipeline', () => {
       return Math.abs(normalizedPhase) < Math.PI / 2 ? 1 : -1;
     });
     
-    const { bits: recoveredBits } = dsssDespread(recoveredChips);
+    const { bits: recoveredBits } = dsssDespread(new Float32Array(recoveredChips));
     
-    expect(recoveredBits).toEqual(originalBits);
+    expect(Array.from(recoveredBits)).toEqual(Array.from(originalBits));
   });
 
   test('should work with different bit patterns', () => {
@@ -295,9 +295,9 @@ describe('Complete DSSS-DPSK Pipeline', () => {
 
     for (const originalBits of testPatterns) {
       const chips = dsssSpread(originalBits);
-      const { bits: recoveredBits } = dsssDespread(chips);
+      const { bits: recoveredBits } = dsssDespread(new Float32Array(chips));
       
-      expect(recoveredBits).toEqual(originalBits);
+      expect(Array.from(recoveredBits)).toEqual(Array.from(originalBits));
     }
   });
 });
@@ -358,12 +358,12 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       const continuousPhases = [0, 0.5, 1.0, 1.5, 2.0];
       const unwrapped = phaseUnwrap(continuousPhases);
       
-      expect(unwrapped).toEqual(continuousPhases);
+      expect(Array.from(unwrapped)).toEqual(Array.from(continuousPhases));
     });
 
     test('should handle empty array', () => {
-      const unwrapped = phaseUnwrap([]);
-      expect(unwrapped).toEqual([]);
+      const unwrapped = phaseUnwrap(new Float32Array(0));
+      expect(Array.from(unwrapped)).toEqual([]);
     });
   });
 
@@ -377,30 +377,30 @@ describe('Step 3: Advanced Demodulation Functions', () => {
     });
 
     test('should calculate BER correctly with errors', () => {
-      const original = [0, 1, 0, 1, 0, 1];
-      const received = [1, 1, 0, 0, 0, 1]; // 2 errors out of 6 bits
+      const original = new Int8Array([0, 1, 0, 1, 0, 1]);
+      const received = new Int8Array([1, 1, 0, 0, 0, 1]); // 2 errors out of 6 bits
       const ber = calculateBER(original, received);
       
       expect(ber).toBeCloseTo(2/6, 5);
     });
 
     test('should handle all errors', () => {
-      const original = [0, 0, 0, 0];
-      const received = [1, 1, 1, 1];
+      const original = new Int8Array([0, 0, 0, 0]);
+      const received = new Int8Array([1, 1, 1, 1]);
       const ber = calculateBER(original, received);
       
       expect(ber).toBe(1.0);
     });
 
     test('should throw error for mismatched lengths', () => {
-      const original = [0, 1, 0];
-      const received = [0, 1];
+      const original = new Int8Array([0, 1, 0]);
+      const received = new Int8Array([0, 1]);
       
       expect(() => calculateBER(original, received)).toThrow();
     });
 
     test('should handle empty arrays', () => {
-      const ber = calculateBER([], []);
+      const ber = calculateBER(new Int8Array(0), new Int8Array(0));
       expect(ber).toBe(0);
     });
   });
@@ -472,7 +472,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
         return Math.abs(normalizedPhase) < Math.PI / 2 ? 1 : -1;
       });
       
-      const { bits: recoveredBits } = dsssDespread(recoveredChips);
+      const { bits: recoveredBits } = dsssDespread(new Float32Array(recoveredChips));
       const ber = calculateBER(originalBits, recoveredBits);
       
       expect(ber).toBe(0); // Step 3 requirement: BER=0 in noiseless case
@@ -500,7 +500,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
         return Math.abs(normalizedPhase) < Math.PI / 2 ? 1 : -1;
       });
       
-      const { bits: recoveredBits } = dsssDespread(recoveredChips);
+      const { bits: recoveredBits } = dsssDespread(new Float32Array(recoveredChips));
       const ber = calculateBER(originalBits, recoveredBits);
       
       // Should still have low BER with 15 dB SNR and DSSS processing gain
@@ -541,7 +541,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       expect(Math.abs(syncResult.bestOffset - randomOffset)).toBeLessThanOrEqual(1); // ±1 tolerance
       
       // Step 6: Apply synchronization offset
-      const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+      const alignedChips = applySyncOffset(noisyChips, syncResult.bestOffset);
       
       // Step 7: DSSS Despreading
       const { bits: recoveredBits } = dsssDespread(alignedChips);
@@ -555,7 +555,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
     });
 
     test('should maintain sync and BER performance across multiple SNR levels with statistical validation', () => {
-      const originalBits = [0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0]; // 12 bits
+      const originalBits = new Int8Array([0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0]); // 12 bits
       
       // DSSS理論に基づく期待値（M31処理利得：約14.9dB）
       // 各SNRに処理利得を加算した実効SNRで期待性能を算出
@@ -614,7 +614,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
             syncSuccessCount++;
             
             // Despreading and BER calculation for successful syncs
-            const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+            const alignedChips = applySyncOffset(noisyChips, syncResult.bestOffset);
             const { bits: recoveredBits } = dsssDespread(alignedChips);
             const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
             
@@ -647,7 +647,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
 
   describe('Synchronization Success Rate Evaluation', () => {
     test('should achieve high sync success rate with statistical evaluation', () => {
-      const originalBits = [0, 1, 0, 1, 1, 0]; 
+      const originalBits = new Int8Array([0, 1, 0, 1, 1, 0]); 
       const numTrials = 20;
       const snr = 6; // Moderate SNR condition
       let syncSuccessCount = 0;
@@ -658,8 +658,8 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         // Generate fresh noise for each trial
         const spreadChips = dsssSpread(originalBits);
         const randomOffset = Math.floor(Math.random() * 15) + 5; // 5-19 random offset
-        const offsetChips = new Array(randomOffset).fill(0).concat(Array.from(spreadChips));
-        const noisyChips = addAWGN(new Float32Array(offsetChips), snr);
+        const offsetChips = new Float32Array(new Array(randomOffset).fill(0).concat(Array.from(spreadChips)));
+        const noisyChips = addAWGN(offsetChips, snr);
         
         // Attempt synchronization
         const reference = generateSyncReference();
@@ -669,7 +669,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           syncSuccessCount++;
           
           // Measure BER for successful sync
-          const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+          const alignedChips = applySyncOffset(noisyChips, syncResult.bestOffset);
           const { bits: recoveredBits } = dsssDespread(alignedChips);
           const ber = calculateBER(originalBits, recoveredBits.slice(0, originalBits.length));
           
@@ -690,7 +690,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
     });
 
     test('should handle challenging conditions with graceful degradation', () => {
-      const originalBits = [0, 1, 0, 1, 1, 0, 1, 0];
+      const originalBits = new Int8Array([0, 1, 0, 1, 1, 0, 1, 0]);
       // DSSS理論に基づく期待値（M31処理利得：約14.9dB）
       const challengingConditions = [
         { 
@@ -748,22 +748,22 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
 
   describe('Soft Value Integration Performance', () => {
     test('should provide meaningful soft values through complete pipeline', () => {
-      const originalBits = [0, 1, 0, 1];
+      const originalBits = new Int8Array([0, 1, 0, 1]);
       
       // DPSK+DSSS forward path (using DSSS only for current test)
       const spreadChips = dsssSpread(originalBits);
       
       // Add noise and offset
       const offset = 8;
-      const offsetChips = new Array(offset).fill(0).concat(Array.from(spreadChips));
-      const noisyChips = addAWGN(new Float32Array(offsetChips), 7); // 7dB SNR
+      const offsetChips = new Float32Array(new Array(offset).fill(0).concat(Array.from(spreadChips)));
+      const noisyChips = addAWGN(offsetChips, 7); // 7dB SNR
       
       // Synchronization and alignment
       const reference = generateSyncReference();
       const syncResult = findSyncOffset(noisyChips, reference, 20);
       expect(syncResult.isFound).toBe(true);
       
-      const alignedChips = applySyncOffset(Array.from(noisyChips), syncResult.bestOffset);
+      const alignedChips = applySyncOffset(noisyChips, syncResult.bestOffset);
       
       // DSSS despreading with correlations (soft values)
       const { bits: recoveredBits, correlations } = dsssDespread(alignedChips);
@@ -895,34 +895,34 @@ describe('Step 4: Synchronization Functions', () => {
 
   describe('applySyncOffset', () => {
     test('should apply offset correctly', () => {
-      const data = [1, 2, 3, 4, 5, 6, 7, 8];
+      const data = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
       const offset = 3;
       const aligned = applySyncOffset(data, offset);
       
-      expect(aligned).toEqual([4, 5, 6, 7, 8]);
+      expect(Array.from(aligned)).toEqual([4, 5, 6, 7, 8]);
     });
 
     test('should handle zero offset', () => {
-      const data = [1, 2, 3, 4];
+      const data = new Float32Array([1, 2, 3, 4]);
       const aligned = applySyncOffset(data, 0);
       
-      expect(aligned).toEqual(data);
+      expect(Array.from(aligned)).toEqual(Array.from(data));
     });
 
     test('should handle out-of-bounds offset', () => {
-      const data = [1, 2, 3];
+      const data = new Float32Array([1, 2, 3]);
       const aligned1 = applySyncOffset(data, 10);
       const aligned2 = applySyncOffset(data, -1);
       
-      expect(aligned1).toEqual([]);
-      expect(aligned2).toEqual([]);
+      expect(Array.from(aligned1)).toEqual([]);
+      expect(Array.from(aligned2)).toEqual([]);
     });
 
-    test('should work with different data types', () => {
-      const stringData = ['a', 'b', 'c', 'd'];
-      const aligned = applySyncOffset(stringData, 1);
+    test('should work with Float32Array data', () => {
+      const data = new Float32Array([1.1, 2.2, 3.3, 4.4]);
+      const aligned = applySyncOffset(data, 1);
       
-      expect(aligned).toEqual(['b', 'c', 'd']);
+      expect(Array.from(aligned)).toEqual([2.2000000476837158, 3.299999952316284, 4.400000095367432]);
     });
   });
 
@@ -1072,17 +1072,17 @@ describe('Step 4: Synchronization Functions', () => {
 
   describe('Integrated Synchronization Tests', () => {
     test('should achieve automatic synchronization from arbitrary offset', () => {
-      const originalBits = [0, 1, 0, 1, 1, 0];
+      const originalBits = new Int8Array([0, 1, 0, 1, 1, 0]);
       const chips = dsssSpread(originalBits);
       
       // Add random offset
       const offset = 7;
-      const padding: number[] = Array.from({length: offset}, () => Math.random() > 0.5 ? 1 : -1);
-      const receivedChips = padding.concat(Array.from(chips));
+      const padding = Array.from({length: offset}, () => Math.random() > 0.5 ? 1 : -1);
+      const receivedChips = new Float32Array([...padding, ...Array.from(chips)]);
       
       // Find synchronization
       const reference = generateSyncReference();
-      const syncResult = findSyncOffset(new Float32Array(receivedChips), reference, 20);
+      const syncResult = findSyncOffset(receivedChips, reference, 20);
       
       expect(syncResult.isFound).toBe(true);
       
@@ -1116,7 +1116,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
 
   describe('modulateCarrier', () => {
     test('should generate correct signal length', () => {
-      const phases = [0, Math.PI, 0, Math.PI];
+      const phases = new Float32Array([0, Math.PI, 0, Math.PI]);
       const samplesPerPhase = 100;
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1127,7 +1127,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
     });
 
     test('should generate sinusoidal signal', () => {
-      const phases = [0]; // Single phase
+      const phases = new Float32Array([0]); // Single phase
       const samplesPerPhase = 100;
       const sampleRate = 48000;
       const carrierFreq = 1000; // Low frequency for easy verification
@@ -1146,8 +1146,8 @@ describe('DSSS-DPSK Carrier Modulation', () => {
       const carrierFreq = 1000;
       
       // Compare 0 phase vs π phase
-      const samples0 = modulateCarrier([0], samplesPerPhase, sampleRate, carrierFreq);
-      const samplesPI = modulateCarrier([Math.PI], samplesPerPhase, sampleRate, carrierFreq);
+      const samples0 = modulateCarrier(new Float32Array([0]), samplesPerPhase, sampleRate, carrierFreq);
+      const samplesPI = modulateCarrier(new Float32Array([Math.PI]), samplesPerPhase, sampleRate, carrierFreq);
       
       // Signals should be 180° out of phase (opposite signs)
       for (let i = 0; i < Math.min(50, samplesPerPhase); i++) {
@@ -1159,7 +1159,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
   describe('demodulateCarrier', () => {
     test('should extract correct single phase', () => {
       const testPhase = Math.PI / 4;
-      const phases = [testPhase];
+      const phases = new Float32Array([testPhase]);
       const samplesPerPhase = 200;
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1172,7 +1172,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
     });
 
     test('should handle phase discontinuities', () => {
-      const phases = [0, Math.PI, 0, Math.PI];
+      const phases = new Float32Array([0, Math.PI, 0, Math.PI]);
       const samplesPerPhase = 200;
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1193,7 +1193,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
 
   describe('Loopback Tests', () => {
     test('should recover original phases with high accuracy', () => {
-      const testPhases = [0, Math.PI/2, Math.PI, -Math.PI/2];
+      const testPhases = new Float32Array([0, Math.PI/2, Math.PI, -Math.PI/2]);
       const samplesPerPhase = 240; // Multiple of carrier periods for clean demod
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1214,7 +1214,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
     });
 
     test('should handle different carrier frequencies', () => {
-      const testPhases = [0, Math.PI];
+      const testPhases = new Float32Array([0, Math.PI]);
       const samplesPerPhase = 240;
       const sampleRate = 48000;
       const carrierFreqs = [1000, 5000, 10000, 15000];
@@ -1241,10 +1241,10 @@ describe('DSSS-DPSK Carrier Modulation', () => {
       const carrierFreq = 10000;
       
       // First call
-      const samples1 = modulateCarrier([0], samplesPerPhase, sampleRate, carrierFreq, 0);
+      const samples1 = modulateCarrier(new Float32Array([0]), samplesPerPhase, sampleRate, carrierFreq, 0);
       
       // Second call with continuous phase
-      const samples2 = modulateCarrier([0], samplesPerPhase, sampleRate, carrierFreq, samplesPerPhase);
+      const samples2 = modulateCarrier(new Float32Array([0]), samplesPerPhase, sampleRate, carrierFreq, samplesPerPhase);
       
       // Combined signal should have smooth phase transition
       const combined = new Float32Array(samples1.length + samples2.length);
@@ -1268,7 +1268,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
 
   describe('Edge Cases', () => {
     test('should handle empty phase array', () => {
-      const phases: number[] = [];
+      const phases = new Float32Array(0);
       const samplesPerPhase = 100;
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1278,7 +1278,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
     });
 
     test('should handle single phase', () => {
-      const phases = [Math.PI/3];
+      const phases = new Float32Array([Math.PI/3]);
       const samplesPerPhase = 240;
       const sampleRate = 48000;
       const carrierFreq = 10000;
@@ -1302,7 +1302,7 @@ describe('DSSS-DPSK Carrier Modulation', () => {
       const carrierFreq = 10000;
       
       for (const phase of boundaryPhases) {
-        const modulated = modulateCarrier([phase], samplesPerPhase, sampleRate, carrierFreq);
+        const modulated = modulateCarrier(new Float32Array([phase]), samplesPerPhase, sampleRate, carrierFreq);
         const demodulated = demodulateCarrier(modulated, samplesPerPhase, sampleRate, carrierFreq);
         
         expect(demodulated.length).toBe(1);

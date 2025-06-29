@@ -20,13 +20,13 @@ function normalizePhase(phase: number): number {
  * @param initialPhase Starting phase (default: 0)
  * @returns Absolute phase array for carrier modulation
  */
-export function dpskModulate(bits: number[], initialPhase: number = 0): number[] {
-  const phases: number[] = [];
+export function dpskModulate(bits: Int8Array, initialPhase: number = 0): Float32Array {
+  const phases = new Float32Array(bits.length);
   let currentPhase = initialPhase;
   
-  for (const bit of bits) {
-    phases.push(currentPhase);
-    currentPhase += bit === 0 ? 0 : Math.PI; // 0→0, 1→π
+  for (let i = 0; i < bits.length; i++) {
+    phases[i] = currentPhase;
+    currentPhase += bits[i] === 0 ? 0 : Math.PI; // 0→0, 1→π
   }
   
   return phases;
@@ -40,7 +40,7 @@ export function dpskModulate(bits: number[], initialPhase: number = 0): number[]
  * @returns Spread chip array (+1/-1 values) as Int8Array
  */
 export function dsssSpread(
-  bits: number[], 
+  bits: Int8Array, 
   sequenceLength: number = 31, 
   seed?: number
 ): Int8Array {
@@ -115,10 +115,10 @@ function getMSequenceConfig(length: number) {
  * @returns Despread bit array (0 or 1) and correlation values
  */
 export function dsssDespread(
-  chips: Int8Array | Float32Array | number[], 
+  chips: Float32Array, 
   sequenceLength: number = 31, 
   seed?: number
-): { bits: number[], correlations: number[] } {
+): { bits: Int8Array, correlations: Float32Array } {
   // Auto-select seed if not provided
   const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   
@@ -126,8 +126,8 @@ export function dsssDespread(
   const mSequence = generateMSequence(sequenceLength, actualSeed);
   
   const numBits = Math.floor(chips.length / sequenceLength);
-  const bits: number[] = [];
-  const correlations: number[] = [];
+  const bits = new Int8Array(numBits);
+  const correlations = new Float32Array(numBits);
   
   for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
     const startIdx = bitIndex * sequenceLength;
@@ -138,63 +138,47 @@ export function dsssDespread(
       correlation += chips[startIdx + i] * mSequence[i];
     }
     
-    correlations.push(correlation);
+    correlations[bitIndex] = correlation;
     
     // Convert correlation to bit: positive→0, negative→1
-    bits.push(correlation > 0 ? 0 : 1);
+    bits[bitIndex] = correlation > 0 ? 0 : 1;
   }
   
   return { bits, correlations };
 }
 
-/**
- * Quantize soft values to Int8Array range (-128 to +127)
- * @param softValues Array of floating-point LLR values
- * @param maxValue Maximum absolute value for scaling (default: 10.0)
- * @returns Quantized soft values as Int8Array
- */
-export function quantizeSoftValues(softValues: number[], maxValue: number = 10.0): Int8Array {
-  const quantized = new Int8Array(softValues.length);
-  
-  for (let i = 0; i < softValues.length; i++) {
-    // Scale to [-1, 1] range
-    const scaled = Math.max(-1.0, Math.min(1.0, softValues[i] / maxValue));
-    
-    // Quantize to int8 range [-128, +127]
-    quantized[i] = Math.round(scaled * 127);
-  }
-  
-  return quantized;
-}
 
 /**
  * DPSK demodulation: convert phase differences to soft values (LLR)
- * @param phases Received phase array in radians (Float32Array or number[])
+ * @param phases Received phase array in radians
  * @param esN0Db Es/N0 ratio in dB (default: 10dB)
  * @returns Quantized soft values as Int8Array (-128 to +127)
  */
 export function dpskDemodulate(
-  phases: Float32Array | number[], 
+  phases: Float32Array, 
   esN0Db: number = 10.0
 ): Int8Array {
   const esN0Linear = Math.pow(10, esN0Db / 10); // Convert dB to linear
-  const softValues: number[] = [];
+  const softValues = new Int8Array(phases.length - 1);
+  
+  // Fixed scale to preserve Es/N0 effect (corresponds to ~10dB Es/N0 * 4)
+  const fixedMaxValue = 40.0;
   
   for (let i = 1; i < phases.length; i++) {
     // Calculate normalized phase difference
     const phaseDiff = normalizePhase(phases[i] - phases[i - 1]);
     
     // LLR calculation using theoretical formula (aec-plan.md)
-    // LLR = 4 * Es/N0 * cos(phase_diff) for DPSK
+    // LLR = 2 * Es/N0 * cos(phase_diff) for DPSK
     // cos(0) = +1 (bit 0 likely), cos(π) = -1 (bit 1 likely)
-    const llr = 4 * esN0Linear * Math.cos(phaseDiff);
-    softValues.push(llr);
+    const llr = 2 * esN0Linear * Math.cos(phaseDiff);
+    
+    // Scale to [-1, 1] range and quantize to int8 range [-128, +127]
+    const scaled = Math.max(-1.0, Math.min(1.0, llr / fixedMaxValue));
+    softValues[i - 1] = Math.round(scaled * 127);
   }
   
-  // Quantize to Int8Array with fixed scale to preserve Es/N0 effect
-  // Use a fixed maximum value so that Es/N0 differences are preserved
-  const fixedMaxValue = 40.0; // Corresponds to ~10dB Es/N0 * 4
-  return quantizeSoftValues(softValues, fixedMaxValue);
+  return softValues;
 }
 
 /**
@@ -207,7 +191,7 @@ export function dpskDemodulate(
  * @returns Real signal samples
  */
 export function modulateCarrier(
-  phases: number[], 
+  phases: Float32Array, 
   samplesPerPhase: number, 
   sampleRate: number, 
   carrierFreq: number, 
@@ -244,10 +228,10 @@ export function demodulateCarrier(
   sampleRate: number, 
   carrierFreq: number, 
   startSample: number = 0
-): number[] {
+): Float32Array {
   const omega = 2 * Math.PI * carrierFreq / sampleRate;
   const numPhases = Math.floor(samples.length / samplesPerPhase);
-  const phases: number[] = [];
+  const phases = new Float32Array(numPhases);
   
   // Process each phase symbol separately
   for (let phaseIdx = 0; phaseIdx < numPhases; phaseIdx++) {
@@ -283,7 +267,7 @@ export function demodulateCarrier(
  * @param threshold Maximum allowed phase jump (default: π - 0.1)
  * @returns Object with continuity status and discontinuity locations
  */
-export function checkPhaseContinuity(phases: number[], threshold: number = Math.PI - 0.1): {
+export function checkPhaseContinuity(phases: Float32Array, threshold: number = Math.PI - 0.1): {
   isContinuous: boolean;
   discontinuities: number[];
   maxJump: number;
@@ -314,10 +298,11 @@ export function checkPhaseContinuity(phases: number[], threshold: number = Math.
  * @param wrappedPhases Wrapped phase array in [-π, π]
  * @returns Unwrapped continuous phase array
  */
-export function phaseUnwrap(wrappedPhases: number[]): number[] {
-  if (wrappedPhases.length === 0) return [];
+export function phaseUnwrap(wrappedPhases: Float32Array): Float32Array {
+  if (wrappedPhases.length === 0) return wrappedPhases;
   
-  const unwrapped: number[] = [wrappedPhases[0]];
+  const unwrapped = new Float32Array(wrappedPhases.length);
+  unwrapped[0] = wrappedPhases[0];
   
   for (let i = 1; i < wrappedPhases.length; i++) {
     // Unwrap by normalizing phase difference
@@ -335,7 +320,7 @@ export function phaseUnwrap(wrappedPhases: number[]): number[] {
  * @param receivedBits Received/recovered bits
  * @returns BER (0.0 to 1.0)
  */
-export function calculateBER(originalBits: number[], receivedBits: number[]): number {
+export function calculateBER(originalBits: Int8Array, receivedBits: Int8Array): number {
   if (originalBits.length !== receivedBits.length) {
     throw new Error('Bit arrays must have same length');
   }
@@ -487,9 +472,9 @@ export function findSyncOffset(
  * @param offset Synchronization offset to apply
  * @returns Aligned data array starting from offset
  */
-export function applySyncOffset<T>(receivedData: T[], offset: number): T[] {
+export function applySyncOffset(receivedData: Float32Array, offset: number): Float32Array {
   if (offset < 0 || offset >= receivedData.length) {
-    return [];
+    return new Float32Array(0);
   }
   
   return receivedData.slice(offset);
