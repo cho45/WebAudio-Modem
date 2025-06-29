@@ -6,6 +6,15 @@
 import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutput } from '../utils/msequence';
 
 /**
+ * Normalize phase to [-π, π] range
+ */
+function normalizePhase(phase: number): number {
+  while (phase > Math.PI) phase -= 2 * Math.PI;
+  while (phase < -Math.PI) phase += 2 * Math.PI;
+  return phase;
+}
+
+/**
  * DPSK modulation: bits to accumulated phases
  * @param bits Input bit array (0 or 1)
  * @param initialPhase Starting phase (default: 0)
@@ -36,7 +45,7 @@ export function dsssSpread(
   seed?: number
 ): Int8Array {
   // Auto-select seed if not provided
-  const actualSeed = seed ?? getDefaultSeed(sequenceLength);
+  const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   
   // Generate M-sequence
   const mSequence = generateMSequence(sequenceLength, actualSeed);
@@ -77,43 +86,25 @@ function generateMSequence(length: number, seed: number): Int8Array {
 }
 
 /**
- * Get M-sequence configuration for given length
+ * M-sequence configuration table
  */
-function getMSequenceConfig(length: number): { stepFn: (_reg: number) => number; bits: number } {
-  switch (length) {
-    case 15:
-      return { stepFn: mseq15Step, bits: 4 };
-    case 31:
-      return { stepFn: mseq31Step, bits: 5 };
-    case 63:
-      return { stepFn: mseq63Step, bits: 6 };
-    case 127:
-      return { stepFn: mseq127Step, bits: 7 };
-    case 255:
-      return { stepFn: mseq255Step, bits: 8 };
-    default:
-      throw new Error(`Unsupported M-sequence length: ${length}. Supported: 15, 31, 63, 127, 255`);
-  }
-}
+const MSEQ_CONFIG = {
+  15:  { stepFn: mseq15Step,  bits: 4, seed: 0b1000 },
+  31:  { stepFn: mseq31Step,  bits: 5, seed: 0b10101 },
+  63:  { stepFn: mseq63Step,  bits: 6, seed: 0b100001 },
+  127: { stepFn: mseq127Step, bits: 7, seed: 0b1000001 },
+  255: { stepFn: mseq255Step, bits: 8, seed: 0b10000001 }
+} as const;
 
 /**
- * Get default seed for M-sequence length
+ * Get M-sequence configuration for given length
  */
-function getDefaultSeed(length: number): number {
-  switch (length) {
-    case 15:
-      return 0b1000;    // 4-bit non-zero
-    case 31:
-      return 0b10101;   // 5-bit non-zero (aec-plan.md specified)
-    case 63:
-      return 0b100001;  // 6-bit non-zero
-    case 127:
-      return 0b1000001; // 7-bit non-zero
-    case 255:
-      return 0b10000001; // 8-bit non-zero
-    default:
-      throw new Error(`No default seed for M-sequence length: ${length}`);
+function getMSequenceConfig(length: number) {
+  const config = MSEQ_CONFIG[length as keyof typeof MSEQ_CONFIG];
+  if (!config) {
+    throw new Error(`Unsupported M-sequence length: ${length}. Supported: ${Object.keys(MSEQ_CONFIG).join(', ')}`);
   }
+  return config;
 }
 
 /**
@@ -129,7 +120,7 @@ export function dsssDespread(
   seed?: number
 ): { bits: number[], correlations: number[] } {
   // Auto-select seed if not provided
-  const actualSeed = seed ?? getDefaultSeed(sequenceLength);
+  const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   
   // Generate same M-sequence used for spreading
   const mSequence = generateMSequence(sequenceLength, actualSeed);
@@ -190,12 +181,8 @@ export function dpskDemodulate(
   const softValues: number[] = [];
   
   for (let i = 1; i < phases.length; i++) {
-    // Calculate phase difference
-    let phaseDiff = phases[i] - phases[i - 1];
-    
-    // Normalize to [-π, π]
-    while (phaseDiff > Math.PI) phaseDiff -= 2 * Math.PI;
-    while (phaseDiff < -Math.PI) phaseDiff += 2 * Math.PI;
+    // Calculate normalized phase difference
+    const phaseDiff = normalizePhase(phases[i] - phases[i - 1]);
     
     // LLR calculation using theoretical formula (aec-plan.md)
     // LLR = 4 * Es/N0 * cos(phase_diff) for DPSK
@@ -283,7 +270,7 @@ export function demodulateCarrier(
     const I_avg = I_sum / samplesPerPhase;
     const Q_avg = Q_sum / samplesPerPhase;
     
-    // Extract phase (corrected order for proper quadrature)
+    // Extract phase (corrected order for proper quadrature in this implementation)
     phases[phaseIdx] = Math.atan2(I_avg, Q_avg);
   }
   
@@ -305,11 +292,7 @@ export function checkPhaseContinuity(phases: number[], threshold: number = Math.
   let maxJump = 0;
   
   for (let i = 1; i < phases.length; i++) {
-    let phaseDiff = phases[i] - phases[i - 1];
-    
-    // Normalize to [-π, π] properly
-    while (phaseDiff > Math.PI) phaseDiff -= 2 * Math.PI;
-    while (phaseDiff < -Math.PI) phaseDiff += 2 * Math.PI;
+    const phaseDiff = normalizePhase(phases[i] - phases[i - 1]);
     
     const jumpMagnitude = Math.abs(phaseDiff);
     maxJump = Math.max(maxJump, jumpMagnitude);
@@ -337,11 +320,8 @@ export function phaseUnwrap(wrappedPhases: number[]): number[] {
   const unwrapped: number[] = [wrappedPhases[0]];
   
   for (let i = 1; i < wrappedPhases.length; i++) {
-    let diff = wrappedPhases[i] - wrappedPhases[i - 1];
-    
-    // Unwrap by adding/subtracting 2π multiples
-    while (diff > Math.PI) diff -= 2 * Math.PI;
-    while (diff < -Math.PI) diff += 2 * Math.PI;
+    // Unwrap by normalizing phase difference
+    const diff = normalizePhase(wrappedPhases[i] - wrappedPhases[i - 1]);
     
     unwrapped[i] = unwrapped[i - 1] + diff;
   }
@@ -500,36 +480,6 @@ export function findSyncOffset(
   };
 }
 
-/**
- * Calculate peak-to-average ratio for DSSS correlation detection
- * This is the key metric that exploits DSSS processing gain
- * @param correlations Array of correlation values
- * @param peakIndex Index of the peak correlation
- * @returns Peak-to-average ratio
- */
-function calculatePeakRatio(correlations: Float32Array, peakIndex: number): number {
-  if (correlations.length <= 1) return 0;
-  
-  const peakValue = Math.abs(correlations[peakIndex]);
-  
-  // Calculate average of all correlations excluding the peak
-  let sum = 0;
-  let count = 0;
-  
-  for (let i = 0; i < correlations.length; i++) {
-    if (i !== peakIndex) {
-      sum += Math.abs(correlations[i]);
-      count++;
-    }
-  }
-  
-  const average = count > 0 ? sum / count : 0;
-  
-  // Peak-to-average ratio (dimensionless)
-  // In pure noise: ratio ≈ 1.0
-  // With DSSS signal: ratio >> 1.0 due to processing gain
-  return average > 0 ? peakValue / average : 0;
-}
 
 /**
  * Apply synchronization offset to align received data (Step 4 requirement)
@@ -555,6 +505,6 @@ export function generateSyncReference(
   sequenceLength: number = 31, 
   seed?: number
 ): Int8Array {
-  const actualSeed = seed ?? getDefaultSeed(sequenceLength);
+  const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   return generateMSequence(sequenceLength, actualSeed);
 }
