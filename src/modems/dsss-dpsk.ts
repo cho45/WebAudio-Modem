@@ -9,9 +9,10 @@ import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutpu
  * Normalize phase to [-π, π] range
  */
 function normalizePhase(phase: number): number {
-  while (phase > Math.PI) phase -= 2 * Math.PI;
-  while (phase < -Math.PI) phase += 2 * Math.PI;
-  return phase;
+  // Math.PI = π, 2*Math.PI = 2π
+  // ((phase + π) % 2π + 2π) % 2π - π で [-π, π) に正規化
+  const twoPi = 2 * Math.PI;
+  return ((phase + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
 }
 
 /**
@@ -38,7 +39,7 @@ export function dpskModulate(chips: Int8Array, initialPhase: number = 0): Float3
  * @returns Spread chip array (+1/-1 values) as Int8Array
  */
 export function dsssSpread(
-  bits: Int8Array, 
+  bits: Uint8Array, 
   sequenceLength: number = 31, 
   seed?: number
 ): Int8Array {
@@ -116,7 +117,7 @@ export function dsssDespread(
   chips: Float32Array, 
   sequenceLength: number = 31, 
   seed?: number
-): { bits: Int8Array, correlations: Float32Array } {
+): { bits: Uint8Array, correlations: Float32Array } {
   // Auto-select seed if not provided
   const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
   
@@ -124,7 +125,7 @@ export function dsssDespread(
   const mSequence = generateMSequence(sequenceLength, actualSeed);
   
   const numBits = Math.floor(chips.length / sequenceLength);
-  const bits = new Int8Array(numBits);
+  const bits = new Uint8Array(numBits);
   const correlations = new Float32Array(numBits);
   
   for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
@@ -293,22 +294,25 @@ export function checkPhaseContinuity(phases: Float32Array, threshold: number = M
 
 /**
  * Phase unwrapping for continuous phase recovery (Step 3 requirement)
+ * >>> import numpy as np
+ * >>> np.unwrap([0, np.pi, -np.pi, 0, np.pi])
+ *  array([0.        , 3.14159265, 3.14159265, 6.28318531, 9.42477796])
  * @param wrappedPhases Wrapped phase array in [-π, π]
  * @returns Unwrapped continuous phase array
  */
 export function phaseUnwrap(wrappedPhases: Float32Array): Float32Array {
   if (wrappedPhases.length === 0) return wrappedPhases;
-  
   const unwrapped = new Float32Array(wrappedPhases.length);
   unwrapped[0] = wrappedPhases[0];
-  
+  const twoPi = 2 * Math.PI;
   for (let i = 1; i < wrappedPhases.length; i++) {
-    // Unwrap by normalizing phase difference
-    const diff = normalizePhase(wrappedPhases[i] - wrappedPhases[i - 1]);
-    
-    unwrapped[i] = unwrapped[i - 1] + diff;
+    let delta = wrappedPhases[i] - wrappedPhases[i - 1];
+    delta = ((delta + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
+    if (Math.abs(delta + Math.PI) < 1e-6) {
+      delta = Math.PI;
+    }
+    unwrapped[i] = unwrapped[i - 1] + delta;
   }
-  
   return unwrapped;
 }
 
@@ -318,7 +322,7 @@ export function phaseUnwrap(wrappedPhases: Float32Array): Float32Array {
  * @param receivedBits Received/recovered bits
  * @returns BER (0.0 to 1.0)
  */
-export function calculateBER(originalBits: Int8Array, receivedBits: Int8Array): number {
+export function calculateBER(originalBits: Uint8Array, receivedBits: Uint8Array): number {
   if (originalBits.length !== receivedBits.length) {
     throw new Error('Bit arrays must have same length');
   }
