@@ -19,7 +19,7 @@ describe('DPSK Modulation', () => {
   const TOLERANCE = 0.01; // Phase tolerance in radians
 
   test('should perform complete DPSK modulation', () => {
-    const bits = new Int8Array([0, 1, 0, 1]);
+    const bits = new Int8Array([1, -1, 1, -1]);
     const phases = dpskModulate(bits);
     
     expect(phases.length).toBe(4);
@@ -30,7 +30,7 @@ describe('DPSK Modulation', () => {
   });
 
   test('should work with custom initial phase', () => {
-    const bits = new Int8Array([1, 0]);
+    const bits = new Int8Array([-1, 1]);
     const initialPhase = Math.PI / 4;
     const phases = dpskModulate(bits, initialPhase);
     
@@ -39,7 +39,7 @@ describe('DPSK Modulation', () => {
   });
 
   test('should handle alternating pattern correctly', () => {
-    const bits = new Int8Array([1, 1, 1, 1]);
+    const bits = new Int8Array([-1, -1, -1, -1]);
     const phases = dpskModulate(bits);
     
     expect(phases[0]).toBeCloseTo(0, 5);

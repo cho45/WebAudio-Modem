@@ -15,20 +15,18 @@ function normalizePhase(phase: number): number {
 }
 
 /**
- * DPSK modulation: bits to accumulated phases
- * @param bits Input bit array (0 or 1)
+ * DPSK modulation: chips (+1/-1) to accumulated phases
+ * @param chips Input chip array (+1/-1)
  * @param initialPhase Starting phase (default: 0)
  * @returns Absolute phase array for carrier modulation
  */
-export function dpskModulate(bits: Int8Array, initialPhase: number = 0): Float32Array {
-  const phases = new Float32Array(bits.length);
+export function dpskModulate(chips: Int8Array, initialPhase: number = 0): Float32Array {
+  const phases = new Float32Array(chips.length);
   let currentPhase = initialPhase;
-  
-  for (let i = 0; i < bits.length; i++) {
+  for (let i = 0; i < chips.length; i++) {
     phases[i] = currentPhase;
-    currentPhase += bits[i] === 0 ? 0 : Math.PI; // 0→0, 1→π
+    currentPhase += chips[i] > 0 ? 0 : Math.PI; // +1→0, -1→π
   }
-  
   return phases;
 }
 
