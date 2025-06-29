@@ -300,7 +300,7 @@
 			const params = calculateParameters({
 				sampleRate: 4800, // サンプルレート（任意）
 				lowerBound: 10, // 下限周波数（Hz, 任意）
-				upperBound: 1500, // 上限周波数（Hz, 任意）
+				upperBound: 1200, // 上限周波数（Hz, 任意）
 				sequenceLength: 15 // DSSS拡散長
 			});
 			console.log('params:', params);
@@ -311,6 +311,7 @@
 			// 1. ランダムビット列
 			const bits = randomBits(bitLength);
 			lastBits = bits;
+			console.log('bits:', Array.from(bits).join(''));
 			// 2. DSSS拡散
 			const chips = modem.dsssSpread(bits, sequenceLength);
 			console.log('chips:', chips);
@@ -353,11 +354,37 @@
 			document.getElementById('audio-decode-info').textContent = '';
 		}
 
+
+		class TestNode extends AudioWorkletNode {
+			constructor(context, opts) {
+				super(context, 'test-processor', {
+					numberOfInputs: 1,
+					numberOfOutputs: 1,
+					channelCount: 1,
+					channelCountMode: "explicit",
+					channelInterpretation: "discrete",
+					outputChannelCount: [1],
+					processorOptions: {
+						...opts
+					}
+				});
+			}
+
+			static async addModule(context) {
+				return Promise.all([
+					context.audioWorklet.addModule("./dsss-dpsk-processor.js"),
+				]);
+			}
+		}
+
+
+
 		document.getElementById('rerun').onclick = run;
-		document.getElementById('play').onclick = () => {
+		document.getElementById('play').onclick = async () => {
 			if (!lastBits || !lastParams) return;
 			if (audioCtx) audioCtx.close();
 			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+			await TestNode.addModule(audioCtx);
 			const sampleRate = audioCtx.sampleRate;
 
 			// ここで必要なパラメータを計算・取
@@ -365,10 +392,32 @@
 			const params = calculateParameters({
 				sampleRate,
 				lowerBound: 100, // 下限周波数（Hz, 任意）
-				upperBound: 15000, // 上限周波数（Hz, 任意）
+				upperBound: 12000, // 上限周波数（Hz, 任意）
 				sequenceLength: 15 // DSSS拡散長
 			});
 			const { sequenceLength, samplesPerChip, carrierFreq, bandwidth } = params;
+
+			const testNode = new TestNode(audioCtx, {
+				sequenceLength,
+				samplesPerChip,
+				carrierFreq,
+				bandwidth,
+			});
+
+			const stream = await navigator.mediaDevices.getUserMedia({
+			audio: {
+				sampleRate: audioCtx.sampleRate,
+				channelCount: 1,
+				echoCancellation: false,
+				noiseSuppression: false,
+				autoGainControl: false
+			}
+			});
+			const source = audioCtx.createMediaStreamSource(stream);
+			source.connect(testNode);
+			testNode.connect(audioCtx.destination);
+
+			await new Promise(resolve => setTimeout(resolve, 200));
 
 			// 信号をWebAudioサンプルレートで再生成
 			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
