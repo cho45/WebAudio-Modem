@@ -1,4 +1,5 @@
 import { FilterFactory, IIRFilter } from '../dsp/filters';
+import { AGCProcessor } from '../dsp/agc';
 import { BaseModulator, type BaseModulatorConfig, type ModulationType } from '../core';
 import { RingBuffer } from '@/utils';
 
@@ -35,46 +36,6 @@ export const DEFAULT_FSK_CONFIG: FSKConfig = {
 /**
  * Automatic Gain Control processor
  */
-class AGCProcessor {
-  private targetLevel: number;
-  private currentGain: number;
-  private attackRate: number;
-  private releaseRate: number;
-
-  constructor(sampleRate: number, targetLevel = 0.5) {
-    this.targetLevel = targetLevel;
-    this.currentGain = 1.0;
-    // AGC time constants (attack faster than release)
-    this.attackRate = 1.0 - Math.exp(-1.0 / (sampleRate * 0.001)); // 1ms attack
-    this.releaseRate = 1.0 - Math.exp(-1.0 / (sampleRate * 0.01)); // 10ms release
-  }
-
-  process(samples: Float32Array): void {
-    for (let i = 0; i < samples.length; i++) {
-      // Apply current gain in-place
-      samples[i] *= this.currentGain;
-      
-      // Measure output level
-      const outputLevel = Math.abs(samples[i]);
-      
-      // Update gain based on output level
-      if (outputLevel > this.targetLevel) {
-        // Too loud, reduce gain quickly (attack)
-        const targetGain = this.targetLevel / outputLevel;
-        this.currentGain += (targetGain - this.currentGain) * this.attackRate;
-      } else {
-        // Too quiet, increase gain slowly (release)
-        if (outputLevel > 0) {
-          const targetGain = this.targetLevel / outputLevel;
-          this.currentGain += (targetGain - this.currentGain) * this.releaseRate;
-        }
-      }
-      
-      // Limit gain to reasonable bounds
-      this.currentGain = Math.max(0.1, Math.min(10.0, this.currentGain));
-    }
-  }
-}
 
 /**
  * FSK Core implementation with sample-by-sample processing
