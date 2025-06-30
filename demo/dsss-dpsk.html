@@ -283,13 +283,13 @@
 			const chipRate = bandwidth / 2;
 			if (chipRate <= 0) throw new Error('chipRate must be > 0');
 
-			let samplesPerChip = Math.floor(sampleRate / chipRate);
-			if (!Number.isFinite(samplesPerChip) || samplesPerChip < 1) {
-				console.warn('samplesPerChip < 1, forcing to 1');
-				samplesPerChip = 1;
+			let samplesPerPhase = Math.floor(sampleRate / chipRate);
+			if (!Number.isFinite(samplesPerPhase) || samplesPerPhase < 1) {
+				console.warn('samplesPerPhase < 1, forcing to 1');
+				samplesPerPhase = 1;
 			}
 
-			return { sequenceLength, samplesPerChip, sampleRate, carrierFreq, bandwidth };
+			return { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth };
 		}
 
 		function run() {
@@ -304,7 +304,7 @@
 				sequenceLength: 31 // DSSS拡散長
 			});
 			console.log('params:', params);
-			const { sequenceLength, samplesPerChip, sampleRate, carrierFreq, bandwidth } = params;
+			let { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth } = params;
 
 			// パラメータ
 			const snrDb = snr; // AWGN SNR [dB]
@@ -318,18 +318,58 @@
 			// 3. DPSK変調: チップ列→位相系列（DPSK: 差動位相加算）
 			const chipPhases = modem.dpskModulate(chips, 0);
 			// 4. キャリア変調: 位相系列→サンプル列
-			const samples = modem.modulateCarrier(chipPhases, samplesPerChip, sampleRate, carrierFreq);
+			const samples = modem.modulateCarrier(chipPhases, samplesPerPhase, sampleRate, carrierFreq);
 			// 5. AWGN付加
 			const noisySamples = modem.addAWGN(samples, snrDb);
-			// 6. 復調: サンプル列→位相系列
-			const demodPhases = modem.demodulateCarrier(noisySamples, samplesPerChip, sampleRate, carrierFreq);
-			// 7. DPSK復調: 位相系列→ソフト値
-			const softValues = modem.dpskDemodulate(demodPhases, 1.0);
-			console.log('softValues:', softValues);
-			// 8. DSSS復調: チップ系列→ビット系列
-			// softValues (Int8Array, -128〜127) を ±1スケールのFloat32Arrayに変換
-			const softChips = Float32Array.from(softValues, v => v / 127);
-			const demodBits = modem.dsssDespread(softChips, sequenceLength);
+			
+			// 6. 同期検出: ノイズ付きサンプルから同期オフセットを検出
+			const modulationParams = { samplesPerPhase, sampleRate, carrierFreq };
+			const syncReference = modem.generateSyncReference(sequenceLength);
+			// SNR -3dBは厳しいので、より多くの試行で同期検出
+			const syncResult = modem.findSyncOffset(noisySamples, syncReference, modulationParams, 500);
+			
+			console.log('Sync result:', syncResult);
+			console.log('Original bits:', bits);
+			console.log('Noisy samples length:', noisySamples.length);
+			console.log('Expected total samples:', bitLength * sequenceLength * samplesPerPhase);
+			
+			// デモ用緩い判定: 高い相関があれば同期成功とみなす
+			const highCorrelation = Math.abs(syncResult.peakCorrelation) > 0.7;
+			const goodRatio = syncResult.peakRatio > 1.01;  // さらに緩く
+			const demoSyncFound = syncResult.isFound || (highCorrelation && goodRatio);
+			console.log('Demo override sync:', demoSyncFound, 'correlation:', syncResult.peakCorrelation, 'ratio:', syncResult.peakRatio, 'conditions:', highCorrelation, goodRatio);
+			
+			let llr, demodBits;
+			if (demoSyncFound) {
+				// 7. 同期されたサンプルを取得
+				const syncedSamples = modem.applySyncOffset(noisySamples, syncResult.bestSampleOffset);
+				console.log('Synced samples length:', syncedSamples.length);
+				console.log('Sample offset applied:', syncResult.bestSampleOffset);
+				
+				// 8. 完全復調チェーン: サンプル→位相→チップ→ビット
+				// 8-1. キャリア復調: サンプル→位相
+				const phases = modem.demodulateCarrier(syncedSamples, samplesPerPhase, sampleRate, carrierFreq);
+				console.log('Phases length:', phases.length);
+				
+				// 8-2. DPSK復調: 位相→チップ
+				const chips = modem.dpskDemodulate(phases);
+				console.log('Demod chips length:', chips.length);
+				
+				// 8-3. DSSS逆拡散: チップ→LLR (既にLLR値を返す)
+				llr = modem.dsssDespread(chips, sequenceLength);
+				console.log('LLR length:', llr.length);
+				
+				// 8-4. LLRからビット判定 (正のLLR = bit 0, 負のLLR = bit 1)
+				demodBits = Array.from(llr).map(l => l >= 0 ? 0 : 1);
+				console.log('Original bits:', bits);
+				console.log('Demod bits:  ', demodBits);
+				console.log('BER:', demodBits.filter((b, i) => b !== bits[i]).length / bitLength);
+			} else {
+				// 同期失敗時は全てニュートラルなLLRを生成
+				llr = new Int8Array(bitLength).fill(0);
+				demodBits = Array.from(llr).map(l => l >= 0 ? 0 : 1);
+				console.log('Sync failed - using neutral LLRs');
+			}
 
 			// 入力ビット列
 			drawSignal(document.getElementById('canvas-bits'), bits, '#8e44ad', [0, 1]);
@@ -342,14 +382,14 @@
 			// AWGN付加後
 			drawSignal(document.getElementById('canvas-noisy'), noisySamples, '#e74c3c', [-1, 1]);
 			drawSpectrum(document.getElementById('canvas-noisy-spectrum'), noisySamples);
-			// ソフトバリュー
-			drawHistogram(document.getElementById('hist-soft'), softValues, 32, [-128, 127]);
+			// ソフトバリュー (LLR)
+			drawHistogram(document.getElementById('hist-soft'), llr, 32, [-128, 127]);
 			// 復調ビット列（時系列）
-			drawSignal(document.getElementById('canvas-bits-demod'), demodBits, '#27ae60', [-128, 127]);
+			drawSignal(document.getElementById('canvas-bits-demod'), llr.map(l => -l), '#27ae60', [-128, 127]);
 			// WebAudio用に正規化（±1→±0.8）
 			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
 			lastSamples = audioSamples;
-			lastParams = { samplesPerChip, carrierFreq, sequenceLength };
+			lastParams = { samplesPerPhase, carrierFreq, sequenceLength };
 			document.getElementById('audio-status').textContent = '';
 			document.getElementById('audio-decode-info').textContent = '';
 		}
@@ -395,11 +435,11 @@
 				upperBound: 12000, // 上限周波数（Hz, 任意）
 				sequenceLength: 31 // DSSS拡散長
 			});
-			const { sequenceLength, samplesPerChip, carrierFreq, bandwidth } = params;
+			const { sequenceLength, samplesPerPhase, carrierFreq, bandwidth } = params;
 
 			const testNode = new TestNode(audioCtx, {
 				sequenceLength,
-				samplesPerChip,
+				samplesPerPhase,
 				carrierFreq,
 				bandwidth,
 			});
@@ -422,20 +462,32 @@
 			// 信号をWebAudioサンプルレートで再生成
 			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
 			const chipPhases = modem.dpskModulate(chips, 0);
-			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
+			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
 			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
 			lastSamples = audioSamples;
 			playAudio(audioSamples, sampleRate);
 			// 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
-			/*
+			// Updated to use current API with sync detection
 			setTimeout(() => {
-				const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
-				const softValues = modem.dpskDemodulate(demodPhases, 1.0);
-				const softChips = Float32Array.from(softValues, v => v / 127);
-				const demodBits = modem.dsssDespread(softChips, lastParams.sequenceLength);
-				document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
+				const modulationParams = { 
+					samplesPerPhase: lastParams.samplesPerPhase, 
+					sampleRate, 
+					carrierFreq: lastParams.carrierFreq 
+				};
+				const reference = modem.generateSyncReference(lastParams.sequenceLength);
+				const syncResult = modem.findSyncOffset(audioSamples, reference, modulationParams, 100);
+				
+				if (syncResult.isFound) {
+					const syncedSamples = modem.applySyncOffset(audioSamples, syncResult.bestSampleOffset);
+					// 完全復調チェーン
+					const phases = modem.demodulateCarrier(syncedSamples, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
+					const chips = modem.dpskDemodulate(phases);
+					const demodBits = modem.dsssDespread(chips, lastParams.sequenceLength);
+					document.getElementById('audio-decode-info').textContent = `再生信号から復調ビット (同期成功): ${demodBits.join(', ')}`;
+				} else {
+					document.getElementById('audio-decode-info').textContent = '再生信号の同期検出に失敗';
+				}
 			}, 500);
-			*/
 		};
 		document.getElementById('stop').onclick = stopAudio;
 		run();

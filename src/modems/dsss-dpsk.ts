@@ -777,9 +777,23 @@ export function dsssDpskDemodulateWithLlr(
   // after synchronization and the overall SNR.
   const dpskLlrs = dpskDemodulate(phases, esN0Db);
 
-  // For now, we directly use the DPSK LLRs as the final output.
-  // In a more complex system, dsssDespread's LLRs could be combined here,
-  // but for simplicity and given the plan's focus on DPSK LLRs, we proceed this way.
+  // DPSK demodulation produces (N-1) LLRs for N phases.
+  // To match LDPC codeword length (n), we pad the LLRs if necessary.
+  // Assuming n is the target length (e.g., 128).
+  const n = receivedSamples.length / modulationParams.samplesPerPhase; // Number of original symbols
+  if (dpskLlrs.length < n) {
+    const paddedLlrs = new Int8Array(n);
+    paddedLlrs.set(dpskLlrs);
+    // Pad with zeros or a neutral LLR value for the last bit
+    // For all-zero codeword test, padding with 127 (strong 0) is appropriate.
+    // For general case, 0 (neutral) might be better.
+    // For now, let's pad with 0 (neutral) to avoid bias.
+    for (let i = dpskLlrs.length; i < n; i++) {
+      paddedLlrs[i] = 0; // Neutral LLR
+    }
+    return paddedLlrs;
+  }
+
   return dpskLlrs;
 }
 
