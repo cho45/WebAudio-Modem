@@ -61,13 +61,25 @@ class TestProcessor extends AudioWorkletProcessor {
 				// Extract synchronized signal for demodulation
 				const syncedSamples = this.buffer.slice(result.bestSampleOffset);
 				if (syncedSamples.length >= reference.length * modulationParams.samplesPerPhase) {
-					// Use integrated demodulation function
-					const llr = modem.dsssDpskDemodulateWithLlr(
-						syncedSamples, 
-						reference, 
-						modulationParams,
-						10.0 // Es/N0 in dB
+					// Demodulate carrier to extract phases
+					const demodPhases = modem.demodulateCarrier(
+						syncedSamples,
+						modulationParams.samplesPerPhase,
+						modulationParams.sampleRate,
+						modulationParams.carrierFreq
 					);
+					
+					// DPSK demodulate phases to get LLRs for chips
+					const chipLlrs = modem.dpskDemodulate(demodPhases, 10.0); // Es/N0 in dB
+					
+					// Convert chip LLRs to hard-decided chips (+1/-1) for DSSS despreading
+					const hardDecidedChips = new Float32Array(chipLlrs.length);
+					for (let i = 0; i < chipLlrs.length; i++) {
+						hardDecidedChips[i] = chipLlrs[i] >= 0 ? 1 : -1;
+					}
+					
+					// DSSS despread hard-decided chips to get LLRs for original bits
+					const llr = modem.dsssDespread(hardDecidedChips, reference.length, this.params.seed);
 					
 					// Convert LLR to bits (positive LLR = bit 0, negative LLR = bit 1)
 					const demodBits = Array.from(llr).map(l => l >= 0 ? 0 : 1);

@@ -743,59 +743,7 @@ export function applySyncOffset(receivedData: Float32Array, offset: number): Flo
   return receivedData.slice(offset);
 }
 
-/**
- * DSSS + DPSK Demodulation: Combines DSSS despreading and DPSK demodulation to produce LLRs.
- * This function represents the final stage of the DSSS+DPSK demodulation pipeline.
- * 
- * @param receivedSamples Received signal samples as Float32Array
- * @param syncReference M-sequence reference used for synchronization (Int8Array)
- * @param modulationParams Modulation parameters including samplesPerPhase, sampleRate, carrierFreq
- * @param esN0Db Es/N0 ratio in dB for DPSK demodulation
- * @returns LLRs as Int8Array (-128 to +127)
- */
-export function dsssDpskDemodulateWithLlr(
-  receivedSamples: Float32Array,
-  _syncReference: Int8Array,
-  modulationParams: {
-    samplesPerPhase: number;
-    sampleRate: number;
-    carrierFreq: number;
-  },
-  esN0Db: number = 10.0
-): Int8Array {
-  // Step 1: Demodulate carrier to extract phases
-  const phases = demodulateCarrier(
-    receivedSamples,
-    modulationParams.samplesPerPhase,
-    modulationParams.sampleRate,
-    modulationParams.carrierFreq
-  );
 
-  // Step 2: DPSK demodulate phases to get LLRs
-  // Note: This LLR is based on phase differences, representing the DPSK demodulation.
-  // The DSSS despreading (correlation) is implicitly handled by the quality of receivedSamples
-  // after synchronization and the overall SNR.
-  const dpskLlrs = dpskDemodulate(phases, esN0Db);
-
-  // DPSK demodulation produces (N-1) LLRs for N phases.
-  // To match LDPC codeword length (n), we pad the LLRs if necessary.
-  // Assuming n is the target length (e.g., 128).
-  const n = receivedSamples.length / modulationParams.samplesPerPhase; // Number of original symbols
-  if (dpskLlrs.length < n) {
-    const paddedLlrs = new Int8Array(n);
-    paddedLlrs.set(dpskLlrs);
-    // Pad with zeros or a neutral LLR value for the last bit
-    // For all-zero codeword test, padding with 127 (strong 0) is appropriate.
-    // For general case, 0 (neutral) might be better.
-    // For now, let's pad with 0 (neutral) to avoid bias.
-    for (let i = dpskLlrs.length; i < n; i++) {
-      paddedLlrs[i] = 0; // Neutral LLR
-    }
-    return paddedLlrs;
-  }
-
-  return dpskLlrs;
-}
 
 /**
  * Generate M-sequence reference for synchronization (helper function)
