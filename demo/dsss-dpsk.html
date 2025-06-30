@@ -225,7 +225,7 @@
 		function playAudio(samples, sampleRate) {
 			if (audioCtx) audioCtx.close();
 			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-			const buf = audioCtx.createBuffer(1, samples.length, sampleRate);
+			const buf = audioCtx.createBuffer(1, samples.length + sampleRate, sampleRate);
 			buf.getChannelData(0).set(samples);
 			audioSource = audioCtx.createBufferSource();
 			audioSource.buffer = buf;
@@ -301,7 +301,7 @@
 				sampleRate: 4800, // サンプルレート（任意）
 				lowerBound: 10, // 下限周波数（Hz, 任意）
 				upperBound: 1200, // 上限周波数（Hz, 任意）
-				sequenceLength: 15 // DSSS拡散長
+				sequenceLength: 31 // DSSS拡散長
 			});
 			console.log('params:', params);
 			const { sequenceLength, samplesPerChip, sampleRate, carrierFreq, bandwidth } = params;
@@ -393,7 +393,7 @@
 				sampleRate,
 				lowerBound: 100, // 下限周波数（Hz, 任意）
 				upperBound: 12000, // 上限周波数（Hz, 任意）
-				sequenceLength: 15 // DSSS拡散長
+				sequenceLength: 31 // DSSS拡散長
 			});
 			const { sequenceLength, samplesPerChip, carrierFreq, bandwidth } = params;
 
@@ -427,6 +427,7 @@
 			lastSamples = audioSamples;
 			playAudio(audioSamples, sampleRate);
 			// 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
+			/*
 			setTimeout(() => {
 				const demodPhases = modem.demodulateCarrier(audioSamples, lastParams.samplesPerChip, sampleRate, lastParams.carrierFreq);
 				const softValues = modem.dpskDemodulate(demodPhases, 1.0);
@@ -434,6 +435,7 @@
 				const demodBits = modem.dsssDespread(softChips, lastParams.sequenceLength);
 				document.getElementById('audio-decode-info').textContent = '再生信号から復調ビット: ' + Array.from(demodBits).join(', ');
 			}, 500);
+			*/
 		};
 		document.getElementById('stop').onclick = stopAudio;
 		run();
