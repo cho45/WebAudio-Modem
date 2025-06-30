@@ -460,7 +460,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 200;
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       
@@ -483,7 +483,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 200;
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       
@@ -510,7 +510,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 240;
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       
@@ -644,7 +644,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         const spreadChips = dsssSpread(originalBits);
         const phases = dpskModulate(spreadChips);
         
-        const samplesPerPhase = 240;
+        const samplesPerPhase = 8;
         const sampleRate = 48000;
         const carrierFreq = 10000;
         const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
@@ -701,7 +701,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           const spreadChips = dsssSpread(originalBits);
           const phases = dpskModulate(spreadChips);
           
-          const samplesPerPhase = 240;
+          const samplesPerPhase = 8;
           const sampleRate = 48000;
           const carrierFreq = 10000;
           const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
@@ -748,7 +748,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 240;
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
@@ -821,8 +821,8 @@ describe('Step 4: Synchronization Functions', () => {
       
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
-      
-      const samplesPerPhase = 240;
+
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
@@ -844,8 +844,8 @@ describe('Step 4: Synchronization Functions', () => {
       
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
-      
-      const samplesPerPhase = 240;
+
+      const samplesPerPhase = 8;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
@@ -871,7 +871,7 @@ describe('Step 4: Synchronization Functions', () => {
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 240;
+      const samplesPerPhase = 100;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
