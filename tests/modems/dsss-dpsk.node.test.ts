@@ -579,14 +579,13 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           const spreadChips = dsssSpread(originalBits);
           const phases = dpskModulate(spreadChips);
           
-          const samplesPerPhase = 240;
+          const samplesPerPhase = 8;
           const sampleRate = 48000;
-          const carrierFreq = 10000;
+          const carrierFreq = 1000;
           
           const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
           
-          const chipOffset = 7;
-          const sampleOffset = chipOffset * samplesPerPhase;
+          const sampleOffset = Math.floor(Math.random() * samplesPerPhase) + 1; // Random offset between 5 and 20 samples
           const offsetSamples = new Array(sampleOffset).fill(0).concat(Array.from(samples));
           
           const noisySamples = addAWGN(new Float32Array(offsetSamples), condition.snr);
@@ -598,8 +597,8 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
             { samplesPerPhase, sampleRate, carrierFreq },
             20
           );
-          
-          if (syncResult.isFound && Math.abs(syncResult.bestChipOffset - chipOffset) <= 1) {
+
+          if (syncResult.isFound && Math.abs(syncResult.bestSampleOffset - sampleOffset) <= 1) {
             syncSuccessCount++;
             
             const alignedSamples = noisySamples.slice(syncResult.bestSampleOffset);

@@ -1,4 +1,5 @@
 import * as modem from '../src/modems/dsss-dpsk.js';
+import {AGCProcessor} from '../src/dsp/agc.js';
 
 // AudioWorkletGlobalScope
 class TestProcessor extends AudioWorkletProcessor {
@@ -22,6 +23,8 @@ class TestProcessor extends AudioWorkletProcessor {
 			sampleRate: sampleRate,
 			carrierFreq: this.params.carrierFreq || 10000
 		};
+
+		this.agc = new AGCProcessor(sampleRate);
 	}
 
 	process(inputs, _outputs, _parameters) {
@@ -29,6 +32,8 @@ class TestProcessor extends AudioWorkletProcessor {
 		if (!input || !input[0]) return true;
 
 		const inputSamples = input[0];
+		this.agc.process(inputSamples);
+
 		const { reference, modulationParams } = this;
 
 		// Append new samples to circular buffer

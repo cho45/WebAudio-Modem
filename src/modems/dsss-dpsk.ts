@@ -642,8 +642,10 @@ function detectSynchronizationPeak(
     const isLowSnrCase = correlations.length > 2000 && peakValue < 0.4;
     const isInvertedCase = peakCorrelation < -0.15; // Lower threshold to catch more inverted cases
     const isChallengingCase = !isFound && peakValue > 0.2; // Lowered to catch ultra-low SNR cases
+
+    const DEBUG = false; // Set to true to enable detailed debug output
     
-    if (isLowSnrCase || isInvertedCase || isChallengingCase) {
+    if (DEBUG && (isLowSnrCase || isInvertedCase || isChallengingCase)) {
       console.log(`=== SYNC DEBUG ===`);
       console.log(`Type: ${isLowSnrCase ? 'LOW_SNR' : isInvertedCase ? 'INVERTED' : 'CHALLENGING'}`);
       console.log(`Correlations: ${correlations.length} points, max=${peakValue.toFixed(3)}, 2nd=${secondPeakValue.toFixed(3)}`);

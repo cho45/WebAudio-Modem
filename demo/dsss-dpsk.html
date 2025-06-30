@@ -310,6 +310,8 @@
 			const snrDb = snr; // AWGN SNR [dB]
 			// 1. ランダムビット列
 			const bits = randomBits(bitLength);
+			bits[0] = 0;
+			bits[1] = 0;
 			lastBits = bits;
 			console.log('bits:', Array.from(bits).join(''));
 			// 2. DSSS拡散
