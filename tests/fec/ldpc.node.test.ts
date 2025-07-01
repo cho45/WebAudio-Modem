@@ -1999,4 +1999,189 @@ describe('LDPC Decoder (Min-Sum)', () => {
         console.log('✅ Packed bit形式のエンコードが正常に動作');
         console.log(`📦 総メモリ削減: Input ${messageReduction.toFixed(1)}%, Output ${codewordReduction.toFixed(1)}%`);
     });
+
+    it('should evaluate LDPC decode performance under increasing noise levels', () => {
+        console.log('\n=== LDPC NOISE THRESHOLD PERFORMANCE ANALYSIS ===');
+        
+        const ldpc = new LDPC(hMatrixData);
+        const k = ldpc.getMessageLength();
+        const n = ldpc.getCodewordLength();
+        
+        console.log(`\nLDPC符号パラメータ:`);
+        console.log(`- 符号長 (n): ${n}`);
+        console.log(`- 情報長 (k): ${k}`);
+        console.log(`- 符号化率 (k/n): ${(k/n).toFixed(3)}`);
+        console.log(`- ランク: ${(ldpc as any).systematicMatrix.rank}`);
+
+        // テスト用のメッセージパターン
+        const testPatterns = [
+            { name: "All Zero", message: new Array(k).fill(0) },
+            { name: "All One", message: new Array(k).fill(1) },
+            { name: "Alternating", message: Array.from({length: k}, (_, i) => i % 2) },
+            { name: "Random Pattern", message: Array.from({length: k}, () => Math.random() < 0.5 ? 1 : 0) }
+        ];
+
+        // SNR[dB]→ノイズ標準偏差σへの変換
+        function snrDbToNoiseStd(snrDb: number) {
+            return 1 / Math.pow(10, snrDb / 20);
+        }
+        // SNR[dB]リスト
+        const snrDbList = [6.0, 3.0, 2.0, 1.5, 1.0, 0, -5, -10];
+        const noiseStdDevs = snrDbList.map(snrDb => snrDbToNoiseStd(snrDb));
+        
+        console.log(`\n=== NOISE THRESHOLD ANALYSIS ===`);
+        console.log('Legend: SNR≈20*log10(1/σ), σ=noise_std_dev');
+        console.log('Format: [Pattern] Noise_σ=X.X → BER=Y.YY%, FER=Z.Z%, Conv=W/T');
+        
+        const results: {
+            pattern: string;
+            noiseStd: number;
+            ber: number;
+            fer: number;
+            convergenceRate: number;
+            avgIterations: number;
+        }[] = [];
+
+        for (const pattern of testPatterns) {
+            console.log(`\n[${pattern.name}]:`);
+            
+            for (const noiseStd of noiseStdDevs) {
+                const trialsPerLevel = 100; // 各ノイズレベルでの試行回数
+                let totalBitErrors = 0;
+                let frameErrors = 0;
+                let converged = 0;
+                let totalIterations = 0;
+
+                for (let trial = 0; trial < trialsPerLevel; trial++) {
+                    // 1. エンコード
+                    const messagePacked = packBits(pattern.message);
+                    const encodedCodeword = ldpc.encode(messagePacked);
+                    
+                    // 2. 送信符号語をunpackして確認用に保存
+                    const transmittedBits = unpackBits(encodedCodeword, n);
+                    
+                    // 3. ノイズ付きLLR生成
+                    // LLR = log(P(y|x=0)/P(y|x=1))
+                    // AWGN: y = (2*x-1) + noise, x∈{0,1}
+                    // LLR ≈ 2*y/σ², ここではシンプルに近似
+                    const noisyLlr = new Int8Array(n);
+                    for (let i = 0; i < n; i++) {
+                        const txSymbol = transmittedBits[i] === 0 ? 1 : -1; // BPSK: 0→+1, 1→-1
+                        const noise = (Math.random() - 0.5) * 2 * noiseStd * Math.sqrt(3); // 均等分布近似
+                        const rxSymbol = txSymbol + noise;
+                        
+                        // LLR計算（近似）: 受信シンボルが正→0ビット可能性高, 負→1ビット可能性高
+                        const llr = rxSymbol / (noiseStd * noiseStd) * 10; // スケーリング調整
+                        noisyLlr[i] = Math.max(-127, Math.min(127, Math.round(llr)));
+                    }
+                    
+                    // 4. デコード
+                    const decodeResult = ldpc.decode(noisyLlr, 20); // 最大100反復
+
+                    // 5. エラー評価
+                    const decodedBits = unpackBits(decodeResult.decodedCodeword, n);
+                    
+                    // ビットエラー数計算
+                    let bitErrors = 0;
+                    for (let i = 0; i < n; i++) {
+                        if (decodedBits[i] !== transmittedBits[i]) {
+                            bitErrors++;
+                        }
+                    }
+                    
+                    totalBitErrors += bitErrors;
+                    if (bitErrors > 0) frameErrors++;
+                    if (decodeResult.converged) converged++;
+                    totalIterations += decodeResult.iterations;
+                }
+
+                // 統計計算
+                const ber = totalBitErrors / (trialsPerLevel * n) * 100;
+                const fer = frameErrors / trialsPerLevel * 100;
+                const convergenceRate = converged / trialsPerLevel;
+                const avgIterations = totalIterations / trialsPerLevel;
+                
+                const approxSnrDb = -20 * Math.log10(noiseStd);
+                
+                console.log(`  σ=${noiseStd.toFixed(2)} (≈${approxSnrDb.toFixed(1)}dB) → BER=${ber.toFixed(2)}%, FER=${fer.toFixed(1)}%, Conv=${converged}/${trialsPerLevel}, Iter=${avgIterations.toFixed(1)}`);
+                
+                results.push({
+                    pattern: pattern.name,
+                    noiseStd: noiseStd,
+                    ber: ber,
+                    fer: fer,
+                    convergenceRate: convergenceRate,
+                    avgIterations: avgIterations
+                });
+                
+                // 復号不可能レベルに達したら次のパターンへ
+                if (fer >= 95) {
+                    console.log(`    → 復号限界到達 (FER≥95%)`);
+                    break;
+                }
+            }
+        }
+
+        // 性能限界の分析
+        console.log(`\n=== PERFORMANCE THRESHOLD ANALYSIS ===`);
+        
+        const thresholds = {
+            ber_1percent: [],
+            ber_10percent: [],
+            fer_50percent: [],
+            convergence_threshold: []
+        } as { [key: string]: any[] };
+
+        for (const pattern of testPatterns) {
+            const patternResults = results.filter(r => r.pattern === pattern.name);
+            
+            // BER 1%閾値
+            const ber1 = patternResults.find(r => r.ber <= 1);
+            if (ber1) thresholds.ber_1percent.push({pattern: pattern.name, noiseStd: ber1.noiseStd});
+            
+            // BER 10%閾値  
+            const ber10 = patternResults.find(r => r.ber <= 10);
+            if (ber10) thresholds.ber_10percent.push({pattern: pattern.name, noiseStd: ber10.noiseStd});
+            
+            // FER 50%閾値
+            const fer50 = patternResults.find(r => r.fer <= 50);
+            if (fer50) thresholds.fer_50percent.push({pattern: pattern.name, noiseStd: fer50.noiseStd});
+            
+            // 収束閾値（90%以上）
+            const conv90 = patternResults.find(r => r.convergenceRate >= 0.9);
+            if (conv90) thresholds.convergence_threshold.push({pattern: pattern.name, noiseStd: conv90.noiseStd});
+        }
+
+        // 結果サマリー
+        if (thresholds.ber_1percent.length > 0) {
+            const maxBer1 = Math.max(...thresholds.ber_1percent.map(t => t.noiseStd));
+            console.log(`BER ≤ 1%の最大ノイズ耐性: σ=${maxBer1.toFixed(1)} (≈${(-20*Math.log10(maxBer1)).toFixed(1)}dB)`);
+        }
+        
+        if (thresholds.fer_50percent.length > 0) {
+            const maxFer50 = Math.max(...thresholds.fer_50percent.map(t => t.noiseStd));
+            console.log(`FER ≤ 50%の最大ノイズ耐性: σ=${maxFer50.toFixed(1)} (≈${(-20*Math.log10(maxFer50)).toFixed(1)}dB)`);
+        }
+
+        // 基本的な動作確認アサーション
+        expect(results.length).toBeGreaterThan(0);
+        
+        // 低ノイズでは良好な性能を期待
+        const lowNoiseResults = results.filter(r => r.noiseStd <= 1.0);
+        if (lowNoiseResults.length > 0) {
+            const avgLowNoiseBer = lowNoiseResults.reduce((sum, r) => sum + r.ber, 0) / lowNoiseResults.length;
+            console.log(`\n✅ 低ノイズ性能確認: 平均BER=${avgLowNoiseBer.toFixed(3)}% (σ≤1.0)`);
+            expect(avgLowNoiseBer).toBeLessThan(50); // 低ノイズでは50%未満のBER
+        }
+        
+        // 高ノイズでは期待通り劣化することを確認
+        const highNoiseResults = results.filter(r => r.noiseStd >= 5.0);
+        if (highNoiseResults.length > 0) {
+            const avgHighNoiseFer = highNoiseResults.reduce((sum, r) => sum + r.fer, 0) / highNoiseResults.length;
+            console.log(`⚠️  高ノイズ劣化確認: 平均FER=${avgHighNoiseFer.toFixed(1)}% (σ≥5.0)`);
+            expect(avgHighNoiseFer).toBeGreaterThan(20); // 高ノイズではFERが劣化
+        }
+        
+        console.log('\n🎯 LDPC復号性能限界テスト完了');
+    });
 });
