@@ -298,18 +298,18 @@
 			console.log('bitLength:', bitLength, 'snr:', snr);
 
 			const params = calculateParameters({
-				sampleRate: 4800, // サンプルレート（任意）
-				lowerBound: 10, // 下限周波数（Hz, 任意）
-				upperBound: 1200, // 上限周波数（Hz, 任意）
-				sequenceLength: 31 // DSSS拡散長
+				sampleRate: 48000, // サンプルレート（任意）
+				lowerBound: 100, // 下限周波数（Hz, 任意）
+				upperBound: 12000, // 上限周波数（Hz, 任意）
+				sequenceLength: 31, // DSSS拡散長
 			});
 			console.log('params:', params);
 			let { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth } = params;
-
+			
 			// パラメータ
 			const snrDb = snr; // AWGN SNR [dB]
 			// 1. ランダムビット列
-			const bits = randomBits(bitLength);
+			const bits = randomBits(bitLength); // Use bitLength from query param
 			bits[0] = 0;
 			bits[1] = 0;
 			lastBits = bits;
@@ -322,24 +322,22 @@
 			// 4. キャリア変調: 位相系列→サンプル列
 			const samples = modem.modulateCarrier(chipPhases, samplesPerPhase, sampleRate, carrierFreq);
 			// 5. AWGN付加
+			console.log('Adding AWGN with SNR:', snrDb, 'dB');
 			const noisySamples = modem.addAWGN(samples, snrDb);
 			
 			// 6. 同期検出: ノイズ付きサンプルから同期オフセットを検出
 			const modulationParams = { samplesPerPhase, sampleRate, carrierFreq };
 			const syncReference = modem.generateSyncReference(sequenceLength);
 			// SNR -3dBは厳しいので、より多くの試行で同期検出
-			const syncResult = modem.findSyncOffset(noisySamples, syncReference, modulationParams, 500);
+			// Use searchRangeChips from test for debugging
+			const syncResult = modem.findSyncOffset(noisySamples, syncReference, modulationParams, 20);
 			
 			console.log('Sync result:', syncResult);
 			console.log('Original bits:', bits);
 			console.log('Noisy samples length:', noisySamples.length);
 			console.log('Expected total samples:', bitLength * sequenceLength * samplesPerPhase);
 			
-			// デモ用緩い判定: 高い相関があれば同期成功とみなす
-			const highCorrelation = Math.abs(syncResult.peakCorrelation) > 0.7;
-			const goodRatio = syncResult.peakRatio > 1.01;  // さらに緩く
-			const demoSyncFound = syncResult.isFound || (highCorrelation && goodRatio);
-			console.log('Demo override sync:', demoSyncFound, 'correlation:', syncResult.peakCorrelation, 'ratio:', syncResult.peakRatio, 'conditions:', highCorrelation, goodRatio);
+			const demoSyncFound = syncResult.isFound;
 			
 			let llr, demodBits;
 			if (demoSyncFound) {
@@ -359,7 +357,7 @@
 				
 				// 8-3. DSSS逆拡散: チップ→LLR (既にLLR値を返す)
 				llr = modem.dsssDespread(chips, sequenceLength);
-				console.log('LLR length:', llr.length);
+				console.log('LLR:', llr);
 				
 				// 8-4. LLRからビット判定 (正のLLR = bit 0, 負のLLR = bit 1)
 				demodBits = Array.from(llr).map(l => l >= 0 ? 0 : 1);
@@ -422,76 +420,55 @@
 
 
 		document.getElementById('rerun').onclick = run;
-		document.getElementById('play').onclick = async () => {
-			if (!lastBits || !lastParams) return;
-			if (audioCtx) audioCtx.close();
-			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-			await TestNode.addModule(audioCtx);
-			const sampleRate = audioCtx.sampleRate;
-
-			// ここで必要なパラメータを計算・取
-			const { bitLength, snr } = expandQueryParams();
-			const params = calculateParameters({
-				sampleRate,
-				lowerBound: 100, // 下限周波数（Hz, 任意）
-				upperBound: 12000, // 上限周波数（Hz, 任意）
-				sequenceLength: 31 // DSSS拡散長
-			});
-			const { sequenceLength, samplesPerPhase, carrierFreq, bandwidth } = params;
-
-			const testNode = new TestNode(audioCtx, {
-				sequenceLength,
-				samplesPerPhase,
-				carrierFreq,
-				bandwidth,
-			});
-
-			const stream = await navigator.mediaDevices.getUserMedia({
-			audio: {
-				sampleRate: audioCtx.sampleRate,
-				channelCount: 1,
-				echoCancellation: false,
-				noiseSuppression: false,
-				autoGainControl: false
-			}
-			});
-			const source = audioCtx.createMediaStreamSource(stream);
-			source.connect(testNode);
-			testNode.connect(audioCtx.destination);
-
-			await new Promise(resolve => setTimeout(resolve, 200));
-
-			// 信号をWebAudioサンプルレートで再生成
-			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
-			const chipPhases = modem.dpskModulate(chips, 0);
-			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
-			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
-			lastSamples = audioSamples;
-			playAudio(audioSamples, sampleRate);
-			// 再生中にデコード（WebAudioから直接は難しいので、同じ信号を再デコード）
-			// Updated to use current API with sync detection
-			setTimeout(() => {
-				const modulationParams = { 
-					samplesPerPhase: lastParams.samplesPerPhase, 
-					sampleRate, 
-					carrierFreq: lastParams.carrierFreq 
-				};
-				const reference = modem.generateSyncReference(lastParams.sequenceLength);
-				const syncResult = modem.findSyncOffset(audioSamples, reference, modulationParams, 100);
-				
-				if (syncResult.isFound) {
-					const syncedSamples = modem.applySyncOffset(audioSamples, syncResult.bestSampleOffset);
-					// 完全復調チェーン
-					const phases = modem.demodulateCarrier(syncedSamples, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
-					const chips = modem.dpskDemodulate(phases);
-					const demodBits = modem.dsssDespread(chips, lastParams.sequenceLength);
-					document.getElementById('audio-decode-info').textContent = `再生信号から復調ビット (同期成功): ${demodBits.join(', ')}`;
-				} else {
-					document.getElementById('audio-decode-info').textContent = '再生信号の同期検出に失敗';
-				}
-			}, 500);
-		};
-		document.getElementById('stop').onclick = stopAudio;
+ 		document.getElementById('play').onclick = async () => {
+ 			if (!lastBits || !lastParams) return;
+ 			if (audioCtx) audioCtx.close();
+ 			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+ 			await TestNode.addModule(audioCtx);
+ 			const sampleRate = audioCtx.sampleRate;
+ 
+ 			// ここで必要なパラメータを計算・取
+ 			const { bitLength, snr } = expandQueryParams();
+ 			const params = calculateParameters({
+ 				sampleRate,
+ 				lowerBound: 100, // 下限周波数（Hz, 任意）
+ 				upperBound: 12000, // 上限周波数（Hz, 任意）
+ 				sequenceLength: 31 // DSSS拡散長
+ 			});
+ 			const { sequenceLength, samplesPerPhase, carrierFreq, bandwidth } = params;
+ 
+ 			const testNode = new TestNode(audioCtx, {
+ 				sequenceLength,
+ 				samplesPerPhase,
+ 				carrierFreq,
+ 				bandwidth,
+ 				snr: snr // Add SNR to processorOptions
+ 			});
+ 
+ 			const stream = await navigator.mediaDevices.getUserMedia({
+ 			audio: {
+ 				sampleRate: audioCtx.sampleRate,
+ 				channelCount: 1,
+ 				echoCancellation: false,
+ 				noiseSuppression: false,
+ 				autoGainControl: false
+ 			}
+ 			});
+ 			const source = audioCtx.createMediaStreamSource(stream);
+ 			source.connect(testNode);
+ 			testNode.connect(audioCtx.destination);
+ 
+ 			await new Promise(resolve => setTimeout(resolve, 200));
+ 
+ 			// 信号をWebAudioサンプルレートで再生成
+ 			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
+ 			const chipPhases = modem.dpskModulate(chips, 0);
+ 			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
+ 			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+ 			lastSamples = audioSamples;
+ 			playAudio(audioSamples, sampleRate);
+ 		};
+ 		document.getElementById('stop').onclick = stopAudio;
 		run();
 	</script>
 </body>
