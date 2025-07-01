@@ -18,6 +18,29 @@ import {
 // Helper to convert LLR to bits based on the corrected logic (positive LLR = bit 0)
 const llrToBits = (llr: Int8Array): number[] => Array.from(llr).map(i => (i >= 0 ? 0 : 1));
 
+// Helper to generate an ASCII histogram
+function generateHistogram(data: Int8Array, bins: number = 16): string {
+  const min = -128;
+  const max = 128;
+  const binSize = (max - min) / bins;
+  const histogram = new Array(bins).fill(0);
+
+  for (const value of data) {
+    const binIndex = Math.floor((value - min) / binSize);
+    histogram[Math.max(0, Math.min(bins - 1, binIndex))]++;
+  }
+
+  const maxCount = Math.max(...histogram);
+  let output = '\n';
+  for (let i = 0; i < bins; i++) {
+    const binStart = min + i * binSize;
+    const binEnd = binStart + binSize;
+    const bar = '#'.repeat(Math.round((histogram[i] / maxCount) * 20));
+    output += `[${binStart.toFixed(0).padStart(4)}, ${binEnd.toFixed(0).padStart(4)}): ${bar} (${histogram[i]})\n`;
+  }
+  return output;
+}
+
 describe('DPSK Modulation', () => {
   test('should perform complete DPSK modulation', () => {
     const chips = new Int8Array([1, -1, 1, -1]);
@@ -118,7 +141,7 @@ describe('DSSS Spreading', () => {
     
     expect(chips1.length).toBe(31);
     expect(chips2.length).toBe(31);
-    expect(chips1).not.toEqual(chips2); // Different seeds should produce different sequences
+    expect(chips1).not.toEqual(chips2);
   });
 
   test('should handle empty array', () => {
@@ -139,9 +162,9 @@ describe('DSSS Despreading', () => {
     expect(llrToBits(llr)).toEqual(Array.from(originalBits));
     for (let i = 0; i < originalBits.length; i++) {
       if (originalBits[i] === 0) {
-        expect(llr[i]).toBe(127);
+        expect(llr[i]).toBeCloseTo(127, 0);
       } else {
-        expect(llr[i]).toBe(-127);
+        expect(llr[i]).toBeCloseTo(-127, 0);
       }
     }
   });
@@ -152,7 +175,7 @@ describe('DSSS Despreading', () => {
     const llr = dsssDespread(new Float32Array(chips));
 
     expect(llr.length).toBe(1);
-    expect(llr[0]).toBe(127);
+    expect(llr[0]).toBeCloseTo(127, 0);
   });
 
   test('should work with different seeds', () => {
@@ -202,16 +225,16 @@ describe('DPSK Demodulation', () => {
     expect(softValues.length).toBe(4);
     
     // Phase diff 0 → positive LLR (bit 0 more likely)
-    expect(softValues[0]).toBeGreaterThan(0);
+    expect(softValues[0]).toBeCloseTo(1, 5);
     
     // Phase diff π → negative LLR (bit 1 more likely)
-    expect(softValues[1]).toBeLessThan(0);
+    expect(softValues[1]).toBeCloseTo(-1, 5);
     
     // Phase diff 0 → positive LLR (bit 0 more likely)
-    expect(softValues[2]).toBeGreaterThan(0);
+    expect(softValues[2]).toBeCloseTo(1, 5);
     
     // Phase diff -π → negative LLR (bit 1 more likely)
-    expect(softValues[3]).toBeLessThan(0);
+    expect(softValues[3]).toBeCloseTo(-1, 5);
   });
 
   test('should handle phase wraparound correctly', () => {
@@ -219,7 +242,7 @@ describe('DPSK Demodulation', () => {
     const softValues = dpskDemodulate(phases);
     
     expect(softValues.length).toBe(1);
-    expect(softValues[0]).toBeGreaterThan(0); // Should indicate bit 0
+    expect(softValues[0]).toBeCloseTo(1, 5);
   });
 
   test('should handle single phase', () => {
@@ -235,19 +258,19 @@ describe('DPSK Demodulation', () => {
     
     expect(softValues.length).toBe(1);
     // π/2 is between 0 and π, should have smaller magnitude LLR
-    expect(Math.abs(softValues[0])).toBeLessThan(10); // Less confident
+    expect(softValues[0]).toBeCloseTo(0, 5);
   });
 
   test('should reduce average soft value magnitude when noise is added (statistical)', () => {
     const phases = new Float32Array([0, Math.PI / 4]);
-    const softValuesClean = dpskDemodulate(phases, 10.0);
+    const softValuesClean = dpskDemodulate(phases);
     const cleanAbs = Math.abs(softValuesClean[0]);
   
     let noisySum = 0;
     const trials = 100;
     for (let i = 0; i < trials; i++) {
       const noisyPhases = addAWGN(phases, 6);
-      const softValuesNoisy = dpskDemodulate(noisyPhases, 10.0);
+      const softValuesNoisy = dpskDemodulate(noisyPhases);
       noisySum += Math.abs(softValuesNoisy[0]);
     }
     const noisyAvg = noisySum / trials;
@@ -357,7 +380,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       
       // Proper sign-sensitive floating-point comparison
       for (let i = 0; i < expected.length; i++) {
-        expect(unwrapped[i]).toBeCloseTo(expected[i], 4); // Check exact value with sign
+        expect(unwrapped[i]).toBeCloseTo(expected[i], 4);
       }
     });
 
@@ -468,7 +491,7 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       const demodulatedPhases = demodulateCarrier(modulated, samplesPerPhase, sampleRate, carrierFreq);
       
       const recoveredChips = dpskDemodulate(demodulatedPhases);
-      const llr = dsssDespread(new Float32Array(recoveredChips));
+      const llr = dsssDespread(recoveredChips);
       
       // Compare the recovered bits with the original bits, accounting for the 1-bit loss from DPSK.
       const bitsToCompare = llr.length;
@@ -488,11 +511,11 @@ describe('Step 3: Advanced Demodulation Functions', () => {
       const carrierFreq = 10000;
       
       const modulated = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
-      const noisySignal = addAWGN(modulated, 15); // 15 dB SNR
+      const noisySignal = addAWGN(modulated, 15);
       const demodulatedPhases = demodulateCarrier(noisySignal, samplesPerPhase, sampleRate, carrierFreq);
       
       const recoveredChips = dpskDemodulate(demodulatedPhases);
-      const llr = dsssDespread(new Float32Array(recoveredChips));
+      const llr = dsssDespread(recoveredChips);
 
       const bitsToCompare = llr.length;
       const ber = calculateBER(originalBits.slice(0, bitsToCompare), new Uint8Array(llrToBits(llr)));
@@ -545,7 +568,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       const demodPhases = demodulateCarrier(alignedSamples, samplesPerPhase, sampleRate, carrierFreq);
       const recoveredChips = dpskDemodulate(demodPhases);
       
-      const llr = dsssDespread(new Float32Array(recoveredChips));
+      const llr = dsssDespread(recoveredChips);
       
       const bitsToCompare = Math.min(originalBits.length, llr.length);
       const originalBitsSlice = originalBits.slice(0, bitsToCompare);
@@ -568,7 +591,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         { snr: -10, minSyncRate: 0.02, maxBER: 0.50 },
       ];
       
-      const trials = 50;  // Reduced for performance while maintaining statistical validity
+      const trials = 50;
       
       for (const condition of snrConditions) {
         let syncSuccessCount = 0;
@@ -585,7 +608,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           
           const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
           
-          const sampleOffset = Math.floor(Math.random() * samplesPerPhase) + 1; // Random offset between 5 and 20 samples
+          const sampleOffset = Math.floor(Math.random() * samplesPerPhase) + 1;
           const offsetSamples = new Array(sampleOffset).fill(0).concat(Array.from(samples));
           
           const noisySamples = addAWGN(new Float32Array(offsetSamples), condition.snr);
@@ -604,7 +627,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
             const alignedSamples = noisySamples.slice(syncResult.bestSampleOffset);
             const demodPhases = demodulateCarrier(alignedSamples, samplesPerPhase, sampleRate, carrierFreq);
             const recoveredChips = dpskDemodulate(demodPhases);
-            const llr = dsssDespread(new Float32Array(recoveredChips));
+            const llr = dsssDespread(recoveredChips);
             
             const bitsToCompare = Math.min(originalBits.length, llr.length);
             const originalBitsSlice = originalBits.slice(0, bitsToCompare);
@@ -665,7 +688,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           const demodPhases = demodulateCarrier(alignedSamples, samplesPerPhase, sampleRate, carrierFreq);
           const recoveredChips = dpskDemodulate(demodPhases);
           
-          const llr = dsssDespread(new Float32Array(recoveredChips));
+          const llr = dsssDespread(recoveredChips);
           const bitsToCompare = Math.min(originalBits.length, llr.length);
           const ber = calculateBER(originalBits.slice(0, bitsToCompare), new Uint8Array(llrToBits(llr.slice(0, bitsToCompare))));
 
@@ -690,12 +713,12 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         { name: 'Equal SNR', snr: 0, minSyncRate: 0.90 },
         { name: 'Low SNR', snr: -6, minSyncRate: 0.50 },
         { name: 'Very Low SNR', snr: -12, minSyncRate: 0.15 },
-        { name: 'Extreme Low SNR', snr: -18, minSyncRate: 0.00 }, // Expect 0% success at -18dB
+        { name: 'Extreme Low SNR', snr: -18, minSyncRate: 0.00 },
       ];
       
       for (const condition of challengingConditions) {
         let syncCount = 0;
-        const trials = 50;  // Reduced for performance while maintaining statistical validity
+        const trials = 50;
         
         for (let trial = 0; trial < trials; trial++) {
           const spreadChips = dsssSpread(originalBits);
@@ -713,9 +736,8 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
           const noisySamples = addAWGN(new Float32Array(offsetSamples), condition.snr);
           
           const reference = generateSyncReference();
-          const syncResult = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 50); // Increased search range for better detection
+          const syncResult = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 50);
           
-          // Debug for challenging conditions test failures  
           if (condition.snr === -12 && trial < 3) {
             console.log(`=== CHALLENGING CONDITIONS DEBUG (${condition.name}, trial ${trial}) ===`);
             console.log(`SNR: ${condition.snr}dB, Expected sync rate: ${condition.minSyncRate}`);
@@ -736,7 +758,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
         console.log(`${condition.name} ${condition.snr}: ${(successRate * 100).toFixed(1)}% success`);
         
         expect(successRate).toBeGreaterThanOrEqual(condition.minSyncRate);
-        expect(successRate).toBeLessThanOrEqual(1.0); // Max rate is always 100%
+        expect(successRate).toBeLessThanOrEqual(1.0);
       }
     });
   });
@@ -767,7 +789,7 @@ describe('Step 4-4: DPSK+DSSS Integration Tests (BER & Sync Success Rate)', () =
       const demodPhases = demodulateCarrier(alignedSamples, samplesPerPhase, sampleRate, carrierFreq);
       const recoveredChips = dpskDemodulate(demodPhases);
       
-      const llr = dsssDespread(new Float32Array(recoveredChips));
+      const llr = dsssDespread(recoveredChips);
 
       expect(llr.length).toBeGreaterThanOrEqual(originalBits.length - 1);
       
@@ -865,7 +887,7 @@ describe('Step 4: Synchronization Functions', () => {
 
     test('should handle inverted sequences', () => {
       // Use multiple inverted bits for longer signal and better correlation
-      const originalBits = new Uint8Array([1, 1, 1]); // 3 bits = 93 chips for better correlation
+      const originalBits = new Uint8Array([1, 1, 1]);
       const reference = generateSyncReference();
       
       const spreadChips = dsssSpread(originalBits);
@@ -876,11 +898,10 @@ describe('Step 4: Synchronization Functions', () => {
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
       
-      const noisySamples = addAWGN(samples, 15); // Higher SNR for reliable inverted detection
+      const noisySamples = addAWGN(samples, 15);
       
-      const result = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 15); // Increased search range
+      const result = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 15);
       
-      // Debug for inverted sequence test failure
       console.log(`=== INVERTED SEQUENCE DEBUG ===`);
       console.log(`Original bits: [${Array.from(originalBits).join(',')}]`);
       console.log(`Spread chips length: ${spreadChips.length}`);
@@ -893,10 +914,9 @@ describe('Step 4: Synchronization Functions', () => {
       console.log(`Actual result: isFound=${result.isFound}, correlation=${result.peakCorrelation.toFixed(3)}`);
       console.log(`Peak ratio: ${result.peakRatio.toFixed(3)}, chip offset: ${result.bestChipOffset}`);
       
-      // Verify detection succeeds for inverted sequences
-      expect(result.isFound).toBe(true); // Must detect inverted sequences at reasonable SNR
-      expect(result.peakCorrelation).toBeLessThan(-0.3); // Significant negative correlation required
-      expect(result.bestChipOffset).toBeGreaterThanOrEqual(0); // Valid chip offset
+      expect(result.isFound).toBe(true);
+      expect(result.peakCorrelation).toBeLessThan(-0.3);
+      expect(result.bestChipOffset).toBeGreaterThanOrEqual(0);
     });
 
     test('should fail to find sync in random noise', () => {
@@ -1204,7 +1224,7 @@ describe('Step 4: Synchronization Functions', () => {
       const demodPhases = demodulateCarrier(alignedSamples, samplesPerPhase, sampleRate, carrierFreq);
       const recoveredChips = dpskDemodulate(demodPhases);
       
-      const llr = dsssDespread(new Float32Array(recoveredChips));
+      const llr = dsssDespread(recoveredChips);
       
       const bitsToCompare = Math.min(originalBits.length, llr.length);
       expect(new Uint8Array(llrToBits(llr.slice(0, bitsToCompare)))).toEqual(originalBits.slice(0, bitsToCompare));
@@ -1435,5 +1455,40 @@ describe('DSSS-DPSK Carrier Modulation', () => {
         expect(Math.abs(phaseDiff)).toBeLessThan(TOLERANCE);
       }
     });
+  });
+});
+
+describe('LLR Distribution Validation', () => {
+  test('LLR distribution should become less extreme as noise increases', () => {
+    const originalBits = new Uint8Array(100).map((_, i) => i % 2);
+    const sequenceLength = 31;
+
+    const spreadChips = dsssSpread(originalBits, sequenceLength);
+    const phases = dpskModulate(spreadChips);
+
+    const samplesPerPhase = 8;
+    const sampleRate = 48000;
+    const carrierFreq = 10000;
+    const modulated = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+
+    const snrLevels = [0, -3, -6, -12];
+    const results = snrLevels.map(snr => {
+      const noisySignal = addAWGN(modulated, snr);
+      const demodulatedPhases = demodulateCarrier(noisySignal, samplesPerPhase, sampleRate, carrierFreq);
+      const demodulatedChips = dpskDemodulate(demodulatedPhases);
+      const llr = dsssDespread(demodulatedChips, sequenceLength, undefined, snr);
+      
+      const avgAbsLlr = llr.reduce((sum, val) => sum + Math.abs(val), 0) / llr.length;
+      console.log(`SNR: ${snr}dB, AvgAbsLLR: ${avgAbsLlr.toFixed(2)}`);
+      console.log(generateHistogram(llr));
+      return { snr, avgAbsLlr };
+    });
+
+    for (let i = 0; i < results.length - 1; i++) {
+      expect(results[i].avgAbsLlr).toBeGreaterThan(results[i+1].avgAbsLlr);
+    }
+
+    expect(results[0].avgAbsLlr).toBeGreaterThan(100);
+    expect(results[results.length - 1].avgAbsLlr).toBeLessThan(110);
   });
 });

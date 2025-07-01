@@ -122,7 +122,8 @@ function getMSequenceConfig(length: number) {
 export function dsssDespread(
   chips: Float32Array, 
   sequenceLength: number = 31, 
-  seed?: number
+  seed?: number,
+  esN0Db: number = 10.0
 ): Int8Array {
   // Auto-select seed if not provided
   const actualSeed = seed ?? getMSequenceConfig(sequenceLength).seed;
@@ -132,22 +133,22 @@ export function dsssDespread(
   
   const numBits = Math.floor(chips.length / sequenceLength);
   const llr = new Int8Array(numBits);
-
-  // DSSS theoretical maximum correlation value (±N)
-  const maxCorr = sequenceLength;
+  const esN0Linear = Math.pow(10, esN0Db / 10);
 
   for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
     const startIdx = bitIndex * sequenceLength;
     let correlation = 0;
     
-    // Correlate chip segment with M-sequence
+    // Correlate soft chip segment with M-sequence
     for (let i = 0; i < sequenceLength; i++) {
       correlation += chips[startIdx + i] * mSequence[i];
     }
     
-    // LLR: Scale correlation to [-127, +127]. Positive LLR for bit 0, negative for bit 1.
-    const scaled = Math.max(-1, Math.min(1, correlation / maxCorr));
-    llr[bitIndex] = Math.round(scaled * 127);
+    const calculatedLlr = correlation / sequenceLength;
+
+    // Quantize to int8 range [-127, +127]
+    const quantized = Math.round(calculatedLlr * 127);
+    llr[bitIndex] = Math.max(-127, Math.min(127, quantized));
   }
   
   return llr;
@@ -161,34 +162,24 @@ export function dsssDespread(
  * @returns Quantized soft values (LLR) as Int8Array (-128 to +127)
  */
 export function dpskDemodulate(
-  phases: Float32Array, 
-  esN0Db: number = 10.0
-): Int8Array {
+  phases: Float32Array
+): Float32Array {
   if (phases.length <= 1) {
-    return new Int8Array(0);
+    return new Float32Array(0);
   }
   
-  const esN0Linear = Math.pow(10, esN0Db / 10); // Convert dB to linear
-  const softValues = new Int8Array(phases.length - 1);
-  
-  // Fixed scale to preserve Es/N0 effect (corresponds to ~10dB Es/N0 * 4)
-  const fixedMaxValue = esN0Linear * 2;
+  const softChips = new Float32Array(phases.length - 1);
   
   for (let i = 1; i < phases.length; i++) {
     // Calculate normalized phase difference
     const phaseDiff = normalizePhase(phases[i] - phases[i - 1]);
     
-    // LLR calculation using theoretical formula (aec-plan.md)
-    // LLR = 2 * Es/N0 * cos(phase_diff) for DPSK
-    // cos(0) = +1 (bit 0 likely), cos(π) = -1 (bit 1 likely)
-    const llr = 2 * esN0Linear * Math.cos(phaseDiff);
-    
-    // Scale to [-1, 1] range and quantize to int8 range [-128, +127]
-    const scaled = Math.max(-1.0, Math.min(1.0, llr / fixedMaxValue));
-    softValues[i - 1] = Math.round(scaled * 127);
+    // Soft chip value is simply cos(phase_diff). 
+    // This is in [-1, 1] and represents the chip likelihood.
+    softChips[i - 1] = Math.cos(phaseDiff);
   }
   
-  return softValues;
+  return softChips;
 }
 
 /**
