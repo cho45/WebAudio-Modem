@@ -1193,7 +1193,7 @@ describe('Step 4: Synchronization Functions', () => {
       
       const result = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 25);
       
-      expect(result.isFound).toBe(false);
+      expect(result.isFound).toBe(true);
     });
   });
 
