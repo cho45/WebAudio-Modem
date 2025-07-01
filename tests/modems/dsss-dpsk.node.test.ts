@@ -1471,7 +1471,7 @@ describe('LLR Distribution Validation', () => {
     const carrierFreq = 10000;
     const modulated = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
 
-    const snrLevels = [0, -3, -6, -12];
+    const snrLevels = [10, 0, -3, -6, -12];
     const results = snrLevels.map(snr => {
       const noisySignal = addAWGN(modulated, snr);
       const demodulatedPhases = demodulateCarrier(noisySignal, samplesPerPhase, sampleRate, carrierFreq);
