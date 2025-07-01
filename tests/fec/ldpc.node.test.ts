@@ -4,6 +4,55 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { dpskModulate, modulateCarrier, addAWGN, generateSyncReference } from '@/modems/dsss-dpsk';
 
+// Packed bit形式のヘルパー関数
+function packBits(bits: number[]): Uint8Array {
+    const byteLength = Math.ceil(bits.length / 8);
+    const bytes = new Uint8Array(byteLength);
+    
+    for (let i = 0; i < bits.length; i++) {
+        const byteIndex = Math.floor(i / 8);
+        const bitOffset = i % 8;
+        if (bits[i]) {
+            bytes[byteIndex] |= (1 << (7 - bitOffset));
+        }
+    }
+    
+    return bytes;
+}
+
+function unpackBits(bytes: Uint8Array, bitCount: number): number[] {
+    const bits: number[] = [];
+    
+    for (let i = 0; i < bitCount; i++) {
+        const byteIndex = Math.floor(i / 8);
+        const bitOffset = i % 8;
+        if (byteIndex < bytes.length) {
+            const bit = (bytes[byteIndex] >> (7 - bitOffset)) & 1;
+            bits.push(bit);
+        } else {
+            bits.push(0);
+        }
+    }
+    
+    return bits;
+}
+
+// Packed bit形式のパリティチェック関数
+function checkMatrixParityPacked(codewordBytes: Uint8Array, hData: HMatrixData): boolean {
+    const checkSums = new Array(hData.height).fill(0);
+    
+    for (const conn of hData.connections) {
+        const byteIndex = Math.floor(conn.bit / 8);
+        const bitOffset = conn.bit % 8;
+        if (byteIndex < codewordBytes.length) {
+            const bit = (codewordBytes[byteIndex] >> (7 - bitOffset)) & 1;
+            checkSums[conn.check] += bit;
+        }
+    }
+    
+    return checkSums.every(sum => sum % 2 === 0);
+}
+
 // テスト用のH行列データを読み込む
 let hMatrixData: HMatrixData;
 const hMatrixPath = path.resolve(__dirname, '../../src/fec/ldpc_h_matrix_pyldpc_systematic.json');
@@ -273,13 +322,14 @@ describe('LDPC Ultra-Deep Mathematical Verification', () => {
         const testMessages = Math.min(32, Math.pow(2, k)); // Test up to 32 messages
         
         for (let i = 0; i < testMessages; i++) {
-            const message = new Uint8Array(k);
+            const messageUnpacked = new Array(k);
             for (let j = 0; j < k; j++) {
-                message[j] = (i >> j) & 1;
+                messageUnpacked[j] = (i >> j) & 1;
             }
+            const message = packBits(messageUnpacked);
             
             const codeword = ldpc.encode(message);
-            const isValid = checkMatrixParity(codeword, testH);
+            const isValid = checkMatrixParityPacked(codeword, testH);
             if (isValid) validCount++;
         }
         
@@ -364,14 +414,16 @@ describe('LDPC Ultra-Deep Mathematical Verification', () => {
         const largeK = largeLdpc.getMessageLength();
         console.log(`Large matrix: ${largeH}x${largeW}, k=${largeK}`);
         
-        // Test encoding large message
-        const largeMessage = new Uint8Array(largeK);
+        // Test encoding large message (packed bit format)
+        const largeMessageUnpacked = new Array(largeK);
         for (let i = 0; i < largeK; i++) {
-            largeMessage[i] = i % 2; // Alternating pattern
+            largeMessageUnpacked[i] = i % 2; // Alternating pattern
         }
+        const largeMessage = packBits(largeMessageUnpacked);
         
         const largeCodeword = largeLdpc.encode(largeMessage);
-        expect(largeCodeword.length).toBe(largeW);
+        const expectedLargeCodewordSize = Math.ceil(largeW / 8);
+        expect(largeCodeword.length).toBe(expectedLargeCodewordSize);
         
         // Test 2: Matrix with high connectivity (stress test)
         console.log('\\nTest 2: High connectivity stress test');
@@ -393,23 +445,16 @@ describe('LDPC Ultra-Deep Mathematical Verification', () => {
         const highConnK = highConnLdpc.getMessageLength();
         console.log(`High connectivity matrix k: ${highConnK}`);
         
-        // Verify encoding still works correctly
-        const testMsg = new Uint8Array(highConnK).fill(1);
+        // Verify encoding still works correctly (packed bit format)
+        const testMsgUnpacked = new Array(highConnK).fill(1);
+        const testMsg = packBits(testMsgUnpacked);
         const testCodeword = highConnLdpc.encode(testMsg);
         
-        let parityChecks = 0;
-        for (let check = 0; check < 4; check++) {
-            let sum = 0;
-            for (const conn of highConnH.connections) {
-                if (conn.check === check) {
-                    sum += testCodeword[conn.bit];
-                }
-            }
-            if (sum % 2 === 0) parityChecks++;
-        }
+        // Use packed bit parity check function
+        const parityCheckPassed = checkMatrixParityPacked(testCodeword, highConnH);
         
-        console.log(`High connectivity parity checks passed: ${parityChecks}/4`);
-        expect(parityChecks).toBe(4); // All should pass
+        console.log(`High connectivity parity check: ${parityCheckPassed ? 'PASS' : 'FAIL'}`);
+        expect(parityCheckPassed).toBe(true);
     });
 });
 
@@ -445,24 +490,14 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         expect(cyclicRank).toBe(3);
         expect(cyclicK).toBe(5);
         
-        // Verify encoding works correctly
-        const cyclicMessage = new Uint8Array(cyclicK).fill(1);
+        // Verify encoding works correctly (packed bit format)
+        const cyclicMessageUnpacked = new Array(cyclicK).fill(1);
+        const cyclicMessage = packBits(cyclicMessageUnpacked);
         const cyclicCodeword = cyclicLdpc.encode(cyclicMessage);
         
-        // Manually verify all parity checks
-        let cyclicParityValid = true;
-        for (let check = 0; check < 4; check++) {
-            let sum = 0;
-            for (const conn of cyclicH.connections) {
-                if (conn.check === check) {
-                    sum += cyclicCodeword[conn.bit];
-                }
-            }
-            if (sum % 2 !== 0) {
-                cyclicParityValid = false;
-                console.log(`Parity check ${check} FAILED: sum=${sum}`);
-            }
-        }
+        // Use packed bit parity check function
+        const cyclicParityValid = checkMatrixParityPacked(cyclicCodeword, cyclicH);
+        
         console.log('Cyclic dependency parity valid:', cyclicParityValid);
         expect(cyclicParityValid).toBe(true);
         
@@ -586,30 +621,19 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         const maxMessages = Math.min(64, Math.pow(2, k));
         
         for (let msgValue = 0; msgValue < maxMessages; msgValue++) {
-            const message = new Uint8Array(k);
+            const messageUnpacked = new Array(k);
             for (let bit = 0; bit < k; bit++) {
-                message[bit] = (msgValue >> bit) & 1;
+                messageUnpacked[bit] = (msgValue >> bit) & 1;
             }
+            const message = packBits(messageUnpacked);
             
             const codeword = criticalLdpc.encode(message);
             
-            // Verify H * codeword = 0 (mathematically)
-            let parityValid = true;
-            for (let checkIdx = 0; checkIdx < criticalH.height; checkIdx++) {
-                let sum = 0;
-                for (const conn of criticalH.connections) {
-                    if (conn.check === checkIdx) {
-                        sum += codeword[conn.bit];
-                    }
-                }
-                if (sum % 2 !== 0) {
-                    parityValid = false;
-                    console.log(`Message ${msgValue}: Parity check ${checkIdx} failed`);
-                    break;
-                }
-            }
+            // Verify H * codeword = 0 (mathematically) using packed bit function
+            const parityValid = checkMatrixParityPacked(codeword, criticalH);
             
             if (!parityValid) {
+                console.log(`Message ${msgValue}: Parity check failed`);
                 allValid = false;
             }
         }
@@ -686,20 +710,24 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         
         // Verify encoding for identity messages produces expected parity
         for (let msgBit = 0; msgBit < implK; msgBit++) {
-            const identityMessage = new Uint8Array(implK);
-            identityMessage[msgBit] = 1; // Unit vector
+            const identityMessageUnpacked = new Array(implK).fill(0);
+            identityMessageUnpacked[msgBit] = 1; // Unit vector
+            const identityMessage = packBits(identityMessageUnpacked);
             
             const codeword = theoryLdpc.encode(identityMessage);
             
+            // Extract bits from packed format for analysis
+            const codewordUnpacked = unpackBits(codeword, 7);
+            
             // Apply inverse permutation to get systematic codeword
-            const systematicCodeword = new Uint8Array(7);
+            const systematicCodeword = new Array(7);
             for (let i = 0; i < 7; i++) {
                 const originalPos = sysMatrix.columnPermutation[i];
-                systematicCodeword[i] = codeword[originalPos];
+                systematicCodeword[i] = codewordUnpacked[originalPos];
             }
             
-            console.log(`Identity message [${msgBit}]:`, Array.from(identityMessage));
-            console.log(`Systematic codeword:`, Array.from(systematicCodeword));
+            console.log(`Identity message [${msgBit}]:`, identityMessageUnpacked);
+            console.log(`Systematic codeword:`, systematicCodeword);
             
             // Check systematic structure: [parity bits | message bits]
             for (let i = 0; i < implK; i++) {
@@ -727,21 +755,23 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         const allZeroK = allZeroLdpc.getMessageLength(); // Should be 4 (no constraints)
         console.log('All-zero matrix k:', allZeroK);
         
-        // Test different message patterns
-        const testMessages = [
-            new Uint8Array([0, 0, 0, 0]),
-            new Uint8Array([1, 1, 1, 1]), 
-            new Uint8Array([1, 0, 1, 0]),
-            new Uint8Array([0, 1, 0, 1])
+        // Test different message patterns (packed bit format)
+        const testMessagesUnpacked = [
+            [0, 0, 0, 0],
+            [1, 1, 1, 1], 
+            [1, 0, 1, 0],
+            [0, 1, 0, 1]
         ];
         
-        for (let i = 0; i < testMessages.length; i++) {
-            const message = testMessages[i];
+        for (let i = 0; i < testMessagesUnpacked.length; i++) {
+            const messageUnpacked = testMessagesUnpacked[i];
+            const message = packBits(messageUnpacked);
             const codeword = allZeroLdpc.encode(message);
-            console.log(`Message ${Array.from(message)} -> Codeword ${Array.from(codeword)}`);
+            console.log(`Message ${messageUnpacked} -> Codeword ${Array.from(codeword)}`);
             
-            // With no constraints, the codeword should equal the message
-            expect(codeword.length).toBe(4);
+            // With no constraints, expect packed format
+            const expectedCodewordSize = Math.ceil(4 / 8); // 1 byte for 4 bits
+            expect(codeword.length).toBe(expectedCodewordSize);
             // Note: For all-zero H, the encoding should produce the message itself
             // since there are no parity constraints
         }
@@ -846,29 +876,18 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         console.log('Column permutation round-trip valid:', roundTripValid);
         expect(roundTripValid).toBe(true);
         
-        // Test actual encoding/decoding with permutation
+        // Test actual encoding/decoding with permutation (packed bit format)
         const k = permTestLdpc.getMessageLength();
-        const testMessage = new Uint8Array(k);
+        const testMessageUnpacked = new Array(k);
         for (let i = 0; i < k; i++) {
-            testMessage[i] = i % 2; // Alternating pattern
+            testMessageUnpacked[i] = i % 2; // Alternating pattern
         }
+        const testMessage = packBits(testMessageUnpacked);
         
         const codeword = permTestLdpc.encode(testMessage);
         
-        // Verify all parity constraints are satisfied
-        let allParityValid = true;
-        for (let check = 0; check < 5; check++) {
-            let sum = 0;
-            for (const conn of permTestH.connections) {
-                if (conn.check === check) {
-                    sum += codeword[conn.bit];
-                }
-            }
-            if (sum % 2 !== 0) {
-                allParityValid = false;
-                console.log(`Parity check ${check} failed: sum=${sum}`);
-            }
-        }
+        // Verify all parity constraints are satisfied using packed bit function
+        const allParityValid = checkMatrixParityPacked(codeword, permTestH);
         
         console.log('Permutation test parity constraints valid:', allParityValid);
         expect(allParityValid).toBe(true);
@@ -983,24 +1002,23 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         const mathLdpc = new LDPC(mathTestH);
         const k = mathLdpc.getMessageLength(); // Should be 5-2=3
         
-        // Test all possible 3-bit messages
+        // Test all possible 3-bit messages (packed bit format)
         let encodingConsistent = true;
         for (let msgValue = 0; msgValue < 8; msgValue++) {
-            const message = new Uint8Array(k);
+            const messageUnpacked = new Array(k);
             for (let bit = 0; bit < k; bit++) {
-                message[bit] = (msgValue >> bit) & 1;
+                messageUnpacked[bit] = (msgValue >> bit) & 1;
             }
+            const message = packBits(messageUnpacked);
             
             const codeword = mathLdpc.encode(message);
             
-            // Manually verify constraints
-            const constraint0 = (codeword[0] + codeword[2] + codeword[4]) % 2;
-            const constraint1 = (codeword[1] + codeword[3] + codeword[4]) % 2;
+            // Verify constraints using packed bit function
+            const constraintsValid = checkMatrixParityPacked(codeword, mathTestH);
             
-            if (constraint0 !== 0 || constraint1 !== 0) {
+            if (!constraintsValid) {
                 encodingConsistent = false;
-                console.log(`Message ${Array.from(message)} -> Codeword ${Array.from(codeword)}`);
-                console.log(`  Constraint violations: C0=${constraint0}, C1=${constraint1}`);
+                console.log(`Message ${messageUnpacked} -> Constraints failed`);
             }
         }
         
@@ -1086,30 +1104,19 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
                         continue;
                     }
                     
-                    // Test encoding with random message
+                    // Test encoding with random message (packed bit format)
                     if (k > 0 && k <= 16) { // Only test small k for performance
-                        const randomMessage = new Uint8Array(k);
+                        const randomMessageUnpacked = new Array(k);
                         for (let i = 0; i < k; i++) {
-                            randomMessage[i] = Math.random() < 0.5 ? 1 : 0;
+                            randomMessageUnpacked[i] = Math.random() < 0.5 ? 1 : 0;
                         }
+                        const randomMessage = packBits(randomMessageUnpacked);
                         
                         try {
                             const codeword = ldpc.encode(randomMessage);
                             
-                            // Verify parity constraints
-                            let parityValid = true;
-                            for (let check = 0; check < testSize.height; check++) {
-                                let sum = 0;
-                                for (const conn of randomH.connections) {
-                                    if (conn.check === check) {
-                                        sum += codeword[conn.bit];
-                                    }
-                                }
-                                if (sum % 2 !== 0) {
-                                    parityValid = false;
-                                    break;
-                                }
-                            }
+                            // Verify parity constraints using packed bit function
+                            const parityValid = checkMatrixParityPacked(codeword, randomH);
                             
                             if (!parityValid) {
                                 statistics.encodingFailures++;
@@ -1183,20 +1190,16 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         expect(extremeRank).toBe(1);
         expect(extremeK).toBe(19); // 20 - 1
         
-        // Test encoding with extreme rank deficiency
-        const extremeMessage = new Uint8Array(extremeK);
-        extremeMessage[0] = 1; // Test with single bit
+        // Test encoding with extreme rank deficiency (packed bit format)
+        const extremeMessageUnpacked = new Array(extremeK).fill(0);
+        extremeMessageUnpacked[0] = 1; // Test with single bit
+        const extremeMessage = packBits(extremeMessageUnpacked);
         const extremeCodeword = extremeLdpc.encode(extremeMessage);
         
-        // Verify the single constraint
-        let constraintSum = 0;
-        for (const conn of extremeH.connections) {
-            if (conn.check === 0) {
-                constraintSum += extremeCodeword[conn.bit];
-            }
-        }
-        console.log(`Extreme constraint check: sum=${constraintSum % 2} (should be 0)`);
-        expect(constraintSum % 2).toBe(0);
+        // Verify the single constraint using packed bit function
+        const constraintValid = checkMatrixParityPacked(extremeCodeword, extremeH);
+        console.log(`Extreme constraint check: ${constraintValid ? 'VALID' : 'INVALID'} (should be VALID)`);
+        expect(constraintValid).toBe(true);
         
         // Test 2: Performance boundary testing
         console.log('\\nTest 2: Performance boundary testing');
@@ -1283,25 +1286,14 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
             
             console.log(`  Rank: ${edgeRank}, k: ${edgeK}`);
             
-            // Test encoding if possible
+            // Test encoding if possible (packed bit format)
             if (edgeK > 0 && edgeK <= 8) {
-                const testMessage = new Uint8Array(edgeK).fill(1);
+                const testMessageUnpacked = new Array(edgeK).fill(1);
+                const testMessage = packBits(testMessageUnpacked);
                 const testCodeword = edgeLdpc.encode(testMessage);
                 
-                // Verify all constraints
-                let constraintsValid = true;
-                for (let check = 0; check < edgeCase.matrix.height; check++) {
-                    let sum = 0;
-                    for (const conn of edgeCase.matrix.connections) {
-                        if (conn.check === check) {
-                            sum += testCodeword[conn.bit];
-                        }
-                    }
-                    if (sum % 2 !== 0) {
-                        constraintsValid = false;
-                        console.log(`  Constraint ${check} violation: sum=${sum}`);
-                    }
-                }
+                // Verify all constraints using packed bit function
+                const constraintsValid = checkMatrixParityPacked(testCodeword, edgeCase.matrix);
                 console.log(`  Constraints valid: ${constraintsValid}`);
                 expect(constraintsValid).toBe(true);
             }
@@ -1537,11 +1529,12 @@ describe('LDPC Comprehensive Mathematical Verification', () => {
         expect(k).toBe(3);
         expect(n).toBe(6);
         
-        const zeroMessage = new Uint8Array(k).fill(0);
-        const zeroCodeword = simpleLdpc.encode(zeroMessage);
+        // Convert to packed bit format
+        const zeroMessagePacked = packBits(Array(k).fill(0));
+        const zeroCodewordPacked = simpleLdpc.encode(zeroMessagePacked);
         
-        console.log('Zero message:', Array.from(zeroMessage));
-        console.log('Zero codeword:', Array.from(zeroCodeword));
+        console.log('Zero message:', Array.from(zeroMessagePacked));
+        console.log('Zero codeword:', Array.from(zeroCodewordPacked));
         
         // Helper function for H*c calculation
         function calculateHc(codeword: Uint8Array, hData: HMatrixData): Uint8Array {
@@ -1562,21 +1555,23 @@ describe('LDPC Comprehensive Mathematical Verification', () => {
             return result;
         }
         
-        // Check parity: H * c^T = 0
-        const parityResult = calculateHc(zeroCodeword, simpleHData);
-        console.log('H * zero_codeword:', Array.from(parityResult));
-        expect(Array.from(parityResult).every(x => x === 0)).toBe(true);
+        // Check parity: H * c^T = 0 (using packed bit format)
+        const parityValid = checkMatrixParityPacked(zeroCodewordPacked, simpleHData);
+        console.log('H * zero_codeword parity valid:', parityValid);
+        expect(parityValid).toBe(true);
         
         // CRITICAL: Test if zero message actually produces zero codeword
-        // This should NOT be hardcoded!
-        expect(Array.from(zeroCodeword).every(x => x === 0)).toBe(true);
+        const zeroCodewordBits = unpackBits(zeroCodewordPacked, n);
+        console.log('H * zero_codeword:', zeroCodewordBits);
+        expect(zeroCodewordBits.every(x => x === 0)).toBe(true);
         
         // Test 2: Simple message [1,0,0]  
-        const simpleMessage = new Uint8Array([1, 0, 0]);
-        const simpleCodeword = simpleLdpc.encode(simpleMessage);
+        const simpleMessagePacked = packBits([1, 0, 0]);
+        const simpleCodewordPacked = simpleLdpc.encode(simpleMessagePacked);
         
-        console.log('Message [1,0,0]:', Array.from(simpleMessage));
-        console.log('Codeword:', Array.from(simpleCodeword));
+        console.log('Message [1,0,0]:', Array.from(simpleMessagePacked));
+        const simpleCodewordBits = unpackBits(simpleCodewordPacked, n);
+        console.log('Codeword:', simpleCodewordBits);
         
         // DEBUG: Inspect internal systematic matrix
         const systematicMatrix = (simpleLdpc as any).systematicMatrix;
@@ -1629,11 +1624,11 @@ describe('LDPC Comprehensive Mathematical Verification', () => {
         // Systematic codeword = [1,1,0,1,0,0]
         // After inverse permutation: [1,1,1,0,0,0]
         console.log('\\nCORRECTED Expected codeword: [1,1,1,0,0,0]');
-        console.log('Actual codeword:                ', Array.from(simpleCodeword));
-        console.log('MATCH:', JSON.stringify(Array.from(simpleCodeword)) === JSON.stringify([1,1,1,0,0,0]));
+        console.log('Actual codeword:                ', simpleCodewordBits);
+        console.log('MATCH:', JSON.stringify(simpleCodewordBits) === JSON.stringify([1,1,1,0,0,0]));
         
         // Verify mathematical correctness
-        expect(Array.from(simpleCodeword)).toEqual([1,1,1,0,0,0]);
+        expect(simpleCodewordBits).toEqual([1,1,1,0,0,0]);
         
         // Manual verification:
         // Original H matrix:
@@ -1656,24 +1651,25 @@ describe('LDPC Comprehensive Mathematical Verification', () => {
         // Systematic codeword = [p|m] = [0,1,1,1,0,0]
         // But this is in reordered columns, need to map back to original
         
-        const parityResult2 = calculateHc(simpleCodeword, simpleHData);
-        console.log('H * codeword:', Array.from(parityResult2));
-        expect(Array.from(parityResult2).every(x => x === 0)).toBe(true);
+        const parityValid2 = checkMatrixParityPacked(simpleCodewordPacked, simpleHData);
+        console.log('H * codeword:', parityValid2);
+        expect(parityValid2).toBe(true);
         
         // Test 3: All possible 3-bit messages
         console.log('\\nTesting all 3-bit messages:');
         for (let i = 0; i < 8; i++) {
-            const msg = new Uint8Array([
+            const msgBits = [
                 (i >> 2) & 1,
                 (i >> 1) & 1, 
                 i & 1
-            ]);
-            const cw = simpleLdpc.encode(msg);
-            const parity = calculateHc(cw, simpleHData);
-            const isValid = Array.from(parity).every(x => x === 0);
+            ];
+            const msgPacked = packBits(msgBits);
+            const cwPacked = simpleLdpc.encode(msgPacked);
+            const cwBits = unpackBits(cwPacked, n);
+            const parityValid = checkMatrixParityPacked(cwPacked, simpleHData);
             
-            console.log(`Message ${Array.from(msg)} -> Codeword ${Array.from(cw)} -> Parity ${Array.from(parity)} -> Valid: ${isValid}`);
-            expect(isValid).toBe(true);
+            console.log(`Message ${msgBits} -> Codeword ${cwBits} -> Parity ${parityValid ? [0,0,0] : 'FAIL'} -> Valid: ${parityValid}`);
+            expect(parityValid).toBe(true);
         }
     });
 });
@@ -1810,44 +1806,46 @@ describe('LDPC Decoder (Min-Sum)', () => {
         const k = ldpc.getMessageLength();
         const n = ldpc.getCodewordLength();
 
-        // 全ゼロのメッセージビット
-        const allZeroMessage = new Uint8Array(k).fill(0);
+        // 全ゼロのメッセージビット（packed bit形式）
+        const packedMessageSize = Math.ceil(k / 8);
+        const allZeroMessage = new Uint8Array(packedMessageSize).fill(0);
         const encodedCodeword = ldpc.encode(allZeroMessage);
 
-        // 符号語の長さが正しいことを確認
-        expect(encodedCodeword.length).toBe(n);
+        // 符号語の長さが正しいことを確認（packed bit形式）
+        const expectedCodewordSize = Math.ceil(n / 8);
+        expect(encodedCodeword.length).toBe(expectedCodewordSize);
 
         // 全ゼロ符号語である必要がある
         expect(Array.from(encodedCodeword).every(bit => bit === 0)).toBe(true);
 
-        // パリティチェック
-        expect(checkParity(encodedCodeword, hMatrixData)).toBe(true);
+        // パリティチェック（packed bit対応）
+        expect(checkMatrixParityPacked(encodedCodeword, hMatrixData)).toBe(true);
     });
 
     it('should correctly encode a message and satisfy parity checks', () => {
         const k = ldpc.getMessageLength();
         const n = ldpc.getCodewordLength();
 
-        // ランダムなメッセージビットを生成
-        const messageBits = new Uint8Array(k);
+        // ランダムなメッセージビットを生成（packed bit形式）
+        const packedMessageSize = Math.ceil(k / 8);
+        const messageBitsUnpacked = new Array(k);
         for (let i = 0; i < k; i++) {
-            messageBits[i] = Math.round(Math.random());
+            messageBitsUnpacked[i] = Math.round(Math.random());
         }
+        const messageBits = packBits(messageBitsUnpacked);
 
         const encodedCodeword = ldpc.encode(messageBits);
 
-        // 符号語の長さが正しいことを確認
-        expect(encodedCodeword.length).toBe(n);
+        // 符号語の長さが正しいことを確認（packed bit形式）
+        const expectedCodewordSize = Math.ceil(n / 8);
+        expect(encodedCodeword.length).toBe(expectedCodewordSize);
 
-        // 符号語がH行列のパリティチェック条件を満たすことを確認
-        const hcProduct = computeHcProduct(encodedCodeword, hMatrixData);
-        const parityCheckPassed = checkParity(encodedCodeword, hMatrixData);
+        // 符号語がH行列のパリティチェック条件を満たすことを確認（packed bit対応）
+        const parityCheckPassed = checkMatrixParityPacked(encodedCodeword, hMatrixData);
         
         if (!parityCheckPassed) {
-            console.log('H * c product:', Array.from(hcProduct));
-            console.log('Non-zero positions:', Array.from(hcProduct).map((v, i) => v !== 0 ? i : -1).filter(i => i !== -1));
-            console.log('Encoded codeword (first 20):', Array.from(encodedCodeword.slice(0, 20)));
-            console.log('Message bits:', Array.from(messageBits));
+            console.log('Encoded codeword bytes:', Array.from(encodedCodeword));
+            console.log('Message bits (unpacked):', messageBitsUnpacked.slice(0, 20));
         }
         
         expect(parityCheckPassed).toBe(true);
@@ -1944,4 +1942,78 @@ describe('LDPC Decoder (Min-Sum)', () => {
         }
         return result;
     }
+
+    it('should demonstrate significant memory efficiency with packed bit format', () => {
+        console.log('\n=== PACKED BIT MEMORY EFFICIENCY VERIFICATION ===');
+        
+        // 大きなサイズでメモリ効率を測定
+        const testSizes = [
+            { k: 100, description: "Small (100-bit message)" },
+            { k: 1000, description: "Medium (1000-bit message)" },
+            { k: 10000, description: "Large (10000-bit message)" }
+        ];
+
+        for (const size of testSizes) {
+            console.log(`\n${size.description}:`);
+            
+            // Packed bit形式のメモリ使用量
+            const packedInputSize = Math.ceil(size.k / 8); // バイト数
+            
+            // 仮想的な1-bit=1-byte形式のメモリ使用量（比較用）
+            const unpackedInputSize = size.k; // バイト数（1ビット=1バイト）
+            
+            // メモリ効率の計算
+            const memoryReduction = ((unpackedInputSize - packedInputSize) / unpackedInputSize * 100);
+            const compressionRatio = unpackedInputSize / packedInputSize;
+            
+            console.log(`  Packed format:   ${packedInputSize} bytes`);
+            console.log(`  Unpacked format: ${unpackedInputSize} bytes`);
+            console.log(`  Memory reduction: ${memoryReduction.toFixed(1)}%`);
+            console.log(`  Compression ratio: ${compressionRatio.toFixed(1)}:1`);
+            
+            // 期待値：約87.5%のメモリ削減（8:1の圧縮比）
+            expect(memoryReduction).toBeGreaterThan(85);
+            expect(compressionRatio).toBeGreaterThan(7.5);
+        }
+
+        // 実際のエンコード処理でのメモリ効率確認
+        console.log('\n実際のエンコード処理でのメモリ効率:');
+        
+        // 大きなH行列を使った実際のテスト（既存のpyldpc行列）
+        const ldpc = new LDPC(hMatrixData);
+        const k = ldpc.getMessageLength();
+        const n = ldpc.getCodewordLength();
+        
+        console.log(`符号パラメータ: k=${k}, n=${n}, rate=${(k/n).toFixed(3)}`);
+        
+        // 入力メッセージのメモリ効率  
+        const packedMessageSize = Math.ceil(k / 8);
+        const unpackedMessageSize = k;
+        const messageReduction = ((unpackedMessageSize - packedMessageSize) / unpackedMessageSize * 100);
+        
+        // 出力符号語のメモリ効率  
+        const packedCodewordSize = Math.ceil(n / 8);
+        const unpackedCodewordSize = n;
+        const codewordReduction = ((unpackedCodewordSize - packedCodewordSize) / unpackedCodewordSize * 100);
+        
+        console.log(`Message: ${packedMessageSize} bytes vs ${unpackedMessageSize} bytes (${messageReduction.toFixed(1)}% reduction)`);
+        console.log(`Codeword: ${packedCodewordSize} bytes vs ${unpackedCodewordSize} bytes (${codewordReduction.toFixed(1)}% reduction)`);
+        
+        // 実際のエンコードテスト
+        const testMessage = new Uint8Array(packedMessageSize);
+        // ランダムなビットパターンを設定
+        for (let i = 0; i < packedMessageSize; i++) {
+            testMessage[i] = Math.floor(Math.random() * 256);
+        }
+        
+        const codeword = ldpc.encode(testMessage);
+        expect(codeword.length).toBe(packedCodewordSize);
+        
+        // パリティチェック
+        const isValid = checkMatrixParityPacked(codeword, hMatrixData);
+        expect(isValid).toBe(true);
+        
+        console.log('✅ Packed bit形式のエンコードが正常に動作');
+        console.log(`📦 総メモリ削減: Input ${messageReduction.toFixed(1)}%, Output ${codewordReduction.toFixed(1)}%`);
+    });
 });

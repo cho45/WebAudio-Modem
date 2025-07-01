@@ -195,25 +195,58 @@ export class LDPC {
     }
 
     /**
-     * メッセージビットをLDPC符号化する (Systematic Encoding)
-     * @param messageBits 情報ビット (kビット長)
-     * @returns 符号化されたワード (nビット長)
+     * packed bit形式のバイト配列から指定ビット位置の値を取得
+     * @param bytes バイト配列
+     * @param bitIndex ビット位置 (0から開始)
+     * @returns ビット値 (0 または 1)
      */
-    public encode(messageBits: Uint8Array): Uint8Array {
-        if (messageBits.length !== this.K_message_length) {
-            throw new Error(`Message bits length must be ${this.K_message_length}, but got ${messageBits.length}`);
+    private getBit(bytes: Uint8Array, bitIndex: number): number {
+        const byteIndex = Math.floor(bitIndex / 8);
+        if (byteIndex >= bytes.length) {
+            return 0; // 範囲外は0として扱う
         }
+        const bitOffset = bitIndex % 8;
+        return (bytes[byteIndex] >> (7 - bitOffset)) & 1;
+    }
 
+    /**
+     * packed bit形式のバイト配列の指定ビット位置に値を設定
+     * @param bytes バイト配列
+     * @param bitIndex ビット位置 (0から開始)
+     * @param value ビット値 (0 または 1)
+     */
+    private setBit(bytes: Uint8Array, bitIndex: number, value: number): void {
+        const byteIndex = Math.floor(bitIndex / 8);
+        if (byteIndex >= bytes.length) {
+            return; // 範囲外は無視
+        }
+        const bitOffset = bitIndex % 8;
+        if (value) {
+            bytes[byteIndex] |= (1 << (7 - bitOffset));
+        } else {
+            bytes[byteIndex] &= ~(1 << (7 - bitOffset));
+        }
+    }
+
+    /**
+     * メッセージビットをLDPC符号化する (Systematic Encoding - Packed Bit形式)
+     * @param messageBytes packed bit形式の情報ビット (K_message_lengthビットを含むバイト配列)
+     * @returns packed bit形式の符号化されたワード (符号長ビットを含むバイト配列)
+     */
+    public encode(messageBytes: Uint8Array): Uint8Array {
         const n = this.H_width;   // 符号長
         const k = this.K_message_length; // 情報ビット長
         const rank = this.systematicMatrix.rank;
 
+        // 出力用packed bit配列を確保 (符号長分のバイト数)
+        const outputByteLength = Math.ceil(n / 8);
+        const systematicCodewordBytes = new Uint8Array(outputByteLength);
+
         // 1. Systematic形式でエンコード [I | P] c = [p | m]
-        const systematicCodeword = new Uint8Array(n);
-        
         // メッセージビット部分を配置（systematic形式の右側、rank位置以降）
         for (let i = 0; i < k; i++) {
-            systematicCodeword[rank + i] = messageBits[i];
+            const msgBit = this.getBit(messageBytes, i);
+            this.setBit(systematicCodewordBytes, rank + i, msgBit);
         }
 
         // 2. パリティビット計算 p^T = P * m^T (mod 2)
@@ -223,22 +256,24 @@ export class LDPC {
             for (let col = 0; col < k; col++) {
                 if (rank + col < n) {
                     const pElement = this.systematicMatrix.systematicH[row][rank + col];
-                    paritySum ^= (pElement & messageBits[col]);
+                    const msgBit = this.getBit(messageBytes, col);
+                    paritySum ^= (pElement & msgBit);
                 }
             }
-            systematicCodeword[row] = paritySum;
+            this.setBit(systematicCodewordBytes, row, paritySum);
         }
 
         // 3. 元の列順序に戻す（逆置換）
-        const originalCodeword = new Uint8Array(n);
+        const originalCodewordBytes = new Uint8Array(outputByteLength);
         
-        // systematic形式から元の形式に戻す
+        // systematic形式から元の形式に戻す (packed bit直接処理)
         for (let systematicPos = 0; systematicPos < n; systematicPos++) {
             const originalCol = this.systematicMatrix.columnPermutation[systematicPos];
-            originalCodeword[originalCol] = systematicCodeword[systematicPos];
+            const bit = this.getBit(systematicCodewordBytes, systematicPos);
+            this.setBit(originalCodewordBytes, originalCol, bit);
         }
 
-        return originalCodeword;
+        return originalCodewordBytes;
     }
 
     /**
