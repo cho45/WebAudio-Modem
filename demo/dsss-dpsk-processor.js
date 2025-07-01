@@ -92,8 +92,13 @@ class TestProcessor extends AudioWorkletProcessor {
 					// DPSK demodulate phases to get LLRs for chips
 					const chipLlrs = modem.dpskDemodulate(demodPhases);
 					
+					// Convert SNR to noise variance for dsssDespread API
+					// SNR_linear = 10^(SNR_dB / 10), Noise Variance = 1 / SNR_linear (assuming unit signal power)
+					const snrLinear = Math.pow(10, this.estimatedSnrDb / 10);
+					const noiseVariance = 1.0 / snrLinear;
+					
 					// DSSS despread soft chips to get LLRs for original bits
-					const llr = modem.dsssDespread(chipLlrs, reference.length, this.params.seed, estimatedSnrDb);
+					const llr = modem.dsssDespread(chipLlrs, reference.length, this.params.seed, noiseVariance);
 					
 					// Convert LLR to bits (positive LLR = bit 0, negative LLR = bit 1)
 					const demodBits = Array.from(llr).map(l => l >= 0 ? 0 : 1);
