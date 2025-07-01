@@ -1773,12 +1773,13 @@ describe('LDPC Decoder (Min-Sum)', () => {
 
         const result = ldpc.decode(receivedLlr);
 
-        // 復号結果が全て0であることを期待
-        const expectedCodeword = new Uint8Array(n).fill(0);
+        // 復号結果が全て0であることを期待（packed bit形式）
+        const expectedCodewordSize = Math.ceil(n / 8);
+        const expectedCodeword = new Uint8Array(expectedCodewordSize).fill(0);
         expect(result.decodedCodeword).toEqual(expectedCodeword);
         expect(result.converged).toBe(true);
-        // 収束したことを確認するため、パリティチェックも行う
-        expect(checkParity(result.decodedCodeword, hMatrixData)).toBe(true);
+        // 収束したことを確認するため、パリティチェックも行う（packed bit対応）
+        expect(checkMatrixParityPacked(result.decodedCodeword, hMatrixData)).toBe(true);
     });
 
     it('should correctly decode an all-zero codeword with some noise', () => {
@@ -1795,11 +1796,12 @@ describe('LDPC Decoder (Min-Sum)', () => {
 
         const result = ldpc.decode(receivedLlr);
 
-        // 復号結果が全て0であることを期待（ノイズが訂正されることを期待）
-        const expectedCodeword = new Uint8Array(n).fill(0);
+        // 復号結果が全て0であることを期待（ノイズが訂正されることを期待、packed bit形式）
+        const expectedCodewordSize = Math.ceil(n / 8);
+        const expectedCodeword = new Uint8Array(expectedCodewordSize).fill(0);
         expect(result.decodedCodeword).toEqual(expectedCodeword);
         expect(result.converged).toBe(true);
-        expect(checkParity(result.decodedCodeword, hMatrixData)).toBe(true);
+        expect(checkMatrixParityPacked(result.decodedCodeword, hMatrixData)).toBe(true);
     });
 
     it('should correctly encode all-zero message bits', () => {
@@ -1858,14 +1860,15 @@ describe('LDPC Decoder (Min-Sum)', () => {
 
     it.skip('should decode an all-zero codeword after DSSS+DPSK modulation/demodulation with noise', () => {
         const n = ldpc.getCodewordLength();
-        const originalCodeword = new Uint8Array(n).fill(0); // 全ゼロ符号語
+        const originalCodewordSize = Math.ceil(n / 8);
+        const originalCodeword = new Uint8Array(originalCodewordSize).fill(0); // 全ゼロ符号語（packed bit形式）
 
         // 1. 符号語をDPSK変調
         // DSSS+DPSKでは、ビットはM系列で拡散され、その結果がDPSK変調される
         // ここでは簡単のため、直接DPSK変調に渡す（DSSSは別途考慮）
         // dsss-dpsk.ts の dpskModulate は chips (+1/-1) を受け取る
         // 0ビットを+1、1ビットを-1として扱う
-        const dpskInputChips = originalCodeword.map(bit => (bit === 0 ? 1 : -1)) as any as Int8Array;
+        const dpskInputChips = unpackBits(originalCodeword, n).map(bit => (bit === 0 ? 1 : -1)) as any as Int8Array;
         const modulatedPhases = dpskModulate(dpskInputChips);
 
         // 2. 搬送波変調
@@ -1896,33 +1899,13 @@ describe('LDPC Decoder (Min-Sum)', () => {
         // 5. LDPC復号
         const result = ldpc.decode(receivedLlr);
 
-        // 復号結果が元の符号語と一致すること、パリティチェックを満たすことを期待
+        // 復号結果が元の符号語と一致すること、パリティチェックを満たすことを期待（packed bit形式）
         expect(result.decodedCodeword).toEqual(originalCodeword);
         expect(result.converged).toBe(true);
-        expect(checkParity(result.decodedCodeword, hMatrixData)).toBe(true);
+        expect(checkMatrixParityPacked(result.decodedCodeword, hMatrixData)).toBe(true);
     });
 
-    // 復号された符号語がH行列のパリティチェック条件を満たすか検証するヘルパー関数
-    function checkParity(codeword: Uint8Array, hData: HMatrixData): boolean {
-        // checkNodeConnections を hData から再構築する代わりに、LDPCインスタンスの内部プロパティを使用
-        // ただし、テストヘルパー関数なので、hData を直接使う方が独立性が高い
-        const checkNodeConnections: number[][] = Array(hData.height).fill(0).map(() => []);
-        for (const conn of hData.connections) {
-            checkNodeConnections[conn.check].push(conn.bit);
-        }
-
-        for (let m = 0; m < hData.height; m++) {
-            let sum = 0;
-            const connectedBits = checkNodeConnections[m];
-            for (const n of connectedBits) {
-                sum += codeword[n];
-            }
-            if (sum % 2 !== 0) {
-                return false; // パリティチェック失敗
-            }
-        }
-        return true; // 全てのパリティチェック成功
-    }
+    // 注意: checkParity関数は削除済み - 代わりにcheckMatrixParityPacked関数を使用
 
     // デバッグ用: H行列と符号語の行列積を計算する関数
     function computeHcProduct(codeword: Uint8Array, hData: HMatrixData): Uint8Array {

@@ -281,7 +281,7 @@ export class LDPC {
      * @param receivedLlr 受信したLLR値 (nビット長, int8_t [-128, +127] スケール)
      * @param maxIterations 最大反復回数 (省略された場合はコンストラクタで指定されたデフォルト値を使用)
      * @returns 復号結果オブジェクト
-     *          - decodedCodeword: 復号された符号語 (nビット長, 0または1)
+     *          - decodedCodeword: 復号された符号語 (packed bit形式のバイト配列)
      *          - iterations: 実際に実行された反復回数
      *          - converged: 収束したかどうか (H * decodedCodeword^T = 0 が満たされたか)
      */
@@ -320,7 +320,7 @@ export class LDPC {
 
         let iterations = 0;
         let converged = false;
-        const decodedCodeword = new Uint8Array(this.H_width);
+        const decodedCodeword = new Uint8Array(Math.ceil(this.H_width / 8));
 
         // Min-Sumアルゴリズムの初期化
         // 各ビットノードから接続するチェックノードへの初期メッセージは、受信LLR L_c(n)
@@ -402,16 +402,17 @@ export class LDPC {
                 }
                 L_Q[n] = L_c[n] + sumOfL_r_messages;
 
-                decodedCodeword[n] = L_Q[n] < 0 ? 1 : 0; // LLR < 0 なら 1, LLR >= 0 なら 0
+                const bitValue = L_Q[n] < 0 ? 1 : 0; // LLR < 0 なら 1, LLR >= 0 なら 0
+                this.setBit(decodedCodeword, n, bitValue);
             }
 
-            // d. パリティチェック (H * x_hat^T = 0)
+            // d. パリティチェック (H * x_hat^T = 0) - packed bit形式
             let allChecksPass = true;
             for (let m = 0; m < this.H_height; m++) { // 各チェックノード m
                 let sum = 0;
                 const connectedBits = this.checkNodeConnections[m];
                 for (const n of connectedBits) {
-                    sum += decodedCodeword[n];
+                    sum += this.getBit(decodedCodeword, n);
                 }
                 if (sum % 2 !== 0) { // パリティチェック失敗
                     allChecksPass = false;
