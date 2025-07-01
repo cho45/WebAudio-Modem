@@ -438,16 +438,16 @@
  			const { sequenceLength, samplesPerPhase, carrierFreq, bandwidth } = params;
  
  			const testNode = new TestNode(audioCtx, {
+				seed: null,
  				sequenceLength,
  				samplesPerPhase,
  				carrierFreq,
  				bandwidth,
- 				snr: snr // Add SNR to processorOptions
  			});
  
  			const stream = await navigator.mediaDevices.getUserMedia({
  			audio: {
- 				sampleRate: audioCtx.sampleRate,
+ 				sampleRate,
  				channelCount: 1,
  				echoCancellation: false,
  				noiseSuppression: false,
@@ -461,12 +461,22 @@
  			await new Promise(resolve => setTimeout(resolve, 200));
  
  			// 信号をWebAudioサンプルレートで再生成
- 			const chips = modem.dsssSpread(lastBits, lastParams.sequenceLength);
+ 			const chips = modem.dsssSpread(lastBits, sequenceLength);
  			const chipPhases = modem.dpskModulate(chips, 0);
- 			const samples = modem.modulateCarrier(chipPhases, lastParams.samplesPerPhase, sampleRate, lastParams.carrierFreq);
- 			const audioSamples = Float32Array.from(samples, v => Math.max(-1, Math.min(1, v * 0.8)));
+ 			const samples = modem.modulateCarrier(chipPhases, samplesPerPhase, sampleRate, carrierFreq);
+ 			const audioSamples = Float32Array.from(samples, v => v * 0.8);
  			lastSamples = audioSamples;
- 			playAudio(audioSamples, sampleRate);
+
+			if (false) {
+				playAudio(audioSamples, sampleRate);
+			} else { 
+				const buf = audioCtx.createBuffer(1, audioSamples.length + sampleRate, sampleRate);
+				buf.getChannelData(0).set(audioSamples);
+				audioSource = audioCtx.createBufferSource();
+				audioSource.buffer = buf;
+				audioSource.connect(testNode);
+				audioSource.start();
+			}
  		};
  		document.getElementById('stop').onclick = stopAudio;
 		run();

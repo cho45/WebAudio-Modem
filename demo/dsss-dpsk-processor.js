@@ -60,10 +60,6 @@ class TestProcessor extends AudioWorkletProcessor {
 				modulationParams,
 				maxChipOffset
 			);
-
-			if (result.peakCorrelation != 0) {
-				console.log(`Sync search result:`, result);
-			}
 			
 			if (result.isFound) {
 				console.log(`Sync found at chip offset ${result.bestChipOffset}, sample offset ${result.bestSampleOffset}`);
