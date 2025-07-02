@@ -172,6 +172,21 @@ describe('DSSS Despreading', () => {
     }
   });
 
+  test('should recover original bits perfectly', () => {
+    const originalBits = new Uint8Array([1, 0, 1, 0]);
+    const chips = dsssSpread(originalBits);
+    const llr = dsssDespread(new Float32Array(chips));
+    
+    expect(llrToBits(llr)).toEqual(Array.from(originalBits));
+    for (let i = 0; i < originalBits.length; i++) {
+      if (originalBits[i] === 0) {
+        expect(llr[i]).toBeCloseTo(127, 0);
+      } else {
+        expect(llr[i]).toBeCloseTo(-127, 0);
+      }
+    }
+  });
+
   test('should handle single bit', () => {
     const originalBits = new Uint8Array([0]);
     const chips = dsssSpread(originalBits);
@@ -917,18 +932,14 @@ describe('Step 4: Synchronization Functions', () => {
       expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(0.7);
     });
 
-    test.skip('should handle inverted sequences', () => {
-      // TECHNICAL CONSTRAINT: Current implementation uses absolute value for correlation peaks,
-      // which loses sign information needed for detecting inverted sequences.
-      // This is a limitation of the samplesPerPhase=23 precision constraints.
-      // Use multiple inverted bits for longer signal and better correlation
-      const originalBits = new Uint8Array([1, 1, 1]);
+    test('should handle inverted sequences', () => {
+      const originalBits = new Uint8Array([1, 1, 1, 1]);
       const reference = generateSyncReference();
       
       const spreadChips = dsssSpread(originalBits);
       const phases = dpskModulate(spreadChips);
       
-      const samplesPerPhase = 8;
+      const samplesPerPhase = 23;
       const sampleRate = 48000;
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);

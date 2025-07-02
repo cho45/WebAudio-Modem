@@ -307,7 +307,6 @@
 			// 1. ランダムビット列
 			const bits = randomBits(bitLength); // Use bitLength from query param
 			bits[0] = 0;
-			bits[1] = 0;
 			lastBits = bits;
 			console.log('bits:', Array.from(bits).join(''));
 			// 2. DSSS拡散

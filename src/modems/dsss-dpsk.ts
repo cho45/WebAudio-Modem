@@ -511,6 +511,7 @@ function decimatedMatchedFilter(
   correlations: Float32Array;
   sampleOffsets: number[];
 } {
+
   // Step 1: Decimate input signals for speed
   const decimatedReceived = decimateSignal(receivedSamples, decimationFactor);
   const decimatedReference = decimateSignal(referenceSamples, decimationFactor);
@@ -645,7 +646,6 @@ function detectSynchronizationPeak(
  * @param referenceSequence Known M-sequence for correlation as Int8Array
  * @param modulationParams Modulation parameters
  * @param maxChipOffset Maximum chip offset to search
- * @param detectionThresholds Detection thresholds (must be externally specified)
  * @returns Object with best offsets, correlation peak, and detection metrics
  */
 export function findSyncOffset(

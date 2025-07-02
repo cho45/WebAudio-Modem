@@ -1,15 +1,15 @@
 /**
  * BCH (Bose-Chaudhuri-Hocquenghem) Error Correction Code Implementation
  * 理論的に正しい実装: t=1の1ビット訂正・2ビット検出
- * 
+ *
  * BCH符号の数学的基礎:
  * - ガロア体GF(2^m)上の線形ブロック符号
  * - 生成多項式: g(x) = lcm(m_1(x), m_3(x), ..., m_{2t-1}(x))
  * - シンドローム: S_j = r(α^j) for j = 1, 2, ..., 2t
  * - エラー位置: Chien探索によるルート検出
- * 
+ *
  * 型分離ルール:
- * - ビット: 2値データ (0/1) → Uint8Array  
+ * - ビット: 2値データ (0/1) → Uint8Array
  * - ソフトビット: 確信度付きビット (-127≈0確実, +127≈1確実) → Int8Array
  * - チップ: 拡散符号 (+1/-1) → Int8Array
  * - サンプル: アナログ信号のデジタル表現 → Float32Array
@@ -31,13 +31,49 @@ export interface BCHDecodeResult {
 }
 
 // ガロア体GF(2^m)
-interface GaloisField {
-  m: number;              // 体の次数
-  n: number;              // 2^m - 1 (体の要素数)
-  primitivePoly: number;  // 原始多項式
-  alphaTo: number[];      // α^i のテーブル (i = 0 to n-1)
-  logAlpha: number[];     // log_α(x) のテーブル (x = 1 to n)
+export class GaloisField {
+  readonly m: number;
+  readonly n: number;
+  readonly primitivePoly: number;
+  readonly alphaTo: number[];
+  readonly logAlpha: number[];
+
+  constructor(m: number, primitivePoly: number) {
+    this.m = m;
+    this.primitivePoly = primitivePoly;
+    this.n = (1 << m) - 1;
+    this.alphaTo = new Array(this.n + 1).fill(0);
+    this.logAlpha = new Array(this.n + 1).fill(-1);
+
+    this.alphaTo[0] = 1;
+    for (let i = 1; i < this.n; i++) {
+      this.alphaTo[i] = this.alphaTo[i - 1] << 1;
+      if (this.alphaTo[i] & (1 << m)) {
+        this.alphaTo[i] ^= primitivePoly;
+      }
+    }
+
+    for (let i = 0; i < this.n; i++) {
+      this.logAlpha[this.alphaTo[i]] = i;
+    }
+  }
+
+  multiply(a: number, b: number): number {
+    if (a === 0 || b === 0) return 0;
+    const logSum = (this.logAlpha[a] + this.logAlpha[b]) % this.n;
+    return this.alphaTo[logSum];
+  }
+
+  power(base: number, exp: number): number {
+    if (base === 0) return 0;
+    if (exp === 0) return 1;
+    const normalizedExp = ((exp % this.n) + this.n) % this.n;
+    if (this.logAlpha[base] === -1) return 0;
+    const logResult = (this.logAlpha[base] * normalizedExp) % this.n;
+    return this.alphaTo[logResult];
+  }
 }
+
 
 // BCH符号パラメータ
 interface BCHParams {
@@ -86,77 +122,16 @@ const BCH_CONFIGS = {
 const galoisFieldCache = new Map<string, GaloisField>();
 const bchParamsCache = new Map<BCHCodeType, BCHParams>();
 
-/**
- * ガロア体GF(2^m)を構成
- * @param m 体の次数
- * @param primitivePoly 原始多項式
- * @returns ガロア体
- */
-export function createGaloisField(m: number, primitivePoly: number): GaloisField {
+function getGaloisField(m: number, primitivePoly: number): GaloisField {
   const cacheKey = `${m}_${primitivePoly}`;
   if (galoisFieldCache.has(cacheKey)) {
     return galoisFieldCache.get(cacheKey)!;
   }
-
-  const n = (1 << m) - 1; // 2^m - 1
-  const alphaTo = new Array(n + 1).fill(0);
-  const logAlpha = new Array(n + 1).fill(-1);
-
-  // α^0 = 1
-  alphaTo[0] = 1;
-  
-  // α^i を計算（原始多項式での剰余演算）
-  for (let i = 1; i < n; i++) {
-    alphaTo[i] = alphaTo[i - 1] << 1;
-    if (alphaTo[i] & (1 << m)) {
-      alphaTo[i] ^= primitivePoly;
-    }
-  }
-  
-  // 逆引きテーブル（対数テーブル）を作成
-  for (let i = 0; i < n; i++) {
-    logAlpha[alphaTo[i]] = i;
-  }
-
-  const gf: GaloisField = { m, n, primitivePoly, alphaTo, logAlpha };
+  const gf = new GaloisField(m, primitivePoly);
   galoisFieldCache.set(cacheKey, gf);
   return gf;
 }
 
-/**
- * ガロア体での乗算
- * @param gf ガロア体
- * @param a 被乗数
- * @param b 乗数
- * @returns a * b (mod gf)
- */
-export function gfMultiply(gf: GaloisField, a: number, b: number): number {
-  if (a === 0 || b === 0) return 0;
-  const logSum = (gf.logAlpha[a] + gf.logAlpha[b]) % gf.n;
-  return gf.alphaTo[logSum];
-}
-
-/**
- * ガロア体での累乗（理論的に正しい実装）
- * @param gf ガロア体
- * @param base 底
- * @param exp 指数
- * @returns base^exp (mod gf)
- */
-export function gfPower(gf: GaloisField, base: number, exp: number): number {
-  if (base === 0) return 0;
-  if (exp === 0) return 1;
-  
-  // 負の指数を正規化
-  const normalizedExp = ((exp % gf.n) + gf.n) % gf.n;
-  
-  if (gf.logAlpha[base] === -1) {
-    return 0; // baseがガロア体の要素でない
-  }
-  
-  const logResult = (gf.logAlpha[base] * normalizedExp) % gf.n;
-  return gf.alphaTo[logResult];
-}
 
 /**
  * 最小多項式を求める（理論的に正しい実装）
@@ -167,36 +142,36 @@ export function gfPower(gf: GaloisField, base: number, exp: number): number {
 function findMinimalPolynomial(gf: GaloisField, element: number): number[] {
   // 最小多項式は(x - element)(x - element^2)(x - element^4)...
   // を展開したもの（2の冪乗まで）
-  
+
   const conjugates = new Set<number>();
   let current = element;
-  
+
   // 共役元を求める（element, element^2, element^4, ...）
   do {
     conjugates.add(current);
-    current = gfMultiply(gf, current, current); // 二乗
+    current = gf.multiply(current, current); // 二乗
   } while (!conjugates.has(current));
-  
+
   // 最小多項式を構築: ∏(x - conjugate)
   let poly = [1]; // 初期値: 1
-  
+
   for (const conj of conjugates) {
     // (x - conj) を乗算
     const newPoly = new Array(poly.length + 1).fill(0);
-    
+
     // x * poly(x)
     for (let i = 0; i < poly.length; i++) {
       newPoly[i + 1] ^= poly[i];
     }
-    
+
     // -conj * poly(x) = conj * poly(x) (GF(2)では-1 = 1)
     for (let i = 0; i < poly.length; i++) {
-      newPoly[i] ^= gfMultiply(gf, conj, poly[i]);
+      newPoly[i] ^= gf.multiply(conj, poly[i]);
     }
-    
+
     poly = newPoly;
   }
-  
+
   return poly;
 }
 
@@ -214,7 +189,7 @@ function constructGeneratorPoly(gf: GaloisField, t: number): number[] {
   // t=1の場合: g(x) = m_1(x) (αの最小多項式)
   const alpha = gf.alphaTo[1]; // α^1（原始元）
   const minPoly = findMinimalPolynomial(gf, alpha);
-  
+
   // 最低次から最高次への順序を最高次から最低次に変換
   return [...minPoly].reverse();
 }
@@ -261,7 +236,7 @@ function evaluatePolynomial(gf: GaloisField, codewordBits: number[], alphaJ: num
   let result = 0;
   for (let i = 0; i < codewordBits.length; i++) {
     // result = result * alphaJ + codewordBits[i]
-    result = gfMultiply(gf, result, alphaJ);
+    result = gf.multiply(result, alphaJ);
     result ^= codewordBits[i];
   }
   return result;
@@ -278,14 +253,14 @@ function evaluatePolynomial(gf: GaloisField, codewordBits: number[], alphaJ: num
  */
 function calculateSyndromes(gf: GaloisField, receivedBits: number[], t: number): number[] {
   const syndromes: number[] = [];
-  
+
   // t=1の場合はS₁のみ計算
   for (let j = 1; j < 2 * t; j += 2) { // 1, 3, 5, ..., 2t-1
     const alphaJ = gf.alphaTo[j % gf.n];
     const syndrome = evaluatePolynomial(gf, receivedBits, alphaJ);
     syndromes.push(syndrome);
   }
-  
+
   return syndromes;
 }
 
@@ -362,9 +337,9 @@ function bitsToBytes(bits: number[]): Uint8Array {
  */
 function buildBCHParams(type: BCHCodeType): BCHParams {
   const config = BCH_CONFIGS[type];
-  const gf = createGaloisField(config.m, config.primitivePoly);
+  const gf = getGaloisField(config.m, config.primitivePoly);
   const generatorPoly = constructGeneratorPoly(gf, config.t);
-  
+
   return {
     m: config.m,
     t: config.t,
@@ -387,45 +362,45 @@ export function bchEncode(data: Uint8Array, type: BCHCodeType): Uint8Array {
     bchParamsCache.set(type, buildBCHParams(type));
   }
   const params = bchParamsCache.get(type)!;
-  
+
   const dataBits = bytesToBits(data);
-  
+
   // データ長チェック
   const maxDataBits = Math.floor(params.k / 8) * 8;
   if (dataBits.length > maxDataBits) {
     throw new Error(`Data too long for ${type}: ${dataBits.length} > ${maxDataBits} bits`);
   }
-  
+
   // データをk bits にパディング
   const paddedDataBits = new Array(params.k).fill(0);
   for (let i = 0; i < dataBits.length; i++) {
     paddedDataBits[i] = dataBits[i];
   }
-  
+
   // 組織符号: c(x) = x^{n-k} * i(x) + (x^{n-k} * i(x) mod g(x))
   // 左シフト: データ + パリティ
   const shiftedData = [...paddedDataBits, ...new Array(params.parityBits).fill(0)];
-  
+
   // パリティビット計算
   const remainder = polyDivision(shiftedData, params.generatorPoly);
-  
+
   // パリティ調整（params.parityBitsの長さに合わせる）
   const parity = new Array(params.parityBits).fill(0);
   for (let i = 0; i < remainder.length; i++) {
     parity[params.parityBits - remainder.length + i] = remainder[i];
   }
-  
+
   // 組織符号構成
   const encodedBits = [...paddedDataBits, ...parity];
-  
+
   // console.log(`Encoded bits: [${encodedBits.slice(0,10).join(',')}...] length=${encodedBits.length}`);
-  
+
   // 符号化検証: g(x)でc(x)を除算した剰余が0か確認
   // const verificationRemainder = polyDivision(encodedBits, params.generatorPoly);
   // console.log(`Verification remainder: [${verificationRemainder.join(',')}]`);
   // const isValidCodeword = verificationRemainder.every(bit => bit === 0);
   // console.log(`Is valid codeword: ${isValidCodeword}`);
-  
+
   return bitsToBytes(encodedBits);
 }
 
@@ -440,9 +415,9 @@ export function bchDecode(encoded: Uint8Array, type: BCHCodeType): BCHDecodeResu
     bchParamsCache.set(type, buildBCHParams(type));
   }
   const params = bchParamsCache.get(type)!;
-  
+
   const receivedBits = bytesToBits(encoded);
-  
+
   // 符号語長チェック
   if (receivedBits.length < params.n) {
     return {
@@ -454,13 +429,13 @@ export function bchDecode(encoded: Uint8Array, type: BCHCodeType): BCHDecodeResu
       }
     };
   }
-  
+
   // 符号語部分を抽出
   const codewordBits = receivedBits.slice(0, params.n);
-  
+
   // シンドローム計算
   const syndromes = calculateSyndromes(params.gf, codewordBits, params.t);
-  
+
   // BCH理論に基づくエラー検出と訂正
   const allSyndromesZero = syndromes.every(s => s === 0);
 

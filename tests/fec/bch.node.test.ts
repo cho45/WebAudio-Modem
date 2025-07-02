@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'vitest';
-import { bchEncode, bchDecode, getBCHParams, type BCHCodeType, createGaloisField, gfMultiply, gfPower } from '../../src/fec/bch';
+import { bchEncode, bchDecode, getBCHParams, type BCHCodeType, GaloisField } from '../../src/fec/bch';
 
 describe('Galois Field Operations', () => {
   // GF(2^3) with primitive polynomial x^3 + x + 1 (11)
-  const gf = createGaloisField(3, 0b1011);
+  const gf = new GaloisField(3, 0b1011);
   const alphaTo = [1, 2, 4, 3, 6, 7, 5]; // α^0 to α^6
 
   test('should create a Galois Field correctly for GF(2^3)', () => {
@@ -17,26 +17,26 @@ describe('Galois Field Operations', () => {
     expect(gf.logAlpha[5]).toBe(6); // log(α^6)
   });
 
-  test('gfMultiply should perform multiplication correctly in GF(2^3)', () => {
+  test('multiply should perform multiplication correctly in GF(2^3)', () => {
     // α^1 * α^2 = 2 * 4 = 3 = α^3
-    expect(gfMultiply(gf, 2, 4)).toBe(3);
+    expect(gf.multiply(2, 4)).toBe(3);
     // α^3 * α^4 = 3 * 6 = 1 = α^0
-    expect(gfMultiply(gf, 3, 6)).toBe(1);
+    expect(gf.multiply(3, 6)).toBe(1);
     // Test wrap-around: α^5 * α^3 = 7 * 3 = 2 = α^8 = α^1
-    expect(gfMultiply(gf, 7, 3)).toBe(2);
+    expect(gf.multiply(7, 3)).toBe(2);
     // Test multiplication by 1 (identity)
-    expect(gfMultiply(gf, 6, 1)).toBe(6);
+    expect(gf.multiply(6, 1)).toBe(6);
   });
 
-  test('gfPower should perform exponentiation correctly in GF(2^3)', () => {
+  test('power should perform exponentiation correctly in GF(2^3)', () => {
     // (α^2)^2 = 4^2 = 6 = α^4
-    expect(gfPower(gf, 4, 2)).toBe(6);
+    expect(gf.power(4, 2)).toBe(6);
     // (α^3)^3 = α^9 = α^2 = 4
-    expect(gfPower(gf, 3, 3)).toBe(4);
+    expect(gf.power(3, 3)).toBe(4);
     // Test negative exponent: (α^2)^-1 = α^-2 = α^5 = 7
-    expect(gfPower(gf, 4, -1)).toBe(7);
+    expect(gf.power(4, -1)).toBe(7);
     // Test large exponent: (α^2)^8 = α^16 = α^2 = 4
-    expect(gfPower(gf, 4, 8)).toBe(4);
+    expect(gf.power(4, 8)).toBe(4);
   });
 });
 
