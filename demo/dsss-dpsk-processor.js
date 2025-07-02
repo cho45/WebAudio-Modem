@@ -20,7 +20,7 @@ class TestProcessor extends AudioWorkletProcessor {
 		// Modulation parameters required by current API
 		this.modulationParams = {
 			sampleRate: sampleRate,
-			samplesPerPhase: this.params.samplesPerPhase || 8,
+			samplesPerPhase: this.params.samplesPerPhase || 23,
 			carrierFreq: this.params.carrierFreq || 10000
 		};
 
@@ -58,7 +58,8 @@ class TestProcessor extends AudioWorkletProcessor {
 				this.buffer, 
 				reference, 
 				modulationParams,
-				maxChipOffset
+				maxChipOffset,
+				{ correlationThreshold: 0.4, peakToNoiseRatio: 3.0 } // Standard detection thresholds
 			);
 			
 			if (result.isFound) {

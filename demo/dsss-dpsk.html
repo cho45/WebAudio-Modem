@@ -270,26 +270,24 @@
 		}
 
 		function calculateParameters(params) {
-			const { sampleRate, lowerBound, upperBound, sequenceLength } = params;
+			const { sampleRate, lowerBound, upperBound, sequenceLength, minCyclesPerChip = 3 } = params;
 
-			const carrierFreq = (upperBound - lowerBound) / 2 + lowerBound;
+			const carrierFreq = (upperBound + lowerBound) / 2;
 			const bandwidth = upperBound - lowerBound;
 
 			if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('sampleRate must be > 0');
 			if (!Number.isFinite(lowerBound) || !Number.isFinite(upperBound) || lowerBound >= upperBound) throw new Error('lowerBound < upperBound required');
 			if (!Number.isFinite(sequenceLength) || sequenceLength < 1) throw new Error('sequenceLength must be >= 1');
 			if (bandwidth <= 0) throw new Error('bandwidth must be > 0');
+			if (!Number.isFinite(minCyclesPerChip) || minCyclesPerChip < 1) throw new Error('minCyclesPerChip must be >= 1');
 
-			const chipRate = bandwidth / 2;
-			if (chipRate <= 0) throw new Error('chipRate must be > 0');
+			// 1チップあたりminCyclesPerChip周期のキャリアを保証
+			let chipRate = carrierFreq / minCyclesPerChip;
+			// チップレートが帯域幅を超えないよう制限
+			if (chipRate > bandwidth) chipRate = bandwidth;
+			const samplesPerPhase = Math.floor(sampleRate / chipRate);
 
-			let samplesPerPhase = Math.floor(sampleRate / chipRate);
-			if (!Number.isFinite(samplesPerPhase) || samplesPerPhase < 1) {
-				console.warn('samplesPerPhase < 1, forcing to 1');
-				samplesPerPhase = 1;
-			}
-
-			return { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth };
+			return { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth, chipRate, minCyclesPerChip };
 		}
 
 		function run() {
@@ -330,7 +328,7 @@
 			const syncReference = modem.generateSyncReference(sequenceLength);
 			// SNR -3dBは厳しいので、より多くの試行で同期検出
 			// Use searchRangeChips from test for debugging
-			const syncResult = modem.findSyncOffset(noisySamples, syncReference, modulationParams, 20);
+			const syncResult = modem.findSyncOffset(noisySamples, syncReference, modulationParams, 20, { correlationThreshold: 0.4, peakToNoiseRatio: 3.0 });
 			
 			console.log('Sync result:', syncResult);
 			console.log('Original bits:', bits);

@@ -562,19 +562,21 @@ function decimatedMatchedFilter(
 
 
 /**
- * Theoretically principled DSSS synchronization detection
- * Based on signal theory and correlation properties, no arbitrary magic numbers
+ * DSSS synchronization detection with externally configurable detection thresholds
  * @param correlations Normalized correlation array from matched filter
  * @param sampleOffsets Corresponding sample offsets  
  * @param samplesPerPhase Samples per chip for offset conversion
- * @param sequenceLength Length of DSSS sequence for theoretical analysis
- * @returns Peak detection results based on signal theory
+ * @param thresholds Detection parameters (must be externally provided - no magic numbers)
+ * @returns Peak detection results
  */
 function detectSynchronizationPeak(
   correlations: Float32Array,
   sampleOffsets: number[],
   samplesPerPhase: number,
-  sequenceLength: number = 31
+  thresholds: {
+    correlationThreshold: number;    // Minimum correlation for detection (externally specified)
+    peakToNoiseRatio: number;       // Minimum peak-to-noise ratio (externally specified)
+  }
 ): {
   bestSampleOffset: number;
   bestChipOffset: number;
@@ -582,6 +584,10 @@ function detectSynchronizationPeak(
   isFound: boolean;
   peakRatio: number;
 } {
+  // Use externally provided thresholds - no internal defaults or magic numbers
+  const correlationThreshold = thresholds.correlationThreshold;
+  const peakToNoiseRatioThreshold = thresholds.peakToNoiseRatio;
+
   if (correlations.length < 2) {
     return {
       bestSampleOffset: -1,
@@ -592,14 +598,12 @@ function detectSynchronizationPeak(
     };
   }
 
-  // Find peak and analyze correlation distribution
+  // Find peak correlation
   let peakValue = -1;
   let peakIndex = -1;
-  const absCorrelations = new Float32Array(correlations.length);
   
   for (let i = 0; i < correlations.length; i++) {
     const v = Math.abs(correlations[i]);
-    absCorrelations[i] = v;
     if (v > peakValue) {
       peakValue = v;
       peakIndex = i;
@@ -609,58 +613,18 @@ function detectSynchronizationPeak(
   const bestSampleOffset = sampleOffsets[peakIndex];
   const peakCorrelation = correlations[peakIndex];
 
-  // Signal theory based detection criteria
-  // 1. DSSS processing gain provides theoretical minimum detectable correlation
-  // 2. Perfect correlation with sequence length L gives correlation = L  
-  // 3. For normalized correlations, perfect sync gives correlation ≈ 1.0
-  // 4. Minimum detectable signal depends on sequence processing gain
-  
-  // Theoretical minimum correlation for reliable DSSS detection
-  // Based on DSSS processing gain: sqrt(sequence_length) provides the gain
-  // For sequence length 31: minimum detectable correlation ≈ 1/sqrt(31) ≈ 0.18
-  // Adjust for partial sequences by using effective sequence length
-  const effectiveSequenceLength = Math.min(sequenceLength, correlations.length);
-  const theoreticalMinimum = 1.0 / Math.sqrt(effectiveSequenceLength);
-  
-  // Statistical distribution analysis of correlation values
-  // Most positions should contain only noise/cross-correlation
-  const sortedCorrelations = Array.from(absCorrelations).sort((a, b) => a - b);
+  // Simple noise floor estimation from median
+  const sortedCorrelations = Array.from(correlations).map(Math.abs).sort((a, b) => a - b);
   const medianCorrelation = sortedCorrelations[Math.floor(sortedCorrelations.length / 2)];
-  const q75Correlation = sortedCorrelations[Math.floor(sortedCorrelations.length * 0.75)];
+  const noiseFloor = Math.max(medianCorrelation, 1e-6); // Prevent division by zero
   
-  // Robust noise level estimate (most correlations should be noise)
-  const noiseLevel = medianCorrelation;
-  const noiseSpread = q75Correlation - medianCorrelation;
+  const peakToNoiseRatio = peakValue / noiseFloor;
   
-  // Peak significance analysis
-  const peakToNoiseRatio = noiseLevel > 1e-9 ? peakValue / noiseLevel : Infinity;
+  // Simple two-criteria detection
+  const meetsCorrelationThreshold = peakValue >= correlationThreshold;
+  const meetsNoiseRatioThreshold = peakToNoiseRatio >= peakToNoiseRatioThreshold;
   
-  // Theoretically-based detection criteria:
-  // 1. Peak must exceed theoretical minimum for DSSS detection
-  // 2. Peak must be significantly above the noise distribution
-  const exceedsTheoreticalMinimum = peakValue >= theoreticalMinimum;
-  const significantAboveNoise = peakToNoiseRatio >= Math.sqrt(effectiveSequenceLength); // Processing gain factor
-  
-  // Alternative criterion: peak must be outlier in correlation distribution
-  const isStatisticalOutlier = peakValue >= (medianCorrelation + 3 * noiseSpread);
-  
-  // Combined detection: theoretical minimum OR strong statistical evidence
-  // For robust detection in partial sequence scenarios, allow statistical criteria to override theoretical minimum
-  const isFound = exceedsTheoreticalMinimum || (significantAboveNoise && isStatisticalOutlier);
-
-  // Debug output for theoretical analysis
-  if (typeof console !== 'undefined') {
-    const DEBUG = false; // Set to true to enable debug output
-    
-    if (DEBUG) {
-      console.log(`=== THEORETICAL SYNC ANALYSIS ===`);
-      console.log(`Sequence length: ${sequenceLength}, Effective: ${effectiveSequenceLength}, Theoretical minimum: ${theoreticalMinimum.toFixed(3)}`);
-      console.log(`Peak: ${peakValue.toFixed(3)}, Median noise: ${medianCorrelation.toFixed(3)}`);
-      console.log(`Peak/Noise ratio: ${peakToNoiseRatio.toFixed(2)}, Required: ${Math.sqrt(effectiveSequenceLength).toFixed(2)}`);
-      console.log(`Criteria: theoretical=${exceedsTheoreticalMinimum}, significant=${significantAboveNoise}, outlier=${isStatisticalOutlier}`);
-      console.log(`Result: ${isFound} (${peakCorrelation.toFixed(3)} @ chip ${Math.round(bestSampleOffset / samplesPerPhase)})`);
-    }
-  }
+  const isFound = meetsCorrelationThreshold && meetsNoiseRatioThreshold;
 
   return {
     bestSampleOffset,
@@ -681,6 +645,7 @@ function detectSynchronizationPeak(
  * @param referenceSequence Known M-sequence for correlation as Int8Array
  * @param modulationParams Modulation parameters
  * @param maxChipOffset Maximum chip offset to search
+ * @param detectionThresholds Detection thresholds (must be externally specified)
  * @returns Object with best offsets, correlation peak, and detection metrics
  */
 export function findSyncOffset(
@@ -691,7 +656,11 @@ export function findSyncOffset(
     sampleRate: number;
     carrierFreq: number;
   },
-  maxChipOffset: number = 100
+  maxChipOffset: number,
+  detectionThresholds: {
+    correlationThreshold: number;
+    peakToNoiseRatio: number;
+  }
 ): {
   bestSampleOffset: number;
   bestChipOffset: number;
@@ -728,8 +697,8 @@ export function findSyncOffset(
     decimationFactor
   );
   
-  // Step 4: Detect synchronization peak using sequence length for theoretical analysis
-  const result = detectSynchronizationPeak(correlations, sampleOffsets, samplesPerPhase, referenceSequence.length);
+  // Step 4: Detect synchronization peak using externally provided thresholds
+  const result = detectSynchronizationPeak(correlations, sampleOffsets, samplesPerPhase, detectionThresholds);
   
   return result;
 }
