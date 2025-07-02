@@ -223,8 +223,6 @@
 		let lastBits = null;
 
 		function playAudio(samples, sampleRate) {
-			if (audioCtx) audioCtx.close();
-			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 			const buf = audioCtx.createBuffer(1, samples.length + sampleRate, sampleRate);
 			buf.getChannelData(0).set(samples);
 			audioSource = audioCtx.createBufferSource();
@@ -421,7 +419,7 @@
  		document.getElementById('play').onclick = async () => {
  			if (!lastBits || !lastParams) return;
  			if (audioCtx) audioCtx.close();
- 			audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+ 			audioCtx = new window.AudioContext();
  			await TestNode.addModule(audioCtx);
  			const sampleRate = audioCtx.sampleRate;
  
@@ -455,6 +453,8 @@
  			const source = audioCtx.createMediaStreamSource(stream);
  			source.connect(testNode);
  			testNode.connect(audioCtx.destination);
+			window.stream = stream;
+			window.source = source;
  
  			await new Promise(resolve => setTimeout(resolve, 200));
  
@@ -465,7 +465,7 @@
  			const audioSamples = Float32Array.from(samples, v => v * 0.8);
  			lastSamples = audioSamples;
 
-			if (false) {
+			if (true) {
 				playAudio(audioSamples, sampleRate);
 			} else { 
 				const buf = audioCtx.createBuffer(1, audioSamples.length + sampleRate, sampleRate);
