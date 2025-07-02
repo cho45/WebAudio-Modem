@@ -92,7 +92,7 @@ const bchParamsCache = new Map<BCHCodeType, BCHParams>();
  * @param primitivePoly 原始多項式
  * @returns ガロア体
  */
-function createGaloisField(m: number, primitivePoly: number): GaloisField {
+export function createGaloisField(m: number, primitivePoly: number): GaloisField {
   const cacheKey = `${m}_${primitivePoly}`;
   if (galoisFieldCache.has(cacheKey)) {
     return galoisFieldCache.get(cacheKey)!;
@@ -130,7 +130,7 @@ function createGaloisField(m: number, primitivePoly: number): GaloisField {
  * @param b 乗数
  * @returns a * b (mod gf)
  */
-function gfMultiply(gf: GaloisField, a: number, b: number): number {
+export function gfMultiply(gf: GaloisField, a: number, b: number): number {
   if (a === 0 || b === 0) return 0;
   const logSum = (gf.logAlpha[a] + gf.logAlpha[b]) % gf.n;
   return gf.alphaTo[logSum];
@@ -143,7 +143,7 @@ function gfMultiply(gf: GaloisField, a: number, b: number): number {
  * @param exp 指数
  * @returns base^exp (mod gf)
  */
-function gfPower(gf: GaloisField, base: number, exp: number): number {
+export function gfPower(gf: GaloisField, base: number, exp: number): number {
   if (base === 0) return 0;
   if (exp === 0) return 1;
   

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { LDPC, HMatrixData, HMatrixConnection } from '@/fec/ldpc';
 import * as fs from 'fs';
 import * as path from 'path';
-import { dpskModulate, modulateCarrier, addAWGN, generateSyncReference } from '@/modems/dsss-dpsk';
 
 // Packed bit形式のヘルパー関数
 function packBits(bits: number[]): Uint8Array {
@@ -377,14 +376,6 @@ describe('LDPC Ultra-Deep Mathematical Verification', () => {
             }
             
             return rank;
-        }
-        
-        function checkMatrixParity(codeword: Uint8Array, hData: HMatrixData): boolean {
-            const checkSums = new Array(hData.height).fill(0);
-            for (const conn of hData.connections) {
-                checkSums[conn.check] += codeword[conn.bit];
-            }
-            return checkSums.every(sum => sum % 2 === 0);
         }
     });
 
@@ -853,7 +844,6 @@ describe('LDPC Ultra-Rigorous Mathematical Verification', () => {
         const permMatrix = (permTestLdpc as any).systematicMatrix;
         
         // Test permutation invertibility
-        const originalIndices = Array.from({ length: 10 }, (_, i) => i);
         const permutedIndices = permMatrix.columnPermutation;
         
         // Create inverse permutation
@@ -1536,25 +1526,6 @@ describe('LDPC Comprehensive Mathematical Verification', () => {
         console.log('Zero message:', Array.from(zeroMessagePacked));
         console.log('Zero codeword:', Array.from(zeroCodewordPacked));
         
-        // Helper function for H*c calculation
-        function calculateHc(codeword: Uint8Array, hData: HMatrixData): Uint8Array {
-            const result = new Uint8Array(hData.height);
-            const checkNodeConnections: number[][] = Array(hData.height).fill(0).map(() => []);
-            for (const conn of hData.connections) {
-                checkNodeConnections[conn.check].push(conn.bit);
-            }
-
-            for (let m = 0; m < hData.height; m++) {
-                let sum = 0;
-                const connectedBits = checkNodeConnections[m];
-                for (const n of connectedBits) {
-                    sum += codeword[n];
-                }
-                result[m] = sum % 2;
-            }
-            return result;
-        }
-        
         // Check parity: H * c^T = 0 (using packed bit format)
         const parityValid = checkMatrixParityPacked(zeroCodewordPacked, simpleHData);
         console.log('H * zero_codeword parity valid:', parityValid);
@@ -1755,13 +1726,6 @@ describe('LDPC Real-World Data Verification', () => {
 describe('LDPC Decoder (Min-Sum)', () => {
     let ldpc: LDPC;
 
-    // 共通の変調パラメータ
-    const modulationParams = {
-        samplesPerPhase: 8, // 1シンボルあたりのサンプル数
-        sampleRate: 48000,  // サンプリングレート
-        carrierFreq: 10000, // 搬送波周波数
-    };
-
     beforeEach(() => {
         ldpc = new LDPC(hMatrixData);
     });
@@ -1829,7 +1793,6 @@ describe('LDPC Decoder (Min-Sum)', () => {
         const n = ldpc.getCodewordLength();
 
         // ランダムなメッセージビットを生成（packed bit形式）
-        const packedMessageSize = Math.ceil(k / 8);
         const messageBitsUnpacked = new Array(k);
         for (let i = 0; i < k; i++) {
             messageBitsUnpacked[i] = Math.round(Math.random());
@@ -1857,74 +1820,6 @@ describe('LDPC Decoder (Min-Sum)', () => {
         // 複雑な逆変換が必要なため、パリティチェックで十分とする
         // （実際のLDPC符号では、デコーダーでメッセージを復元する）
     });
-
-    it.skip('should decode an all-zero codeword after DSSS+DPSK modulation/demodulation with noise', () => {
-        const n = ldpc.getCodewordLength();
-        const originalCodewordSize = Math.ceil(n / 8);
-        const originalCodeword = new Uint8Array(originalCodewordSize).fill(0); // 全ゼロ符号語（packed bit形式）
-
-        // 1. 符号語をDPSK変調
-        // DSSS+DPSKでは、ビットはM系列で拡散され、その結果がDPSK変調される
-        // ここでは簡単のため、直接DPSK変調に渡す（DSSSは別途考慮）
-        // dsss-dpsk.ts の dpskModulate は chips (+1/-1) を受け取る
-        // 0ビットを+1、1ビットを-1として扱う
-        const dpskInputChips = unpackBits(originalCodeword, n).map(bit => (bit === 0 ? 1 : -1)) as any as Int8Array;
-        const modulatedPhases = dpskModulate(dpskInputChips);
-
-        // 2. 搬送波変調
-        const transmittedSamples = modulateCarrier(
-            modulatedPhases,
-            modulationParams.samplesPerPhase,
-            modulationParams.sampleRate,
-            modulationParams.carrierFreq
-        );
-
-        // 3. ノイズ付加
-        const snrDb = 5; // 5dB SNR
-        const noisySamples = addAWGN(transmittedSamples, snrDb);
-
-        // 4. 復調とLLR生成 (dsssDpskDemodulateWithLlr を使用)
-        // generateSyncReference は DSSS の M-sequence を生成するが、ここではDPSKのみのLLRをテスト
-        // dsssDpskDemodulateWithLlr は内部で demodulateCarrier と dpskDemodulate を呼び出す
-        const receivedLlr = dsssDpskDemodulateWithLlr(
-            noisySamples,
-            generateSyncReference(31), // DSSSのM系列だが、ここではLLR生成に直接は使われない
-            modulationParams,
-            10 // Es/N0 for DPSK demodulation
-        );
-
-        // LLRの長さが符号長と一致することを確認
-        expect(receivedLlr.length).toBe(n);
-
-        // 5. LDPC復号
-        const result = ldpc.decode(receivedLlr);
-
-        // 復号結果が元の符号語と一致すること、パリティチェックを満たすことを期待（packed bit形式）
-        expect(result.decodedCodeword).toEqual(originalCodeword);
-        expect(result.converged).toBe(true);
-        expect(checkMatrixParityPacked(result.decodedCodeword, hMatrixData)).toBe(true);
-    });
-
-    // 注意: checkParity関数は削除済み - 代わりにcheckMatrixParityPacked関数を使用
-
-    // デバッグ用: H行列と符号語の行列積を計算する関数
-    function computeHcProduct(codeword: Uint8Array, hData: HMatrixData): Uint8Array {
-        const result = new Uint8Array(hData.height);
-        const checkNodeConnections: number[][] = Array(hData.height).fill(0).map(() => []);
-        for (const conn of hData.connections) {
-            checkNodeConnections[conn.check].push(conn.bit);
-        }
-
-        for (let m = 0; m < hData.height; m++) {
-            let sum = 0;
-            const connectedBits = checkNodeConnections[m];
-            for (const n of connectedBits) {
-                sum += codeword[n];
-            }
-            result[m] = sum % 2;
-        }
-        return result;
-    }
 
     it('should demonstrate significant memory efficiency with packed bit format', () => {
         console.log('\n=== PACKED BIT MEMORY EFFICIENCY VERIFICATION ===');

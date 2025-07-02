@@ -1,18 +1,44 @@
 import { describe, test, expect } from 'vitest';
-import { bchEncode, bchDecode, getBCHParams, type BCHCodeType } from '../../src/fec/bch';
+import { bchEncode, bchDecode, getBCHParams, type BCHCodeType, createGaloisField, gfMultiply, gfPower } from '../../src/fec/bch';
 
-// ヘルパー関数
- function bitsToBytes(bits: number[]): Uint8Array {
-  const bytes = new Uint8Array(Math.ceil(bits.length / 8));
-  for (let i = 0; i < bits.length; i++) {
-    const byteIndex = Math.floor(i / 8);
-    const bitIndex = 7 - (i % 8);
-    if (bits[i]) {
-      bytes[byteIndex] |= (1 << bitIndex);
-    }
-  }
-  return bytes;
-}
+describe('Galois Field Operations', () => {
+  // GF(2^3) with primitive polynomial x^3 + x + 1 (11)
+  const gf = createGaloisField(3, 0b1011);
+  const alphaTo = [1, 2, 4, 3, 6, 7, 5]; // α^0 to α^6
+
+  test('should create a Galois Field correctly for GF(2^3)', () => {
+    expect(gf.m).toBe(3);
+    expect(gf.n).toBe(7);
+    expect(gf.primitivePoly).toBe(0b1011);
+    // Check if the generated alphaTo table matches the known correct one.
+    // Note: gf.alphaTo has n+1 elements, but we only care about the first n.
+    expect(gf.alphaTo.slice(0, 7)).toEqual(alphaTo);
+    expect(gf.logAlpha[1]).toBe(0); // log(α^0)
+    expect(gf.logAlpha[5]).toBe(6); // log(α^6)
+  });
+
+  test('gfMultiply should perform multiplication correctly in GF(2^3)', () => {
+    // α^1 * α^2 = 2 * 4 = 3 = α^3
+    expect(gfMultiply(gf, 2, 4)).toBe(3);
+    // α^3 * α^4 = 3 * 6 = 1 = α^0
+    expect(gfMultiply(gf, 3, 6)).toBe(1);
+    // Test wrap-around: α^5 * α^3 = 7 * 3 = 2 = α^8 = α^1
+    expect(gfMultiply(gf, 7, 3)).toBe(2);
+    // Test multiplication by 1 (identity)
+    expect(gfMultiply(gf, 6, 1)).toBe(6);
+  });
+
+  test('gfPower should perform exponentiation correctly in GF(2^3)', () => {
+    // (α^2)^2 = 4^2 = 6 = α^4
+    expect(gfPower(gf, 4, 2)).toBe(6);
+    // (α^3)^3 = α^9 = α^2 = 4
+    expect(gfPower(gf, 3, 3)).toBe(4);
+    // Test negative exponent: (α^2)^-1 = α^-2 = α^5 = 7
+    expect(gfPower(gf, 4, -1)).toBe(7);
+    // Test large exponent: (α^2)^8 = α^16 = α^2 = 4
+    expect(gfPower(gf, 4, 8)).toBe(4);
+  });
+});
 
 describe('BCH Error Correction Code', () => {
   const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
