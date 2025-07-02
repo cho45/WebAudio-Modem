@@ -11,9 +11,9 @@ describe('LDPC Performance Analysis', () => {
         it('基本パラメータが正しいこと', () => {
             const basic = analyzer.getBasicInfo();
             
-            expect(basic.codewordLength).toBe(256);  // 新しい行列
-            expect(basic.messageLength).toBe(128);   // k = n - m = 256 - 128
-            expect(basic.parityChecks).toBe(128);
+            expect(basic.codewordLength).toBe(128);  // 新しい行列
+            expect(basic.messageLength).toBe(64);   // k = n - m = 128 - 64
+            expect(basic.parityChecks).toBe(64);
             expect(basic.codeRate).toBeCloseTo(0.5, 3); // rate 1/2
             
             console.log('基本パラメータ:', basic);
@@ -60,11 +60,11 @@ describe('LDPC Performance Analysis', () => {
             
             // エンコード
             const codeword = ldpc.encode(messageBytes);
-            expect(codeword.length).toBe(32); // 256ビット = 32バイト
+            expect(codeword.length).toBe(16); // 128ビット = 16バイト
             
             // 理想的な受信（ノイズなし）
-            const receivedLlr = new Int8Array(256);
-            for (let i = 0; i < 256; i++) {
+            const receivedLlr = new Int8Array(128);
+            for (let i = 0; i < 128; i++) {
                 const bit = (codeword[Math.floor(i / 8)] >> (7 - (i % 8))) & 1;
                 receivedLlr[i] = bit ? -100 : 100; // 確実なLLR
             }
@@ -88,10 +88,10 @@ describe('LDPC Performance Analysis', () => {
             const codeword = ldpc.encode(messageBytes);
             
             // 軽微なノイズを追加
-            const receivedLlr = new Int8Array(256);
+            const receivedLlr = new Int8Array(128);
             let errorCount = 0;
             
-            for (let i = 0; i < 256; i++) {
+            for (let i = 0; i < 128; i++) {
                 const bit = (codeword[Math.floor(i / 8)] >> (7 - (i % 8))) & 1;
                 let llr = bit ? -80 : 80;
                 
@@ -132,9 +132,9 @@ describe('LDPC Performance Analysis', () => {
         });
 
         it('デコード性能測定', () => {
-            const receivedLlr = new Int8Array(256);
+            const receivedLlr = new Int8Array(128);
             // 理想的な受信状態
-            for (let i = 0; i < 256; i++) {
+            for (let i = 0; i < 128; i++) {
                 receivedLlr[i] = Math.random() > 0.5 ? 100 : -100;
             }
             

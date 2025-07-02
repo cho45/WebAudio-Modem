@@ -1,342 +1,342 @@
 {
-  "height": 128,
-  "width": 256,
+  "height": 64,
+  "width": 128,
   "connections": [
     {
       "check": 0,
-      "bit": 4
+      "bit": 2
     },
     {
       "check": 0,
-      "bit": 18
-    },
-    {
-      "check": 0,
-      "bit": 38
-    },
-    {
-      "check": 0,
-      "bit": 146
-    },
-    {
-      "check": 0,
-      "bit": 155
-    },
-    {
-      "check": 0,
-      "bit": 167
-    },
-    {
-      "check": 1,
       "bit": 5
     },
     {
-      "check": 1,
+      "check": 0,
       "bit": 19
     },
     {
-      "check": 1,
-      "bit": 39
+      "check": 0,
+      "bit": 69
+    },
+    {
+      "check": 0,
+      "bit": 78
+    },
+    {
+      "check": 0,
+      "bit": 84
     },
     {
       "check": 1,
-      "bit": 147
+      "bit": 3
     },
     {
       "check": 1,
-      "bit": 156
-    },
-    {
-      "check": 1,
-      "bit": 168
-    },
-    {
-      "check": 2,
       "bit": 6
     },
     {
-      "check": 2,
+      "check": 1,
       "bit": 20
     },
     {
-      "check": 2,
-      "bit": 40
+      "check": 1,
+      "bit": 70
+    },
+    {
+      "check": 1,
+      "bit": 79
+    },
+    {
+      "check": 1,
+      "bit": 85
     },
     {
       "check": 2,
-      "bit": 148
+      "bit": 4
     },
     {
       "check": 2,
-      "bit": 157
-    },
-    {
-      "check": 2,
-      "bit": 169
-    },
-    {
-      "check": 3,
       "bit": 7
     },
     {
-      "check": 3,
+      "check": 2,
       "bit": 21
     },
     {
-      "check": 3,
-      "bit": 41
+      "check": 2,
+      "bit": 64
+    },
+    {
+      "check": 2,
+      "bit": 71
+    },
+    {
+      "check": 2,
+      "bit": 86
     },
     {
       "check": 3,
-      "bit": 149
+      "bit": 5
     },
     {
       "check": 3,
-      "bit": 158
-    },
-    {
-      "check": 3,
-      "bit": 170
-    },
-    {
-      "check": 4,
       "bit": 8
     },
     {
-      "check": 4,
+      "check": 3,
       "bit": 22
     },
     {
-      "check": 4,
-      "bit": 42
+      "check": 3,
+      "bit": 65
+    },
+    {
+      "check": 3,
+      "bit": 72
+    },
+    {
+      "check": 3,
+      "bit": 87
     },
     {
       "check": 4,
-      "bit": 150
+      "bit": 6
     },
     {
       "check": 4,
-      "bit": 159
-    },
-    {
-      "check": 4,
-      "bit": 171
-    },
-    {
-      "check": 5,
       "bit": 9
     },
     {
-      "check": 5,
+      "check": 4,
       "bit": 23
     },
     {
-      "check": 5,
-      "bit": 43
+      "check": 4,
+      "bit": 66
+    },
+    {
+      "check": 4,
+      "bit": 73
+    },
+    {
+      "check": 4,
+      "bit": 88
     },
     {
       "check": 5,
-      "bit": 128
+      "bit": 7
     },
     {
       "check": 5,
-      "bit": 151
-    },
-    {
-      "check": 5,
-      "bit": 172
-    },
-    {
-      "check": 6,
       "bit": 10
     },
     {
-      "check": 6,
+      "check": 5,
       "bit": 24
     },
     {
-      "check": 6,
-      "bit": 44
+      "check": 5,
+      "bit": 67
+    },
+    {
+      "check": 5,
+      "bit": 74
+    },
+    {
+      "check": 5,
+      "bit": 89
     },
     {
       "check": 6,
-      "bit": 129
+      "bit": 8
     },
     {
       "check": 6,
-      "bit": 152
-    },
-    {
-      "check": 6,
-      "bit": 173
-    },
-    {
-      "check": 7,
       "bit": 11
     },
     {
-      "check": 7,
+      "check": 6,
       "bit": 25
     },
     {
-      "check": 7,
-      "bit": 45
+      "check": 6,
+      "bit": 68
+    },
+    {
+      "check": 6,
+      "bit": 75
+    },
+    {
+      "check": 6,
+      "bit": 90
     },
     {
       "check": 7,
-      "bit": 130
+      "bit": 9
     },
     {
       "check": 7,
-      "bit": 153
-    },
-    {
-      "check": 7,
-      "bit": 174
-    },
-    {
-      "check": 8,
       "bit": 12
     },
     {
-      "check": 8,
+      "check": 7,
       "bit": 26
     },
     {
-      "check": 8,
-      "bit": 46
+      "check": 7,
+      "bit": 69
+    },
+    {
+      "check": 7,
+      "bit": 76
+    },
+    {
+      "check": 7,
+      "bit": 91
     },
     {
       "check": 8,
-      "bit": 131
+      "bit": 10
     },
     {
       "check": 8,
-      "bit": 154
-    },
-    {
-      "check": 8,
-      "bit": 175
-    },
-    {
-      "check": 9,
       "bit": 13
     },
     {
-      "check": 9,
+      "check": 8,
       "bit": 27
     },
     {
-      "check": 9,
-      "bit": 47
+      "check": 8,
+      "bit": 70
+    },
+    {
+      "check": 8,
+      "bit": 77
+    },
+    {
+      "check": 8,
+      "bit": 92
     },
     {
       "check": 9,
-      "bit": 132
+      "bit": 11
     },
     {
       "check": 9,
-      "bit": 155
-    },
-    {
-      "check": 9,
-      "bit": 176
-    },
-    {
-      "check": 10,
       "bit": 14
     },
     {
-      "check": 10,
+      "check": 9,
       "bit": 28
     },
     {
-      "check": 10,
-      "bit": 48
+      "check": 9,
+      "bit": 71
+    },
+    {
+      "check": 9,
+      "bit": 78
+    },
+    {
+      "check": 9,
+      "bit": 93
     },
     {
       "check": 10,
-      "bit": 133
+      "bit": 12
     },
     {
       "check": 10,
-      "bit": 156
-    },
-    {
-      "check": 10,
-      "bit": 177
-    },
-    {
-      "check": 11,
       "bit": 15
     },
     {
-      "check": 11,
+      "check": 10,
       "bit": 29
     },
     {
-      "check": 11,
-      "bit": 49
+      "check": 10,
+      "bit": 72
+    },
+    {
+      "check": 10,
+      "bit": 79
+    },
+    {
+      "check": 10,
+      "bit": 94
     },
     {
       "check": 11,
-      "bit": 134
+      "bit": 0
     },
     {
       "check": 11,
-      "bit": 157
+      "bit": 13
     },
     {
       "check": 11,
-      "bit": 178
-    },
-    {
-      "check": 12,
-      "bit": 16
-    },
-    {
-      "check": 12,
       "bit": 30
     },
     {
-      "check": 12,
-      "bit": 50
+      "check": 11,
+      "bit": 64
+    },
+    {
+      "check": 11,
+      "bit": 73
+    },
+    {
+      "check": 11,
+      "bit": 95
     },
     {
       "check": 12,
-      "bit": 135
+      "bit": 1
     },
     {
       "check": 12,
-      "bit": 158
+      "bit": 14
     },
     {
       "check": 12,
-      "bit": 179
-    },
-    {
-      "check": 13,
-      "bit": 17
-    },
-    {
-      "check": 13,
       "bit": 31
     },
     {
-      "check": 13,
-      "bit": 51
+      "check": 12,
+      "bit": 65
+    },
+    {
+      "check": 12,
+      "bit": 74
+    },
+    {
+      "check": 12,
+      "bit": 80
     },
     {
       "check": 13,
-      "bit": 136
+      "bit": 2
     },
     {
       "check": 13,
-      "bit": 159
+      "bit": 15
     },
     {
       "check": 13,
-      "bit": 180
+      "bit": 16
+    },
+    {
+      "check": 13,
+      "bit": 66
+    },
+    {
+      "check": 13,
+      "bit": 75
+    },
+    {
+      "check": 13,
+      "bit": 81
     },
     {
       "check": 14,
@@ -344,23 +344,23 @@
     },
     {
       "check": 14,
-      "bit": 18
+      "bit": 3
     },
     {
       "check": 14,
-      "bit": 52
+      "bit": 17
     },
     {
       "check": 14,
-      "bit": 128
+      "bit": 67
     },
     {
       "check": 14,
-      "bit": 137
+      "bit": 76
     },
     {
       "check": 14,
-      "bit": 181
+      "bit": 82
     },
     {
       "check": 15,
@@ -368,23 +368,23 @@
     },
     {
       "check": 15,
-      "bit": 19
+      "bit": 4
     },
     {
       "check": 15,
-      "bit": 53
+      "bit": 18
     },
     {
       "check": 15,
-      "bit": 129
+      "bit": 68
     },
     {
       "check": 15,
-      "bit": 138
+      "bit": 77
     },
     {
       "check": 15,
-      "bit": 182
+      "bit": 83
     },
     {
       "check": 16,
@@ -392,23 +392,23 @@
     },
     {
       "check": 16,
-      "bit": 20
+      "bit": 29
     },
     {
       "check": 16,
-      "bit": 54
+      "bit": 43
     },
     {
       "check": 16,
-      "bit": 130
+      "bit": 75
     },
     {
       "check": 16,
-      "bit": 139
+      "bit": 82
     },
     {
       "check": 16,
-      "bit": 183
+      "bit": 102
     },
     {
       "check": 17,
@@ -416,23 +416,23 @@
     },
     {
       "check": 17,
-      "bit": 21
+      "bit": 30
     },
     {
       "check": 17,
-      "bit": 55
+      "bit": 44
     },
     {
       "check": 17,
-      "bit": 131
+      "bit": 76
     },
     {
       "check": 17,
-      "bit": 140
+      "bit": 83
     },
     {
       "check": 17,
-      "bit": 184
+      "bit": 103
     },
     {
       "check": 18,
@@ -440,2639 +440,1103 @@
     },
     {
       "check": 18,
-      "bit": 22
-    },
-    {
-      "check": 18,
-      "bit": 56
-    },
-    {
-      "check": 18,
-      "bit": 132
-    },
-    {
-      "check": 18,
-      "bit": 141
-    },
-    {
-      "check": 18,
-      "bit": 185
-    },
-    {
-      "check": 19,
-      "bit": 5
-    },
-    {
-      "check": 19,
-      "bit": 23
-    },
-    {
-      "check": 19,
-      "bit": 57
-    },
-    {
-      "check": 19,
-      "bit": 133
-    },
-    {
-      "check": 19,
-      "bit": 142
-    },
-    {
-      "check": 19,
-      "bit": 186
-    },
-    {
-      "check": 20,
-      "bit": 6
-    },
-    {
-      "check": 20,
-      "bit": 24
-    },
-    {
-      "check": 20,
-      "bit": 58
-    },
-    {
-      "check": 20,
-      "bit": 134
-    },
-    {
-      "check": 20,
-      "bit": 143
-    },
-    {
-      "check": 20,
-      "bit": 187
-    },
-    {
-      "check": 21,
-      "bit": 7
-    },
-    {
-      "check": 21,
-      "bit": 25
-    },
-    {
-      "check": 21,
-      "bit": 59
-    },
-    {
-      "check": 21,
-      "bit": 135
-    },
-    {
-      "check": 21,
-      "bit": 144
-    },
-    {
-      "check": 21,
-      "bit": 188
-    },
-    {
-      "check": 22,
-      "bit": 8
-    },
-    {
-      "check": 22,
-      "bit": 26
-    },
-    {
-      "check": 22,
-      "bit": 60
-    },
-    {
-      "check": 22,
-      "bit": 136
-    },
-    {
-      "check": 22,
-      "bit": 145
-    },
-    {
-      "check": 22,
-      "bit": 189
-    },
-    {
-      "check": 23,
-      "bit": 9
-    },
-    {
-      "check": 23,
-      "bit": 27
-    },
-    {
-      "check": 23,
-      "bit": 61
-    },
-    {
-      "check": 23,
-      "bit": 137
-    },
-    {
-      "check": 23,
-      "bit": 146
-    },
-    {
-      "check": 23,
-      "bit": 190
-    },
-    {
-      "check": 24,
-      "bit": 10
-    },
-    {
-      "check": 24,
-      "bit": 28
-    },
-    {
-      "check": 24,
-      "bit": 62
-    },
-    {
-      "check": 24,
-      "bit": 138
-    },
-    {
-      "check": 24,
-      "bit": 147
-    },
-    {
-      "check": 24,
-      "bit": 191
-    },
-    {
-      "check": 25,
-      "bit": 11
-    },
-    {
-      "check": 25,
-      "bit": 29
-    },
-    {
-      "check": 25,
-      "bit": 63
-    },
-    {
-      "check": 25,
-      "bit": 139
-    },
-    {
-      "check": 25,
-      "bit": 148
-    },
-    {
-      "check": 25,
-      "bit": 160
-    },
-    {
-      "check": 26,
-      "bit": 12
-    },
-    {
-      "check": 26,
-      "bit": 30
-    },
-    {
-      "check": 26,
-      "bit": 32
-    },
-    {
-      "check": 26,
-      "bit": 140
-    },
-    {
-      "check": 26,
-      "bit": 149
-    },
-    {
-      "check": 26,
-      "bit": 161
-    },
-    {
-      "check": 27,
-      "bit": 13
-    },
-    {
-      "check": 27,
       "bit": 31
     },
     {
-      "check": 27,
-      "bit": 33
+      "check": 18,
+      "bit": 45
     },
     {
-      "check": 27,
-      "bit": 141
+      "check": 18,
+      "bit": 77
     },
     {
-      "check": 27,
-      "bit": 150
+      "check": 18,
+      "bit": 84
     },
     {
-      "check": 27,
-      "bit": 162
+      "check": 18,
+      "bit": 104
     },
     {
-      "check": 28,
-      "bit": 0
-    },
-    {
-      "check": 28,
-      "bit": 14
-    },
-    {
-      "check": 28,
-      "bit": 34
-    },
-    {
-      "check": 28,
-      "bit": 142
-    },
-    {
-      "check": 28,
-      "bit": 151
-    },
-    {
-      "check": 28,
-      "bit": 163
-    },
-    {
-      "check": 29,
-      "bit": 1
-    },
-    {
-      "check": 29,
-      "bit": 15
-    },
-    {
-      "check": 29,
-      "bit": 35
-    },
-    {
-      "check": 29,
-      "bit": 143
-    },
-    {
-      "check": 29,
-      "bit": 152
-    },
-    {
-      "check": 29,
-      "bit": 164
-    },
-    {
-      "check": 30,
-      "bit": 2
-    },
-    {
-      "check": 30,
-      "bit": 16
-    },
-    {
-      "check": 30,
-      "bit": 36
-    },
-    {
-      "check": 30,
-      "bit": 144
-    },
-    {
-      "check": 30,
-      "bit": 153
-    },
-    {
-      "check": 30,
-      "bit": 165
-    },
-    {
-      "check": 31,
-      "bit": 3
-    },
-    {
-      "check": 31,
-      "bit": 17
-    },
-    {
-      "check": 31,
-      "bit": 37
-    },
-    {
-      "check": 31,
-      "bit": 145
-    },
-    {
-      "check": 31,
-      "bit": 154
-    },
-    {
-      "check": 31,
-      "bit": 166
-    },
-    {
-      "check": 32,
-      "bit": 3
-    },
-    {
-      "check": 32,
-      "bit": 57
-    },
-    {
-      "check": 32,
-      "bit": 86
-    },
-    {
-      "check": 32,
-      "bit": 150
-    },
-    {
-      "check": 32,
-      "bit": 164
-    },
-    {
-      "check": 32,
-      "bit": 203
-    },
-    {
-      "check": 33,
-      "bit": 4
-    },
-    {
-      "check": 33,
-      "bit": 58
-    },
-    {
-      "check": 33,
-      "bit": 87
-    },
-    {
-      "check": 33,
-      "bit": 151
-    },
-    {
-      "check": 33,
-      "bit": 165
-    },
-    {
-      "check": 33,
-      "bit": 204
-    },
-    {
-      "check": 34,
+      "check": 19,
       "bit": 5
     },
     {
-      "check": 34,
-      "bit": 59
-    },
-    {
-      "check": 34,
-      "bit": 88
-    },
-    {
-      "check": 34,
-      "bit": 152
-    },
-    {
-      "check": 34,
-      "bit": 166
-    },
-    {
-      "check": 34,
-      "bit": 205
-    },
-    {
-      "check": 35,
-      "bit": 6
-    },
-    {
-      "check": 35,
-      "bit": 60
-    },
-    {
-      "check": 35,
-      "bit": 89
-    },
-    {
-      "check": 35,
-      "bit": 153
-    },
-    {
-      "check": 35,
-      "bit": 167
-    },
-    {
-      "check": 35,
-      "bit": 206
-    },
-    {
-      "check": 36,
-      "bit": 7
-    },
-    {
-      "check": 36,
-      "bit": 61
-    },
-    {
-      "check": 36,
-      "bit": 90
-    },
-    {
-      "check": 36,
-      "bit": 154
-    },
-    {
-      "check": 36,
-      "bit": 168
-    },
-    {
-      "check": 36,
-      "bit": 207
-    },
-    {
-      "check": 37,
-      "bit": 8
-    },
-    {
-      "check": 37,
-      "bit": 62
-    },
-    {
-      "check": 37,
-      "bit": 91
-    },
-    {
-      "check": 37,
-      "bit": 155
-    },
-    {
-      "check": 37,
-      "bit": 169
-    },
-    {
-      "check": 37,
-      "bit": 208
-    },
-    {
-      "check": 38,
-      "bit": 9
-    },
-    {
-      "check": 38,
-      "bit": 63
-    },
-    {
-      "check": 38,
-      "bit": 92
-    },
-    {
-      "check": 38,
-      "bit": 156
-    },
-    {
-      "check": 38,
-      "bit": 170
-    },
-    {
-      "check": 38,
-      "bit": 209
-    },
-    {
-      "check": 39,
-      "bit": 10
-    },
-    {
-      "check": 39,
-      "bit": 32
-    },
-    {
-      "check": 39,
-      "bit": 93
-    },
-    {
-      "check": 39,
-      "bit": 157
-    },
-    {
-      "check": 39,
-      "bit": 171
-    },
-    {
-      "check": 39,
-      "bit": 210
-    },
-    {
-      "check": 40,
-      "bit": 11
-    },
-    {
-      "check": 40,
-      "bit": 33
-    },
-    {
-      "check": 40,
-      "bit": 94
-    },
-    {
-      "check": 40,
-      "bit": 158
-    },
-    {
-      "check": 40,
-      "bit": 172
-    },
-    {
-      "check": 40,
-      "bit": 211
-    },
-    {
-      "check": 41,
-      "bit": 12
-    },
-    {
-      "check": 41,
-      "bit": 34
-    },
-    {
-      "check": 41,
-      "bit": 95
-    },
-    {
-      "check": 41,
-      "bit": 159
-    },
-    {
-      "check": 41,
-      "bit": 173
-    },
-    {
-      "check": 41,
-      "bit": 212
-    },
-    {
-      "check": 42,
-      "bit": 13
-    },
-    {
-      "check": 42,
-      "bit": 35
-    },
-    {
-      "check": 42,
-      "bit": 64
-    },
-    {
-      "check": 42,
-      "bit": 128
-    },
-    {
-      "check": 42,
-      "bit": 174
-    },
-    {
-      "check": 42,
-      "bit": 213
-    },
-    {
-      "check": 43,
-      "bit": 14
-    },
-    {
-      "check": 43,
-      "bit": 36
-    },
-    {
-      "check": 43,
-      "bit": 65
-    },
-    {
-      "check": 43,
-      "bit": 129
-    },
-    {
-      "check": 43,
-      "bit": 175
-    },
-    {
-      "check": 43,
-      "bit": 214
-    },
-    {
-      "check": 44,
-      "bit": 15
-    },
-    {
-      "check": 44,
-      "bit": 37
-    },
-    {
-      "check": 44,
-      "bit": 66
-    },
-    {
-      "check": 44,
-      "bit": 130
-    },
-    {
-      "check": 44,
-      "bit": 176
-    },
-    {
-      "check": 44,
-      "bit": 215
-    },
-    {
-      "check": 45,
+      "check": 19,
       "bit": 16
     },
     {
-      "check": 45,
-      "bit": 38
+      "check": 19,
+      "bit": 46
     },
     {
-      "check": 45,
-      "bit": 67
+      "check": 19,
+      "bit": 78
     },
     {
-      "check": 45,
-      "bit": 131
+      "check": 19,
+      "bit": 85
     },
     {
-      "check": 45,
-      "bit": 177
+      "check": 19,
+      "bit": 105
     },
     {
-      "check": 45,
-      "bit": 216
+      "check": 20,
+      "bit": 6
     },
     {
-      "check": 46,
+      "check": 20,
       "bit": 17
     },
     {
-      "check": 46,
-      "bit": 39
+      "check": 20,
+      "bit": 47
     },
     {
-      "check": 46,
-      "bit": 68
+      "check": 20,
+      "bit": 79
     },
     {
-      "check": 46,
-      "bit": 132
+      "check": 20,
+      "bit": 86
     },
     {
-      "check": 46,
-      "bit": 178
+      "check": 20,
+      "bit": 106
     },
     {
-      "check": 46,
-      "bit": 217
+      "check": 21,
+      "bit": 7
     },
     {
-      "check": 47,
+      "check": 21,
       "bit": 18
     },
     {
-      "check": 47,
-      "bit": 40
-    },
-    {
-      "check": 47,
-      "bit": 69
-    },
-    {
-      "check": 47,
-      "bit": 133
-    },
-    {
-      "check": 47,
-      "bit": 179
-    },
-    {
-      "check": 47,
-      "bit": 218
-    },
-    {
-      "check": 48,
-      "bit": 19
-    },
-    {
-      "check": 48,
-      "bit": 41
-    },
-    {
-      "check": 48,
-      "bit": 70
-    },
-    {
-      "check": 48,
-      "bit": 134
-    },
-    {
-      "check": 48,
-      "bit": 180
-    },
-    {
-      "check": 48,
-      "bit": 219
-    },
-    {
-      "check": 49,
-      "bit": 20
-    },
-    {
-      "check": 49,
-      "bit": 42
-    },
-    {
-      "check": 49,
-      "bit": 71
-    },
-    {
-      "check": 49,
-      "bit": 135
-    },
-    {
-      "check": 49,
-      "bit": 181
-    },
-    {
-      "check": 49,
-      "bit": 220
-    },
-    {
-      "check": 50,
-      "bit": 21
-    },
-    {
-      "check": 50,
-      "bit": 43
-    },
-    {
-      "check": 50,
-      "bit": 72
-    },
-    {
-      "check": 50,
-      "bit": 136
-    },
-    {
-      "check": 50,
-      "bit": 182
-    },
-    {
-      "check": 50,
-      "bit": 221
-    },
-    {
-      "check": 51,
-      "bit": 22
-    },
-    {
-      "check": 51,
-      "bit": 44
-    },
-    {
-      "check": 51,
-      "bit": 73
-    },
-    {
-      "check": 51,
-      "bit": 137
-    },
-    {
-      "check": 51,
-      "bit": 183
-    },
-    {
-      "check": 51,
-      "bit": 222
-    },
-    {
-      "check": 52,
-      "bit": 23
-    },
-    {
-      "check": 52,
-      "bit": 45
-    },
-    {
-      "check": 52,
-      "bit": 74
-    },
-    {
-      "check": 52,
-      "bit": 138
-    },
-    {
-      "check": 52,
-      "bit": 184
-    },
-    {
-      "check": 52,
-      "bit": 223
-    },
-    {
-      "check": 53,
-      "bit": 24
-    },
-    {
-      "check": 53,
-      "bit": 46
-    },
-    {
-      "check": 53,
-      "bit": 75
-    },
-    {
-      "check": 53,
-      "bit": 139
-    },
-    {
-      "check": 53,
-      "bit": 185
-    },
-    {
-      "check": 53,
-      "bit": 192
-    },
-    {
-      "check": 54,
-      "bit": 25
-    },
-    {
-      "check": 54,
-      "bit": 47
-    },
-    {
-      "check": 54,
-      "bit": 76
-    },
-    {
-      "check": 54,
-      "bit": 140
-    },
-    {
-      "check": 54,
-      "bit": 186
-    },
-    {
-      "check": 54,
-      "bit": 193
-    },
-    {
-      "check": 55,
-      "bit": 26
-    },
-    {
-      "check": 55,
-      "bit": 48
-    },
-    {
-      "check": 55,
-      "bit": 77
-    },
-    {
-      "check": 55,
-      "bit": 141
-    },
-    {
-      "check": 55,
-      "bit": 187
-    },
-    {
-      "check": 55,
-      "bit": 194
-    },
-    {
-      "check": 56,
-      "bit": 27
-    },
-    {
-      "check": 56,
-      "bit": 49
-    },
-    {
-      "check": 56,
-      "bit": 78
-    },
-    {
-      "check": 56,
-      "bit": 142
-    },
-    {
-      "check": 56,
-      "bit": 188
-    },
-    {
-      "check": 56,
-      "bit": 195
-    },
-    {
-      "check": 57,
-      "bit": 28
-    },
-    {
-      "check": 57,
-      "bit": 50
-    },
-    {
-      "check": 57,
-      "bit": 79
-    },
-    {
-      "check": 57,
-      "bit": 143
-    },
-    {
-      "check": 57,
-      "bit": 189
-    },
-    {
-      "check": 57,
-      "bit": 196
-    },
-    {
-      "check": 58,
-      "bit": 29
-    },
-    {
-      "check": 58,
-      "bit": 51
-    },
-    {
-      "check": 58,
-      "bit": 80
-    },
-    {
-      "check": 58,
-      "bit": 144
-    },
-    {
-      "check": 58,
-      "bit": 190
-    },
-    {
-      "check": 58,
-      "bit": 197
-    },
-    {
-      "check": 59,
-      "bit": 30
-    },
-    {
-      "check": 59,
-      "bit": 52
-    },
-    {
-      "check": 59,
-      "bit": 81
-    },
-    {
-      "check": 59,
-      "bit": 145
-    },
-    {
-      "check": 59,
-      "bit": 191
-    },
-    {
-      "check": 59,
-      "bit": 198
-    },
-    {
-      "check": 60,
-      "bit": 31
-    },
-    {
-      "check": 60,
-      "bit": 53
-    },
-    {
-      "check": 60,
-      "bit": 82
-    },
-    {
-      "check": 60,
-      "bit": 146
-    },
-    {
-      "check": 60,
-      "bit": 160
-    },
-    {
-      "check": 60,
-      "bit": 199
-    },
-    {
-      "check": 61,
-      "bit": 0
-    },
-    {
-      "check": 61,
-      "bit": 54
-    },
-    {
-      "check": 61,
-      "bit": 83
-    },
-    {
-      "check": 61,
-      "bit": 147
-    },
-    {
-      "check": 61,
-      "bit": 161
-    },
-    {
-      "check": 61,
-      "bit": 200
-    },
-    {
-      "check": 62,
-      "bit": 1
-    },
-    {
-      "check": 62,
-      "bit": 55
-    },
-    {
-      "check": 62,
-      "bit": 84
-    },
-    {
-      "check": 62,
-      "bit": 148
-    },
-    {
-      "check": 62,
-      "bit": 162
-    },
-    {
-      "check": 62,
-      "bit": 201
-    },
-    {
-      "check": 63,
-      "bit": 2
-    },
-    {
-      "check": 63,
-      "bit": 56
-    },
-    {
-      "check": 63,
-      "bit": 85
-    },
-    {
-      "check": 63,
-      "bit": 149
-    },
-    {
-      "check": 63,
-      "bit": 163
-    },
-    {
-      "check": 63,
-      "bit": 202
-    },
-    {
-      "check": 64,
-      "bit": 41
-    },
-    {
-      "check": 64,
-      "bit": 86
-    },
-    {
-      "check": 64,
-      "bit": 118
-    },
-    {
-      "check": 64,
-      "bit": 176
-    },
-    {
-      "check": 64,
-      "bit": 203
-    },
-    {
-      "check": 64,
-      "bit": 225
-    },
-    {
-      "check": 65,
-      "bit": 42
-    },
-    {
-      "check": 65,
-      "bit": 87
-    },
-    {
-      "check": 65,
-      "bit": 119
-    },
-    {
-      "check": 65,
-      "bit": 177
-    },
-    {
-      "check": 65,
-      "bit": 204
-    },
-    {
-      "check": 65,
-      "bit": 226
-    },
-    {
-      "check": 66,
-      "bit": 43
-    },
-    {
-      "check": 66,
-      "bit": 88
-    },
-    {
-      "check": 66,
-      "bit": 120
-    },
-    {
-      "check": 66,
-      "bit": 178
-    },
-    {
-      "check": 66,
-      "bit": 205
-    },
-    {
-      "check": 66,
-      "bit": 227
-    },
-    {
-      "check": 67,
-      "bit": 44
-    },
-    {
-      "check": 67,
-      "bit": 89
-    },
-    {
-      "check": 67,
-      "bit": 121
-    },
-    {
-      "check": 67,
-      "bit": 179
-    },
-    {
-      "check": 67,
-      "bit": 206
-    },
-    {
-      "check": 67,
-      "bit": 228
-    },
-    {
-      "check": 68,
-      "bit": 45
-    },
-    {
-      "check": 68,
-      "bit": 90
-    },
-    {
-      "check": 68,
-      "bit": 122
-    },
-    {
-      "check": 68,
-      "bit": 180
-    },
-    {
-      "check": 68,
-      "bit": 207
-    },
-    {
-      "check": 68,
-      "bit": 229
-    },
-    {
-      "check": 69,
-      "bit": 46
-    },
-    {
-      "check": 69,
-      "bit": 91
-    },
-    {
-      "check": 69,
-      "bit": 123
-    },
-    {
-      "check": 69,
-      "bit": 181
-    },
-    {
-      "check": 69,
-      "bit": 208
-    },
-    {
-      "check": 69,
-      "bit": 230
-    },
-    {
-      "check": 70,
-      "bit": 47
-    },
-    {
-      "check": 70,
-      "bit": 92
-    },
-    {
-      "check": 70,
-      "bit": 124
-    },
-    {
-      "check": 70,
-      "bit": 182
-    },
-    {
-      "check": 70,
-      "bit": 209
-    },
-    {
-      "check": 70,
-      "bit": 231
-    },
-    {
-      "check": 71,
-      "bit": 48
-    },
-    {
-      "check": 71,
-      "bit": 93
-    },
-    {
-      "check": 71,
-      "bit": 125
-    },
-    {
-      "check": 71,
-      "bit": 183
-    },
-    {
-      "check": 71,
-      "bit": 210
-    },
-    {
-      "check": 71,
-      "bit": 232
-    },
-    {
-      "check": 72,
-      "bit": 49
-    },
-    {
-      "check": 72,
-      "bit": 94
-    },
-    {
-      "check": 72,
-      "bit": 126
-    },
-    {
-      "check": 72,
-      "bit": 184
-    },
-    {
-      "check": 72,
-      "bit": 211
-    },
-    {
-      "check": 72,
-      "bit": 233
-    },
-    {
-      "check": 73,
-      "bit": 50
-    },
-    {
-      "check": 73,
-      "bit": 95
-    },
-    {
-      "check": 73,
-      "bit": 127
-    },
-    {
-      "check": 73,
-      "bit": 185
-    },
-    {
-      "check": 73,
-      "bit": 212
-    },
-    {
-      "check": 73,
-      "bit": 234
-    },
-    {
-      "check": 74,
-      "bit": 51
-    },
-    {
-      "check": 74,
-      "bit": 64
-    },
-    {
-      "check": 74,
-      "bit": 96
-    },
-    {
-      "check": 74,
-      "bit": 186
-    },
-    {
-      "check": 74,
-      "bit": 213
-    },
-    {
-      "check": 74,
-      "bit": 235
-    },
-    {
-      "check": 75,
-      "bit": 52
-    },
-    {
-      "check": 75,
-      "bit": 65
-    },
-    {
-      "check": 75,
-      "bit": 97
-    },
-    {
-      "check": 75,
-      "bit": 187
-    },
-    {
-      "check": 75,
-      "bit": 214
-    },
-    {
-      "check": 75,
-      "bit": 236
-    },
-    {
-      "check": 76,
-      "bit": 53
-    },
-    {
-      "check": 76,
-      "bit": 66
-    },
-    {
-      "check": 76,
-      "bit": 98
-    },
-    {
-      "check": 76,
-      "bit": 188
-    },
-    {
-      "check": 76,
-      "bit": 215
-    },
-    {
-      "check": 76,
-      "bit": 237
-    },
-    {
-      "check": 77,
-      "bit": 54
-    },
-    {
-      "check": 77,
-      "bit": 67
-    },
-    {
-      "check": 77,
-      "bit": 99
-    },
-    {
-      "check": 77,
-      "bit": 189
-    },
-    {
-      "check": 77,
-      "bit": 216
-    },
-    {
-      "check": 77,
-      "bit": 238
-    },
-    {
-      "check": 78,
-      "bit": 55
-    },
-    {
-      "check": 78,
-      "bit": 68
-    },
-    {
-      "check": 78,
-      "bit": 100
-    },
-    {
-      "check": 78,
-      "bit": 190
-    },
-    {
-      "check": 78,
-      "bit": 217
-    },
-    {
-      "check": 78,
-      "bit": 239
-    },
-    {
-      "check": 79,
-      "bit": 56
-    },
-    {
-      "check": 79,
-      "bit": 69
-    },
-    {
-      "check": 79,
-      "bit": 101
-    },
-    {
-      "check": 79,
-      "bit": 191
-    },
-    {
-      "check": 79,
-      "bit": 218
-    },
-    {
-      "check": 79,
-      "bit": 240
-    },
-    {
-      "check": 80,
-      "bit": 57
-    },
-    {
-      "check": 80,
-      "bit": 70
-    },
-    {
-      "check": 80,
-      "bit": 102
-    },
-    {
-      "check": 80,
-      "bit": 160
-    },
-    {
-      "check": 80,
-      "bit": 219
-    },
-    {
-      "check": 80,
-      "bit": 241
-    },
-    {
-      "check": 81,
-      "bit": 58
-    },
-    {
-      "check": 81,
-      "bit": 71
-    },
-    {
-      "check": 81,
-      "bit": 103
-    },
-    {
-      "check": 81,
-      "bit": 161
-    },
-    {
-      "check": 81,
-      "bit": 220
-    },
-    {
-      "check": 81,
-      "bit": 242
-    },
-    {
-      "check": 82,
-      "bit": 59
-    },
-    {
-      "check": 82,
-      "bit": 72
-    },
-    {
-      "check": 82,
-      "bit": 104
-    },
-    {
-      "check": 82,
-      "bit": 162
-    },
-    {
-      "check": 82,
-      "bit": 221
-    },
-    {
-      "check": 82,
-      "bit": 243
-    },
-    {
-      "check": 83,
-      "bit": 60
-    },
-    {
-      "check": 83,
-      "bit": 73
-    },
-    {
-      "check": 83,
-      "bit": 105
-    },
-    {
-      "check": 83,
-      "bit": 163
-    },
-    {
-      "check": 83,
-      "bit": 222
-    },
-    {
-      "check": 83,
-      "bit": 244
-    },
-    {
-      "check": 84,
-      "bit": 61
-    },
-    {
-      "check": 84,
-      "bit": 74
-    },
-    {
-      "check": 84,
-      "bit": 106
-    },
-    {
-      "check": 84,
-      "bit": 164
-    },
-    {
-      "check": 84,
-      "bit": 223
-    },
-    {
-      "check": 84,
-      "bit": 245
-    },
-    {
-      "check": 85,
-      "bit": 62
-    },
-    {
-      "check": 85,
-      "bit": 75
-    },
-    {
-      "check": 85,
-      "bit": 107
-    },
-    {
-      "check": 85,
-      "bit": 165
-    },
-    {
-      "check": 85,
-      "bit": 192
-    },
-    {
-      "check": 85,
-      "bit": 246
-    },
-    {
-      "check": 86,
-      "bit": 63
-    },
-    {
-      "check": 86,
-      "bit": 76
-    },
-    {
-      "check": 86,
-      "bit": 108
-    },
-    {
-      "check": 86,
-      "bit": 166
-    },
-    {
-      "check": 86,
-      "bit": 193
-    },
-    {
-      "check": 86,
-      "bit": 247
-    },
-    {
-      "check": 87,
+      "check": 21,
       "bit": 32
     },
     {
-      "check": 87,
-      "bit": 77
-    },
-    {
-      "check": 87,
-      "bit": 109
-    },
-    {
-      "check": 87,
-      "bit": 167
-    },
-    {
-      "check": 87,
-      "bit": 194
-    },
-    {
-      "check": 87,
-      "bit": 248
-    },
-    {
-      "check": 88,
-      "bit": 33
-    },
-    {
-      "check": 88,
-      "bit": 78
-    },
-    {
-      "check": 88,
-      "bit": 110
-    },
-    {
-      "check": 88,
-      "bit": 168
-    },
-    {
-      "check": 88,
-      "bit": 195
-    },
-    {
-      "check": 88,
-      "bit": 249
-    },
-    {
-      "check": 89,
-      "bit": 34
-    },
-    {
-      "check": 89,
-      "bit": 79
-    },
-    {
-      "check": 89,
-      "bit": 111
-    },
-    {
-      "check": 89,
-      "bit": 169
-    },
-    {
-      "check": 89,
-      "bit": 196
-    },
-    {
-      "check": 89,
-      "bit": 250
-    },
-    {
-      "check": 90,
-      "bit": 35
-    },
-    {
-      "check": 90,
-      "bit": 80
-    },
-    {
-      "check": 90,
-      "bit": 112
-    },
-    {
-      "check": 90,
-      "bit": 170
-    },
-    {
-      "check": 90,
-      "bit": 197
-    },
-    {
-      "check": 90,
-      "bit": 251
-    },
-    {
-      "check": 91,
-      "bit": 36
-    },
-    {
-      "check": 91,
-      "bit": 81
-    },
-    {
-      "check": 91,
-      "bit": 113
-    },
-    {
-      "check": 91,
-      "bit": 171
-    },
-    {
-      "check": 91,
-      "bit": 198
-    },
-    {
-      "check": 91,
-      "bit": 252
-    },
-    {
-      "check": 92,
-      "bit": 37
-    },
-    {
-      "check": 92,
-      "bit": 82
-    },
-    {
-      "check": 92,
-      "bit": 114
-    },
-    {
-      "check": 92,
-      "bit": 172
-    },
-    {
-      "check": 92,
-      "bit": 199
-    },
-    {
-      "check": 92,
-      "bit": 253
-    },
-    {
-      "check": 93,
-      "bit": 38
-    },
-    {
-      "check": 93,
-      "bit": 83
-    },
-    {
-      "check": 93,
-      "bit": 115
-    },
-    {
-      "check": 93,
-      "bit": 173
-    },
-    {
-      "check": 93,
-      "bit": 200
-    },
-    {
-      "check": 93,
-      "bit": 254
-    },
-    {
-      "check": 94,
-      "bit": 39
-    },
-    {
-      "check": 94,
-      "bit": 84
-    },
-    {
-      "check": 94,
-      "bit": 116
-    },
-    {
-      "check": 94,
-      "bit": 174
-    },
-    {
-      "check": 94,
-      "bit": 201
-    },
-    {
-      "check": 94,
-      "bit": 255
-    },
-    {
-      "check": 95,
-      "bit": 40
-    },
-    {
-      "check": 95,
-      "bit": 85
-    },
-    {
-      "check": 95,
-      "bit": 117
-    },
-    {
-      "check": 95,
-      "bit": 175
-    },
-    {
-      "check": 95,
-      "bit": 202
-    },
-    {
-      "check": 95,
-      "bit": 224
-    },
-    {
-      "check": 96,
-      "bit": 92
-    },
-    {
-      "check": 96,
-      "bit": 102
-    },
-    {
-      "check": 96,
-      "bit": 121
-    },
-    {
-      "check": 96,
-      "bit": 197
-    },
-    {
-      "check": 96,
-      "bit": 225
-    },
-    {
-      "check": 96,
-      "bit": 245
-    },
-    {
-      "check": 97,
-      "bit": 93
-    },
-    {
-      "check": 97,
-      "bit": 103
-    },
-    {
-      "check": 97,
-      "bit": 122
-    },
-    {
-      "check": 97,
-      "bit": 198
-    },
-    {
-      "check": 97,
-      "bit": 226
-    },
-    {
-      "check": 97,
-      "bit": 246
-    },
-    {
-      "check": 98,
-      "bit": 94
-    },
-    {
-      "check": 98,
-      "bit": 104
-    },
-    {
-      "check": 98,
-      "bit": 123
-    },
-    {
-      "check": 98,
-      "bit": 199
-    },
-    {
-      "check": 98,
-      "bit": 227
-    },
-    {
-      "check": 98,
-      "bit": 247
-    },
-    {
-      "check": 99,
-      "bit": 95
-    },
-    {
-      "check": 99,
-      "bit": 105
-    },
-    {
-      "check": 99,
-      "bit": 124
-    },
-    {
-      "check": 99,
-      "bit": 200
-    },
-    {
-      "check": 99,
-      "bit": 228
-    },
-    {
-      "check": 99,
-      "bit": 248
-    },
-    {
-      "check": 100,
+      "check": 21,
       "bit": 64
     },
     {
-      "check": 100,
-      "bit": 106
-    },
-    {
-      "check": 100,
-      "bit": 125
-    },
-    {
-      "check": 100,
-      "bit": 201
-    },
-    {
-      "check": 100,
-      "bit": 229
-    },
-    {
-      "check": 100,
-      "bit": 249
-    },
-    {
-      "check": 101,
-      "bit": 65
-    },
-    {
-      "check": 101,
-      "bit": 107
-    },
-    {
-      "check": 101,
-      "bit": 126
-    },
-    {
-      "check": 101,
-      "bit": 202
-    },
-    {
-      "check": 101,
-      "bit": 230
-    },
-    {
-      "check": 101,
-      "bit": 250
-    },
-    {
-      "check": 102,
-      "bit": 66
-    },
-    {
-      "check": 102,
-      "bit": 108
-    },
-    {
-      "check": 102,
-      "bit": 127
-    },
-    {
-      "check": 102,
-      "bit": 203
-    },
-    {
-      "check": 102,
-      "bit": 231
-    },
-    {
-      "check": 102,
-      "bit": 251
-    },
-    {
-      "check": 103,
-      "bit": 67
-    },
-    {
-      "check": 103,
-      "bit": 96
-    },
-    {
-      "check": 103,
-      "bit": 109
-    },
-    {
-      "check": 103,
-      "bit": 204
-    },
-    {
-      "check": 103,
-      "bit": 232
-    },
-    {
-      "check": 103,
-      "bit": 252
-    },
-    {
-      "check": 104,
-      "bit": 68
-    },
-    {
-      "check": 104,
-      "bit": 97
-    },
-    {
-      "check": 104,
-      "bit": 110
-    },
-    {
-      "check": 104,
-      "bit": 205
-    },
-    {
-      "check": 104,
-      "bit": 233
-    },
-    {
-      "check": 104,
-      "bit": 253
-    },
-    {
-      "check": 105,
-      "bit": 69
-    },
-    {
-      "check": 105,
-      "bit": 98
-    },
-    {
-      "check": 105,
-      "bit": 111
-    },
-    {
-      "check": 105,
-      "bit": 206
-    },
-    {
-      "check": 105,
-      "bit": 234
-    },
-    {
-      "check": 105,
-      "bit": 254
-    },
-    {
-      "check": 106,
-      "bit": 70
-    },
-    {
-      "check": 106,
-      "bit": 99
-    },
-    {
-      "check": 106,
-      "bit": 112
-    },
-    {
-      "check": 106,
-      "bit": 207
-    },
-    {
-      "check": 106,
-      "bit": 235
-    },
-    {
-      "check": 106,
-      "bit": 255
-    },
-    {
-      "check": 107,
-      "bit": 71
-    },
-    {
-      "check": 107,
-      "bit": 100
-    },
-    {
-      "check": 107,
-      "bit": 113
-    },
-    {
-      "check": 107,
-      "bit": 208
-    },
-    {
-      "check": 107,
-      "bit": 224
-    },
-    {
-      "check": 107,
-      "bit": 236
-    },
-    {
-      "check": 108,
-      "bit": 72
-    },
-    {
-      "check": 108,
-      "bit": 101
-    },
-    {
-      "check": 108,
-      "bit": 114
-    },
-    {
-      "check": 108,
-      "bit": 209
-    },
-    {
-      "check": 108,
-      "bit": 225
-    },
-    {
-      "check": 108,
-      "bit": 237
-    },
-    {
-      "check": 109,
-      "bit": 73
-    },
-    {
-      "check": 109,
-      "bit": 102
-    },
-    {
-      "check": 109,
-      "bit": 115
-    },
-    {
-      "check": 109,
-      "bit": 210
-    },
-    {
-      "check": 109,
-      "bit": 226
-    },
-    {
-      "check": 109,
-      "bit": 238
-    },
-    {
-      "check": 110,
-      "bit": 74
-    },
-    {
-      "check": 110,
-      "bit": 103
-    },
-    {
-      "check": 110,
-      "bit": 116
-    },
-    {
-      "check": 110,
-      "bit": 211
-    },
-    {
-      "check": 110,
-      "bit": 227
-    },
-    {
-      "check": 110,
-      "bit": 239
-    },
-    {
-      "check": 111,
-      "bit": 75
-    },
-    {
-      "check": 111,
-      "bit": 104
-    },
-    {
-      "check": 111,
-      "bit": 117
-    },
-    {
-      "check": 111,
-      "bit": 212
-    },
-    {
-      "check": 111,
-      "bit": 228
-    },
-    {
-      "check": 111,
-      "bit": 240
-    },
-    {
-      "check": 112,
-      "bit": 76
-    },
-    {
-      "check": 112,
-      "bit": 105
-    },
-    {
-      "check": 112,
-      "bit": 118
-    },
-    {
-      "check": 112,
-      "bit": 213
-    },
-    {
-      "check": 112,
-      "bit": 229
-    },
-    {
-      "check": 112,
-      "bit": 241
-    },
-    {
-      "check": 113,
-      "bit": 77
-    },
-    {
-      "check": 113,
-      "bit": 106
-    },
-    {
-      "check": 113,
-      "bit": 119
-    },
-    {
-      "check": 113,
-      "bit": 214
-    },
-    {
-      "check": 113,
-      "bit": 230
-    },
-    {
-      "check": 113,
-      "bit": 242
-    },
-    {
-      "check": 114,
-      "bit": 78
-    },
-    {
-      "check": 114,
-      "bit": 107
-    },
-    {
-      "check": 114,
-      "bit": 120
-    },
-    {
-      "check": 114,
-      "bit": 215
-    },
-    {
-      "check": 114,
-      "bit": 231
-    },
-    {
-      "check": 114,
-      "bit": 243
-    },
-    {
-      "check": 115,
-      "bit": 79
-    },
-    {
-      "check": 115,
-      "bit": 108
-    },
-    {
-      "check": 115,
-      "bit": 121
-    },
-    {
-      "check": 115,
-      "bit": 216
-    },
-    {
-      "check": 115,
-      "bit": 232
-    },
-    {
-      "check": 115,
-      "bit": 244
-    },
-    {
-      "check": 116,
-      "bit": 80
-    },
-    {
-      "check": 116,
-      "bit": 109
-    },
-    {
-      "check": 116,
-      "bit": 122
-    },
-    {
-      "check": 116,
-      "bit": 217
-    },
-    {
-      "check": 116,
-      "bit": 233
-    },
-    {
-      "check": 116,
-      "bit": 245
-    },
-    {
-      "check": 117,
-      "bit": 81
-    },
-    {
-      "check": 117,
-      "bit": 110
-    },
-    {
-      "check": 117,
-      "bit": 123
-    },
-    {
-      "check": 117,
-      "bit": 218
-    },
-    {
-      "check": 117,
-      "bit": 234
-    },
-    {
-      "check": 117,
-      "bit": 246
-    },
-    {
-      "check": 118,
-      "bit": 82
-    },
-    {
-      "check": 118,
-      "bit": 111
-    },
-    {
-      "check": 118,
-      "bit": 124
-    },
-    {
-      "check": 118,
-      "bit": 219
-    },
-    {
-      "check": 118,
-      "bit": 235
-    },
-    {
-      "check": 118,
-      "bit": 247
-    },
-    {
-      "check": 119,
-      "bit": 83
-    },
-    {
-      "check": 119,
-      "bit": 112
-    },
-    {
-      "check": 119,
-      "bit": 125
-    },
-    {
-      "check": 119,
-      "bit": 220
-    },
-    {
-      "check": 119,
-      "bit": 236
-    },
-    {
-      "check": 119,
-      "bit": 248
-    },
-    {
-      "check": 120,
-      "bit": 84
-    },
-    {
-      "check": 120,
-      "bit": 113
-    },
-    {
-      "check": 120,
-      "bit": 126
-    },
-    {
-      "check": 120,
-      "bit": 221
-    },
-    {
-      "check": 120,
-      "bit": 237
-    },
-    {
-      "check": 120,
-      "bit": 249
-    },
-    {
-      "check": 121,
-      "bit": 85
-    },
-    {
-      "check": 121,
-      "bit": 114
-    },
-    {
-      "check": 121,
-      "bit": 127
-    },
-    {
-      "check": 121,
-      "bit": 222
-    },
-    {
-      "check": 121,
-      "bit": 238
-    },
-    {
-      "check": 121,
-      "bit": 250
-    },
-    {
-      "check": 122,
-      "bit": 86
-    },
-    {
-      "check": 122,
-      "bit": 96
-    },
-    {
-      "check": 122,
-      "bit": 115
-    },
-    {
-      "check": 122,
-      "bit": 223
-    },
-    {
-      "check": 122,
-      "bit": 239
-    },
-    {
-      "check": 122,
-      "bit": 251
-    },
-    {
-      "check": 123,
+      "check": 21,
       "bit": 87
     },
     {
-      "check": 123,
-      "bit": 97
+      "check": 21,
+      "bit": 107
     },
     {
-      "check": 123,
-      "bit": 116
+      "check": 22,
+      "bit": 8
     },
     {
-      "check": 123,
-      "bit": 192
+      "check": 22,
+      "bit": 19
     },
     {
-      "check": 123,
-      "bit": 240
+      "check": 22,
+      "bit": 33
     },
     {
-      "check": 123,
-      "bit": 252
+      "check": 22,
+      "bit": 65
     },
     {
-      "check": 124,
+      "check": 22,
       "bit": 88
     },
     {
-      "check": 124,
-      "bit": 98
+      "check": 22,
+      "bit": 108
     },
     {
-      "check": 124,
-      "bit": 117
+      "check": 23,
+      "bit": 9
     },
     {
-      "check": 124,
-      "bit": 193
+      "check": 23,
+      "bit": 20
     },
     {
-      "check": 124,
-      "bit": 241
+      "check": 23,
+      "bit": 34
     },
     {
-      "check": 124,
-      "bit": 253
+      "check": 23,
+      "bit": 66
     },
     {
-      "check": 125,
+      "check": 23,
       "bit": 89
     },
     {
-      "check": 125,
-      "bit": 99
+      "check": 23,
+      "bit": 109
     },
     {
-      "check": 125,
-      "bit": 118
+      "check": 24,
+      "bit": 10
     },
     {
-      "check": 125,
-      "bit": 194
+      "check": 24,
+      "bit": 21
     },
     {
-      "check": 125,
-      "bit": 242
+      "check": 24,
+      "bit": 35
     },
     {
-      "check": 125,
-      "bit": 254
+      "check": 24,
+      "bit": 67
     },
     {
-      "check": 126,
+      "check": 24,
       "bit": 90
     },
     {
-      "check": 126,
-      "bit": 100
+      "check": 24,
+      "bit": 110
     },
     {
-      "check": 126,
-      "bit": 119
+      "check": 25,
+      "bit": 11
     },
     {
-      "check": 126,
-      "bit": 195
+      "check": 25,
+      "bit": 22
     },
     {
-      "check": 126,
-      "bit": 243
+      "check": 25,
+      "bit": 36
     },
     {
-      "check": 126,
-      "bit": 255
+      "check": 25,
+      "bit": 68
     },
     {
-      "check": 127,
+      "check": 25,
       "bit": 91
     },
     {
-      "check": 127,
+      "check": 25,
+      "bit": 111
+    },
+    {
+      "check": 26,
+      "bit": 12
+    },
+    {
+      "check": 26,
+      "bit": 23
+    },
+    {
+      "check": 26,
+      "bit": 37
+    },
+    {
+      "check": 26,
+      "bit": 69
+    },
+    {
+      "check": 26,
+      "bit": 92
+    },
+    {
+      "check": 26,
+      "bit": 96
+    },
+    {
+      "check": 27,
+      "bit": 13
+    },
+    {
+      "check": 27,
+      "bit": 24
+    },
+    {
+      "check": 27,
+      "bit": 38
+    },
+    {
+      "check": 27,
+      "bit": 70
+    },
+    {
+      "check": 27,
+      "bit": 93
+    },
+    {
+      "check": 27,
+      "bit": 97
+    },
+    {
+      "check": 28,
+      "bit": 14
+    },
+    {
+      "check": 28,
+      "bit": 25
+    },
+    {
+      "check": 28,
+      "bit": 39
+    },
+    {
+      "check": 28,
+      "bit": 71
+    },
+    {
+      "check": 28,
+      "bit": 94
+    },
+    {
+      "check": 28,
+      "bit": 98
+    },
+    {
+      "check": 29,
+      "bit": 15
+    },
+    {
+      "check": 29,
+      "bit": 26
+    },
+    {
+      "check": 29,
+      "bit": 40
+    },
+    {
+      "check": 29,
+      "bit": 72
+    },
+    {
+      "check": 29,
+      "bit": 95
+    },
+    {
+      "check": 29,
+      "bit": 99
+    },
+    {
+      "check": 30,
+      "bit": 0
+    },
+    {
+      "check": 30,
+      "bit": 27
+    },
+    {
+      "check": 30,
+      "bit": 41
+    },
+    {
+      "check": 30,
+      "bit": 73
+    },
+    {
+      "check": 30,
+      "bit": 80
+    },
+    {
+      "check": 30,
+      "bit": 100
+    },
+    {
+      "check": 31,
+      "bit": 1
+    },
+    {
+      "check": 31,
+      "bit": 28
+    },
+    {
+      "check": 31,
+      "bit": 42
+    },
+    {
+      "check": 31,
+      "bit": 74
+    },
+    {
+      "check": 31,
+      "bit": 81
+    },
+    {
+      "check": 31,
       "bit": 101
     },
     {
-      "check": 127,
+      "check": 32,
+      "bit": 21
+    },
+    {
+      "check": 32,
+      "bit": 43
+    },
+    {
+      "check": 32,
+      "bit": 59
+    },
+    {
+      "check": 32,
+      "bit": 88
+    },
+    {
+      "check": 32,
+      "bit": 102
+    },
+    {
+      "check": 32,
+      "bit": 113
+    },
+    {
+      "check": 33,
+      "bit": 22
+    },
+    {
+      "check": 33,
+      "bit": 44
+    },
+    {
+      "check": 33,
+      "bit": 60
+    },
+    {
+      "check": 33,
+      "bit": 89
+    },
+    {
+      "check": 33,
+      "bit": 103
+    },
+    {
+      "check": 33,
+      "bit": 114
+    },
+    {
+      "check": 34,
+      "bit": 23
+    },
+    {
+      "check": 34,
+      "bit": 45
+    },
+    {
+      "check": 34,
+      "bit": 61
+    },
+    {
+      "check": 34,
+      "bit": 90
+    },
+    {
+      "check": 34,
+      "bit": 104
+    },
+    {
+      "check": 34,
+      "bit": 115
+    },
+    {
+      "check": 35,
+      "bit": 24
+    },
+    {
+      "check": 35,
+      "bit": 46
+    },
+    {
+      "check": 35,
+      "bit": 62
+    },
+    {
+      "check": 35,
+      "bit": 91
+    },
+    {
+      "check": 35,
+      "bit": 105
+    },
+    {
+      "check": 35,
+      "bit": 116
+    },
+    {
+      "check": 36,
+      "bit": 25
+    },
+    {
+      "check": 36,
+      "bit": 47
+    },
+    {
+      "check": 36,
+      "bit": 63
+    },
+    {
+      "check": 36,
+      "bit": 92
+    },
+    {
+      "check": 36,
+      "bit": 106
+    },
+    {
+      "check": 36,
+      "bit": 117
+    },
+    {
+      "check": 37,
+      "bit": 26
+    },
+    {
+      "check": 37,
+      "bit": 32
+    },
+    {
+      "check": 37,
+      "bit": 48
+    },
+    {
+      "check": 37,
+      "bit": 93
+    },
+    {
+      "check": 37,
+      "bit": 107
+    },
+    {
+      "check": 37,
+      "bit": 118
+    },
+    {
+      "check": 38,
+      "bit": 27
+    },
+    {
+      "check": 38,
+      "bit": 33
+    },
+    {
+      "check": 38,
+      "bit": 49
+    },
+    {
+      "check": 38,
+      "bit": 94
+    },
+    {
+      "check": 38,
+      "bit": 108
+    },
+    {
+      "check": 38,
+      "bit": 119
+    },
+    {
+      "check": 39,
+      "bit": 28
+    },
+    {
+      "check": 39,
+      "bit": 34
+    },
+    {
+      "check": 39,
+      "bit": 50
+    },
+    {
+      "check": 39,
+      "bit": 95
+    },
+    {
+      "check": 39,
+      "bit": 109
+    },
+    {
+      "check": 39,
       "bit": 120
     },
     {
-      "check": 127,
-      "bit": 196
+      "check": 40,
+      "bit": 29
     },
     {
-      "check": 127,
-      "bit": 224
+      "check": 40,
+      "bit": 35
     },
     {
-      "check": 127,
-      "bit": 244
+      "check": 40,
+      "bit": 51
+    },
+    {
+      "check": 40,
+      "bit": 80
+    },
+    {
+      "check": 40,
+      "bit": 110
+    },
+    {
+      "check": 40,
+      "bit": 121
+    },
+    {
+      "check": 41,
+      "bit": 30
+    },
+    {
+      "check": 41,
+      "bit": 36
+    },
+    {
+      "check": 41,
+      "bit": 52
+    },
+    {
+      "check": 41,
+      "bit": 81
+    },
+    {
+      "check": 41,
+      "bit": 111
+    },
+    {
+      "check": 41,
+      "bit": 122
+    },
+    {
+      "check": 42,
+      "bit": 31
+    },
+    {
+      "check": 42,
+      "bit": 37
+    },
+    {
+      "check": 42,
+      "bit": 53
+    },
+    {
+      "check": 42,
+      "bit": 82
+    },
+    {
+      "check": 42,
+      "bit": 96
+    },
+    {
+      "check": 42,
+      "bit": 123
+    },
+    {
+      "check": 43,
+      "bit": 16
+    },
+    {
+      "check": 43,
+      "bit": 38
+    },
+    {
+      "check": 43,
+      "bit": 54
+    },
+    {
+      "check": 43,
+      "bit": 83
+    },
+    {
+      "check": 43,
+      "bit": 97
+    },
+    {
+      "check": 43,
+      "bit": 124
+    },
+    {
+      "check": 44,
+      "bit": 17
+    },
+    {
+      "check": 44,
+      "bit": 39
+    },
+    {
+      "check": 44,
+      "bit": 55
+    },
+    {
+      "check": 44,
+      "bit": 84
+    },
+    {
+      "check": 44,
+      "bit": 98
+    },
+    {
+      "check": 44,
+      "bit": 125
+    },
+    {
+      "check": 45,
+      "bit": 18
+    },
+    {
+      "check": 45,
+      "bit": 40
+    },
+    {
+      "check": 45,
+      "bit": 56
+    },
+    {
+      "check": 45,
+      "bit": 85
+    },
+    {
+      "check": 45,
+      "bit": 99
+    },
+    {
+      "check": 45,
+      "bit": 126
+    },
+    {
+      "check": 46,
+      "bit": 19
+    },
+    {
+      "check": 46,
+      "bit": 41
+    },
+    {
+      "check": 46,
+      "bit": 57
+    },
+    {
+      "check": 46,
+      "bit": 86
+    },
+    {
+      "check": 46,
+      "bit": 100
+    },
+    {
+      "check": 46,
+      "bit": 127
+    },
+    {
+      "check": 47,
+      "bit": 20
+    },
+    {
+      "check": 47,
+      "bit": 42
+    },
+    {
+      "check": 47,
+      "bit": 58
+    },
+    {
+      "check": 47,
+      "bit": 87
+    },
+    {
+      "check": 47,
+      "bit": 101
+    },
+    {
+      "check": 47,
+      "bit": 112
+    },
+    {
+      "check": 48,
+      "bit": 46
+    },
+    {
+      "check": 48,
+      "bit": 51
+    },
+    {
+      "check": 48,
+      "bit": 63
+    },
+    {
+      "check": 48,
+      "bit": 109
+    },
+    {
+      "check": 48,
+      "bit": 113
+    },
+    {
+      "check": 48,
+      "bit": 115
+    },
+    {
+      "check": 49,
+      "bit": 47
+    },
+    {
+      "check": 49,
+      "bit": 48
+    },
+    {
+      "check": 49,
+      "bit": 52
+    },
+    {
+      "check": 49,
+      "bit": 110
+    },
+    {
+      "check": 49,
+      "bit": 114
+    },
+    {
+      "check": 49,
+      "bit": 116
+    },
+    {
+      "check": 50,
+      "bit": 32
+    },
+    {
+      "check": 50,
+      "bit": 49
+    },
+    {
+      "check": 50,
+      "bit": 53
+    },
+    {
+      "check": 50,
+      "bit": 111
+    },
+    {
+      "check": 50,
+      "bit": 115
+    },
+    {
+      "check": 50,
+      "bit": 117
+    },
+    {
+      "check": 51,
+      "bit": 33
+    },
+    {
+      "check": 51,
+      "bit": 50
+    },
+    {
+      "check": 51,
+      "bit": 54
+    },
+    {
+      "check": 51,
+      "bit": 96
+    },
+    {
+      "check": 51,
+      "bit": 116
+    },
+    {
+      "check": 51,
+      "bit": 118
+    },
+    {
+      "check": 52,
+      "bit": 34
+    },
+    {
+      "check": 52,
+      "bit": 51
+    },
+    {
+      "check": 52,
+      "bit": 55
+    },
+    {
+      "check": 52,
+      "bit": 97
+    },
+    {
+      "check": 52,
+      "bit": 117
+    },
+    {
+      "check": 52,
+      "bit": 119
+    },
+    {
+      "check": 53,
+      "bit": 35
+    },
+    {
+      "check": 53,
+      "bit": 52
+    },
+    {
+      "check": 53,
+      "bit": 56
+    },
+    {
+      "check": 53,
+      "bit": 98
+    },
+    {
+      "check": 53,
+      "bit": 118
+    },
+    {
+      "check": 53,
+      "bit": 120
+    },
+    {
+      "check": 54,
+      "bit": 36
+    },
+    {
+      "check": 54,
+      "bit": 53
+    },
+    {
+      "check": 54,
+      "bit": 57
+    },
+    {
+      "check": 54,
+      "bit": 99
+    },
+    {
+      "check": 54,
+      "bit": 119
+    },
+    {
+      "check": 54,
+      "bit": 121
+    },
+    {
+      "check": 55,
+      "bit": 37
+    },
+    {
+      "check": 55,
+      "bit": 54
+    },
+    {
+      "check": 55,
+      "bit": 58
+    },
+    {
+      "check": 55,
+      "bit": 100
+    },
+    {
+      "check": 55,
+      "bit": 120
+    },
+    {
+      "check": 55,
+      "bit": 122
+    },
+    {
+      "check": 56,
+      "bit": 38
+    },
+    {
+      "check": 56,
+      "bit": 55
+    },
+    {
+      "check": 56,
+      "bit": 59
+    },
+    {
+      "check": 56,
+      "bit": 101
+    },
+    {
+      "check": 56,
+      "bit": 121
+    },
+    {
+      "check": 56,
+      "bit": 123
+    },
+    {
+      "check": 57,
+      "bit": 39
+    },
+    {
+      "check": 57,
+      "bit": 56
+    },
+    {
+      "check": 57,
+      "bit": 60
+    },
+    {
+      "check": 57,
+      "bit": 102
+    },
+    {
+      "check": 57,
+      "bit": 122
+    },
+    {
+      "check": 57,
+      "bit": 124
+    },
+    {
+      "check": 58,
+      "bit": 40
+    },
+    {
+      "check": 58,
+      "bit": 57
+    },
+    {
+      "check": 58,
+      "bit": 61
+    },
+    {
+      "check": 58,
+      "bit": 103
+    },
+    {
+      "check": 58,
+      "bit": 123
+    },
+    {
+      "check": 58,
+      "bit": 125
+    },
+    {
+      "check": 59,
+      "bit": 41
+    },
+    {
+      "check": 59,
+      "bit": 58
+    },
+    {
+      "check": 59,
+      "bit": 62
+    },
+    {
+      "check": 59,
+      "bit": 104
+    },
+    {
+      "check": 59,
+      "bit": 124
+    },
+    {
+      "check": 59,
+      "bit": 126
+    },
+    {
+      "check": 60,
+      "bit": 42
+    },
+    {
+      "check": 60,
+      "bit": 59
+    },
+    {
+      "check": 60,
+      "bit": 63
+    },
+    {
+      "check": 60,
+      "bit": 105
+    },
+    {
+      "check": 60,
+      "bit": 125
+    },
+    {
+      "check": 60,
+      "bit": 127
+    },
+    {
+      "check": 61,
+      "bit": 43
+    },
+    {
+      "check": 61,
+      "bit": 48
+    },
+    {
+      "check": 61,
+      "bit": 60
+    },
+    {
+      "check": 61,
+      "bit": 106
+    },
+    {
+      "check": 61,
+      "bit": 112
+    },
+    {
+      "check": 61,
+      "bit": 126
+    },
+    {
+      "check": 62,
+      "bit": 44
+    },
+    {
+      "check": 62,
+      "bit": 49
+    },
+    {
+      "check": 62,
+      "bit": 61
+    },
+    {
+      "check": 62,
+      "bit": 107
+    },
+    {
+      "check": 62,
+      "bit": 113
+    },
+    {
+      "check": 62,
+      "bit": 127
+    },
+    {
+      "check": 63,
+      "bit": 45
+    },
+    {
+      "check": 63,
+      "bit": 50
+    },
+    {
+      "check": 63,
+      "bit": 62
+    },
+    {
+      "check": 63,
+      "bit": 108
+    },
+    {
+      "check": 63,
+      "bit": 112
+    },
+    {
+      "check": 63,
+      "bit": 114
     }
   ]
 }
