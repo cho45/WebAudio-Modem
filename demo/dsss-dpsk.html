@@ -76,6 +76,7 @@
 		<button id="stop">停止</button>
 		<span id="audio-status" class="label"></span>
 		<div id="audio-decode-info" class="label"></div>
+		<canvas id="canvas-bits-demod-audio" width="600" height="100"></canvas>
 	</div>
 	<script type="module">
 		import * as modem from '../src/modems/dsss-dpsk.js';
@@ -307,6 +308,9 @@
 			// 1. ランダムビット列
 			const bits = randomBits(bitLength); // Use bitLength from query param
 			bits[0] = 0;
+			bits[1] = 0;
+			bits[2] = 0;
+			bits[3] = 0;
 			lastBits = bits;
 			console.log('bits:', Array.from(bits).join(''));
 			// 2. DSSS拡散
@@ -403,6 +407,18 @@
 						...opts
 					}
 				});
+
+				const llrs = [];
+
+				this.port.onmessage = (event) => {
+					if (event.data.type === 'bit') {
+						const { bit, llr } = event.data;
+						llrs.push(-llr);
+						// 復調ビット列（時系列）
+						drawSignal(document.getElementById('canvas-bits-demod-audio'), llrs, '#27ae60', [-128, 127]);
+						document.getElementById('audio-decode-info').textContent = `復調ビット: ${llrs.join('')}`;
+					}
+				};
 			}
 
 			static async addModule(context) {

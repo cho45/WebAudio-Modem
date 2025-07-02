@@ -227,6 +227,12 @@ class TestProcessor extends AudioWorkletProcessor {
 			} else {
 				this.currentByte += bit.toString();
 			}
+
+			this.port.postMessage({
+				type: 'bit',
+				llr,
+				bit
+			});
 			
 			if (this.syncState.processedBits % 8 === 0) {
 				const avgLLR = this.syncState.lastLLRs.reduce((a, b) => a + b, 0) / this.syncState.lastLLRs.length;
