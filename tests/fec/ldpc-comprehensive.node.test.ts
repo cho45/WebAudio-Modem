@@ -114,13 +114,10 @@ describe('LDPC 全符号長包括テスト', () => {
             
             expect(result.converged).toBe(true);
             expect(result.iterations).toBeLessThan(5);
-
-            // デコードされた符号語から情報ビットを抽出
-            const extractedMessageBytes = ldpc._extractInformationBits(result.decodedCodeword);
             
             // 元のメッセージと抽出されたメッセージが一致することを確認
-            expect(extractedMessageBytes.length).toBe(messageBytes.length);
-            expect(extractedMessageBytes).toEqual(messageBytes);
+            expect(result.decodedMessage.length).toBe(messageBytes.length);
+            expect(result.decodedMessage).toEqual(messageBytes);
             
             console.log(`${testCase.name} - デコード:`, {
                 iterations: result.iterations,
@@ -155,6 +152,7 @@ describe('LDPC 全符号長包括テスト', () => {
             
             // 3%程度のエラーなら修正できるはず
             expect(result.iterations).toBeLessThan(20);
+            expect(result.decodedMessage).toEqual(messageBytes);
         });
     });
 

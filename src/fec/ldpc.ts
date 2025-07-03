@@ -254,7 +254,7 @@ export class LDPC {
         }
     }
 
-    public decode(receivedLlr: Int8Array, maxIterations?: number): { decodedCodeword: Uint8Array, iterations: number, converged: boolean } {
+    public decodeCodeword(receivedLlr: Int8Array, maxIterations?: number): { decodedCodeword: Uint8Array, iterations: number, converged: boolean } {
         if (receivedLlr.length !== this.H_punctured_width) {
             throw new Error(`Received LLR length must be ${this.H_punctured_width}, but got ${receivedLlr.length}`);
         }
@@ -380,6 +380,12 @@ export class LDPC {
             iterations: iterations + 1,
             converged: converged
         };
+    }
+
+    public decode(receivedLlr: Int8Array, maxIterations?: number): { decodedMessage: Uint8Array, iterations: number, converged: boolean } {
+        const { decodedCodeword, iterations, converged } = this.decodeCodeword(receivedLlr, maxIterations);
+        const decodedMessage = this._extractInformationBits(decodedCodeword);
+        return { decodedMessage, iterations, converged };
     }
 
     public getCodewordLength(): number {
