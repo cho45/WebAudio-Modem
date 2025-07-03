@@ -318,7 +318,7 @@ export class LDPC {
                         if (i === j) continue;
 
                         productOfSigns *= signs[j];
-                        minAbsValue = Math.min(minAbsValue, absValues[j] + Number.EPSILON);
+                        minAbsValue = Math.min(minAbsValue, absValues[j]);
                     }
                     const idxInCheckNodeConnectionsForN = this.checkNodeConnections[m].indexOf(n);
                     L_r[m][idxInCheckNodeConnectionsForN] = productOfSigns * minAbsValue;
