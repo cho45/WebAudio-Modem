@@ -9,7 +9,7 @@
  * - サンプル: アナログ信号のデジタル表現 → Float32Array
  */
 
-import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutput } from '../utils/msequence';
+import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutput } from '../../utils/msequence';
 
 /**
  * Normalize phase to [-π, π] range
@@ -367,69 +367,6 @@ export function phaseUnwrap(p: Float32Array): Float32Array {
     return up;
 }
 
-/**
- * Calculate Bit Error Rate between two bit arrays (Step 3 requirement)
- * @param originalBits Original transmitted bits as Uint8Array
- * @param receivedBits Received/recovered bits as Uint8Array
- * @returns BER (0.0 to 1.0)
- */
-export function calculateBER(originalBits: Uint8Array, receivedBits: Uint8Array): number {
-  if (originalBits.length !== receivedBits.length) {
-    throw new Error('Bit arrays must have same length');
-  }
-  
-  if (originalBits.length === 0) return 0;
-  
-  let errors = 0;
-  for (let i = 0; i < originalBits.length; i++) {
-    if (originalBits[i] !== receivedBits[i]) {
-      errors++;
-    }
-  }
-  
-  return errors / originalBits.length;
-}
-
-/**
- * Add Additive White Gaussian Noise to signal (Step 3 requirement)
- * @param signal Input signal array as Float32Array
- * @param snrDb Signal-to-Noise Ratio in dB
- * @returns Noisy signal array as Float32Array
- */
-export function addAWGN(signal: Float32Array, snrDb: number): Float32Array {
-  const noisySignal = new Float32Array(signal.length);
-  
-  // Calculate signal power
-  let signalPower = 0;
-  for (let i = 0; i < signal.length; i++) {
-    signalPower += signal[i] * signal[i];
-  }
-  signalPower /= signal.length;
-  
-  // Calculate noise power from SNR
-  const snrLinear = Math.pow(10, snrDb / 10);
-  const noisePower = signalPower / snrLinear;
-  const noiseStd = Math.sqrt(noisePower);
-  
-  // Add Gaussian noise
-  for (let i = 0; i < signal.length; i++) {
-    const noise = generateGaussianNoise() * noiseStd;
-    noisySignal[i] = signal[i] + noise;
-  }
-  
-  return noisySignal;
-}
-
-/**
- * Generate Gaussian noise sample (Box-Muller method)
- */
-export function generateGaussianNoise(): number {
-  // Box-Muller transform for Gaussian random numbers
-  const u1 = Math.random();
-  const u2 = Math.random();
-  
-  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-}
 
 /**
  * Cache for modulated reference signals to avoid repeated computation

@@ -1,12 +1,12 @@
-import { bchEncode, bchDecode, type BCHCodeType } from '../fec/bch';
-import { LDPC, type HMatrixData } from '../fec/ldpc';
-import { RingBuffer } from '../utils';
+import { bchEncode, bchDecode, type BCHCodeType } from '../../fec/bch';
+import { LDPC, type HMatrixData } from '../../fec/ldpc';
+import { RingBuffer } from '../../utils';
 
 // 正しく生成されたLDPC H行列データを読み込み
-import ldpcMatrix128 from '../fec/ldpc_h_matrix_n128_k64.json';
-import ldpcMatrix256 from '../fec/ldpc_h_matrix_n256_k128.json';
-import ldpcMatrix512 from '../fec/ldpc_h_matrix_n512_k256.json';
-import ldpcMatrix1024 from '../fec/ldpc_h_matrix_n1024_k512.json';
+import ldpcMatrix128 from '../../fec/ldpc_h_matrix_n128_k64.json';
+import ldpcMatrix256 from '../../fec/ldpc_h_matrix_n256_k128.json';
+import ldpcMatrix512 from '../../fec/ldpc_h_matrix_n512_k256.json';
+import ldpcMatrix1024 from '../../fec/ldpc_h_matrix_n1024_k512.json';
 
 // 定数
 const PREAMBLE = [0, 0, 0, 0]; // 4-bit Preamble

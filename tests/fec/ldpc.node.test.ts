@@ -1735,7 +1735,7 @@ describe('LDPC Decoder (Min-Sum)', () => {
         // 全てのLLRが非常に大きな正の値（0ビットに対応）
         const receivedLlr = new Int8Array(n).fill(127); 
 
-        const result = ldpc.decode(receivedLlr);
+        const result = ldpc.decodeCodeword(receivedLlr);
 
         // 復号結果が全て0であることを期待（packed bit形式）
         const expectedCodewordSize = Math.ceil(n / 8);
@@ -1758,7 +1758,7 @@ describe('LDPC Decoder (Min-Sum)', () => {
         receivedLlr[10] = -80;
         receivedLlr[20] = -100;
 
-        const result = ldpc.decode(receivedLlr);
+        const result = ldpc.decodeCodeword(receivedLlr);
 
         // 復号結果が全て0であることを期待（ノイズが訂正されることを期待、packed bit形式）
         const expectedCodewordSize = Math.ceil(n / 8);
@@ -1971,10 +1971,10 @@ describe('LDPC Decoder (Min-Sum)', () => {
                     }
                     
                     // 4. デコード
-                    const decodeResult = ldpc.decode(noisyLlr, 20); // 最大100反復
+                    const decodeResult = ldpc.decode(noisyLlr, 20); // 最大20反復
 
                     // 5. エラー評価
-                    const decodedBits = unpackBits(decodeResult.decodedCodeword, n);
+                    const decodedBits = unpackBits(decodeResult.decodedMessage, n);
                     
                     // ビットエラー数計算
                     let bitErrors = 0;

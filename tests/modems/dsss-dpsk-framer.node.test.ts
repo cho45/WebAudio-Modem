@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { DsssDpskFramer, type FrameOptions } from '../../src/modems/dsss-dpsk-framer';
+import { DsssDpskFramer, type FrameOptions } from '../../src/modems/dsss-dpsk/framer';
 
 describe('DsssDpskFramer', () => {
   describe('build method', () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LDPC } from '../../src/fec/ldpc.js';
 import { LDPCAnalyzer } from '../../src/fec/ldpc-analyzer.js';
-import { addAWGN, generateGaussianNoise, calculateBER } from '../../src/modems/dsss-dpsk.ts';
+import { addAWGN, generateGaussianNoise, calculateBER } from '../../src/utils';
 
 // 全符号長のH行列を読み込み
 import ldpcMatrix128 from '../../src/fec/ldpc_h_matrix_n128_k64.json';
@@ -54,7 +54,7 @@ const testCases: LDPCTestCase[] = [
         expectedK: 64,
         messageBytesLength: 8,
         codewordBytesLength: 16,
-        numTrialsPerEbN0: 50
+        numTrialsPerEbN0: 160
     },
     {
         ebN0RangeDb,
@@ -64,7 +64,7 @@ const testCases: LDPCTestCase[] = [
         expectedK: 128,
         messageBytesLength: 16,
         codewordBytesLength: 32,
-        numTrialsPerEbN0: 20
+        numTrialsPerEbN0: 80
     },
     {
         ebN0RangeDb,
@@ -74,7 +74,7 @@ const testCases: LDPCTestCase[] = [
         expectedK: 256,
         messageBytesLength: 32,
         codewordBytesLength: 64,
-        numTrialsPerEbN0: 20
+        numTrialsPerEbN0: 40
     },
     {
         ebN0RangeDb,
@@ -230,7 +230,7 @@ describe('LDPC 全符号長包括テスト', () => {
                     }
 
                     // デコード
-                    const result = ldpc.decode(receivedLlr, 100);
+                    const result = ldpc.decode(receivedLlr, 50);
 
                     totalIterations += result.iterations;
 
