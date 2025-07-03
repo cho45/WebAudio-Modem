@@ -16,7 +16,7 @@
  */
 
 // BCH符号タイプ定義
-export type BCHCodeType = 'BCH_127_120_1' | 'BCH_255_247_1' | 'BCH_511_502_1' | 'BCH_1023_1013_1';
+export type BCHCodeType = 'BCH_63_56_1' | 'BCH_127_120_1' | 'BCH_255_247_1' | 'BCH_511_502_1' | 'BCH_1023_1013_1';
 
 // BCH復号結果
 export interface BCHDecodeResult {
@@ -88,6 +88,13 @@ interface BCHParams {
 
 // BCH符号設定（理論的に正しい値）
 const BCH_CONFIGS = {
+  'BCH_63_56_1': {
+    m: 6,
+    t: 1,
+    primitivePoly: 0b1000011, // x^6 + x + 1 (原始多項式)
+    n: 63,
+    k: 56
+  },
   'BCH_127_120_1': {
     m: 7,
     t: 1,

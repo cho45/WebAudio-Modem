@@ -160,7 +160,7 @@ export class LDPC {
     private readonly systematicMatrix: SystematicHMatrix;
     private readonly defaultMaxIterations: number;
 
-    constructor(hMatrixData: HMatrixData, defaultMaxIterations: number = 10, puncturedBitIndices?: number[]) {
+    constructor(hMatrixData: HMatrixData, defaultMaxIterations: number = 10, puncturedBitIndices?: Set<number>) {
         this.H_height = hMatrixData.height;
         this.H_width = hMatrixData.width;
         this.defaultMaxIterations = defaultMaxIterations;
@@ -318,7 +318,7 @@ export class LDPC {
                         if (i === j) continue;
 
                         productOfSigns *= signs[j];
-                        minAbsValue = Math.min(minAbsValue, absValues[j]);
+                        minAbsValue = Math.min(minAbsValue, absValues[j] + Number.EPSILON);
                     }
                     const idxInCheckNodeConnectionsForN = this.checkNodeConnections[m].indexOf(n);
                     L_r[m][idxInCheckNodeConnectionsForN] = productOfSigns * minAbsValue;
@@ -388,6 +388,32 @@ export class LDPC {
 
     public getMessageLength(): number {
         return this.K_message_length;
+    }
+
+    public _extractInformationBits(codewordBytes: Uint8Array): Uint8Array {
+        const n_unpunctured = this.H_width;
+        const k = this.K_message_length;
+
+        // decodedCodeword (codewordBytes) は既に元の列順序になっている
+        // これを systematic 形式に変換するために逆置換を適用する
+        const systematicCodewordBytes = new Uint8Array(Math.ceil(n_unpunctured / 8));
+        const inversePermutation: number[] = Array(n_unpunctured);
+        for (let i = 0; i < n_unpunctured; i++) {
+            inversePermutation[this.systematicMatrix.columnPermutation[i]] = i;
+        }
+
+        for (let i = 0; i < n_unpunctured; i++) {
+            const bit = this.getBit(codewordBytes, i); // codewordBytes は元の列順序
+            this.setBit(systematicCodewordBytes, inversePermutation[i], bit);
+        }
+
+        // 最初の k ビットが情報ビット
+        const messageBytes = new Uint8Array(Math.ceil(k / 8));
+        for (let i = 0; i < k; i++) {
+            const bit = this.getBit(systematicCodewordBytes, this.systematicMatrix.rank + i);
+            this.setBit(messageBytes, i, bit);
+        }
+        return messageBytes;
     }
 
     public getCodeRate(): number {

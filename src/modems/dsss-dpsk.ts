@@ -423,7 +423,7 @@ export function addAWGN(signal: Float32Array, snrDb: number): Float32Array {
 /**
  * Generate Gaussian noise sample (Box-Muller method)
  */
-function generateGaussianNoise(): number {
+export function generateGaussianNoise(): number {
   // Box-Muller transform for Gaussian random numbers
   const u1 = Math.random();
   const u2 = Math.random();
