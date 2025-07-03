@@ -54,7 +54,6 @@ function checkMatrixParityPacked(codewordBytes: Uint8Array, hData: HMatrixData):
 
 // テスト用のH行列データを読み込む
 let hMatrixData: HMatrixData;
-// const hMatrixPath = path.resolve(__dirname, '../../src/fec/ldpc_h_matrix_pyldpc_systematic.json');
 const hMatrixPath = path.resolve(__dirname, '../../src/fec/ldpc_h_matrix_n128_k64.json');
 try {
     const rawData = fs.readFileSync(hMatrixPath, 'utf8');

@@ -1,4 +1,4 @@
-import { HMatrixData } from './ldpc.js';
+import { HMatrixData, convertToSystematicForm } from './ldpc.js';
 
 /**
  * LDPC H行列の性能分析ツール
@@ -70,38 +70,6 @@ export class LDPCAnalyzer {
     }
 
     /**
-     * Girth（最小サイクル長）の下限推定
-     * 実際のgirth計算は複雑なので、構造的特徴から推定
-     */
-    public estimateGirth(): { minPossible: number, analysis: string } {
-        const regularity = this.checkRegularity();
-        const basic = this.getBasicInfo();
-        
-        if (regularity.isRegular && regularity.columnDegree.length === 1) {
-            const dc = regularity.columnDegree[0]; // 列重み
-            const dr = regularity.rowDegree[0];   // 行重み
-            
-            // Regular LDPCの場合、girthの理論下限
-            if (dc === 3) {
-                return {
-                    minPossible: 6,
-                    analysis: `Regular (${dc},${dr}) LDPC: 理論最小girth=6`
-                };
-            } else if (dc === 2) {
-                return {
-                    minPossible: 4,
-                    analysis: `Regular (${dc},${dr}) LDPC: 理論最小girth=4（性能劣化の可能性）`
-                };
-            }
-        }
-        
-        return {
-            minPossible: 4,
-            analysis: "Irregular LDPC: girth分析には詳細計算が必要"
-        };
-    }
-
-    /**
      * 密度（sparsity）の計算
      */
     public getDensity(): number {
@@ -113,34 +81,84 @@ export class LDPCAnalyzer {
      * H行列のランク推定（フルランクかどうか）
      * 注意: 実際のランク計算ではなく構造的推定
      */
-    public estimateRank(): { estimatedRank: number, isLikelyFullRank: boolean, note: string } {
-        const basic = this.getBasicInfo();
-        const regularity = this.checkRegularity();
-        
-        // 構造的にフルランクの可能性が高いかを判定
-        const minRowWeight = Math.min(...this.getRowWeights());
-        const maxColWeight = Math.max(...this.getColumnWeights());
-        
-        let isLikelyFullRank = true;
-        let note = "";
-        
-        if (minRowWeight < 2) {
-            isLikelyFullRank = false;
-            note = "重み1の行が存在: ランク不足の可能性";
-        } else if (maxColWeight === 1) {
-            isLikelyFullRank = false;
-            note = "重み1の列が存在: ランク不足の可能性";
-        } else if (regularity.isRegular) {
-            note = "Regular構造: 通常フルランク";
-        } else {
-            note = "Irregular構造: ランク確認推奨";
-        }
-        
+    public exactRank(): { rank: number, isFullRank: boolean } {
+        const { rank } = convertToSystematicForm(this.hMatrix);
         return {
-            estimatedRank: basic.parityChecks,
-            isLikelyFullRank,
-            note
+            rank,
+            isFullRank: rank === this.hMatrix.height
         };
+    }
+
+    /**
+     * H行列の最小サイクル長（girth）を厳密に計算（BFS）
+     * 返り値: girth（最小サイクル長, サイクルがなければInfinity）
+     */
+    public exactGirth(): number {
+        const m = this.hMatrix.height; // Number of check nodes
+        const n = this.hMatrix.width;  // Number of bit nodes
+
+        // Build adjacency lists for the bipartite graph
+        // bitToChecks[bit_idx] = [check_idx1, check_idx2, ...]
+        // checkToBits[check_idx] = [bit_idx1, bit_idx2, ...]
+        const bitToChecks: number[][] = Array(n).fill(0).map(() => []);
+        const checkToBits: number[][] = Array(m).fill(0).map(() => []);
+
+        for (const conn of this.hMatrix.connections) {
+            bitToChecks[conn.bit].push(conn.check);
+            checkToBits[conn.check].push(conn.bit);
+        }
+
+        let minGirth = Infinity;
+
+        // Iterate through each node (bit and check) as a starting point for BFS
+        // This ensures finding the shortest cycle regardless of where it starts.
+        for (let startNodeIdx = 0; startNodeIdx < n + m; startNodeIdx++) {
+            const isStartNodeBit = startNodeIdx < n;
+            const actualStartIdx = isStartNodeBit ? startNodeIdx : startNodeIdx - n; // Adjust index for check nodes
+
+            const q: { nodeIdx: number, isBitNode: boolean, dist: number, parentKey: string | null }[] = [];
+            // visited: Map<key, { dist: number, parentKey: string | null }>
+            // key: "bX" for bit node X, "cX" for check node X
+            const visited: Map<string, { dist: number, parentKey: string | null }> = new Map();
+
+            // Initialize queue with start node
+            const startKey = isStartNodeBit ? `b${actualStartIdx}` : `c${actualStartIdx}`;
+            q.push({ nodeIdx: actualStartIdx, isBitNode: isStartNodeBit, dist: 0, parentKey: null });
+            visited.set(startKey, { dist: 0, parentKey: null });
+
+            let head = 0;
+            while (head < q.length) {
+                const { nodeIdx, isBitNode, dist, parentKey } = q[head++];
+
+                // Optimization: if current path already longer than minGirth, skip
+                if (dist >= minGirth) continue;
+
+                const neighbors = isBitNode ? bitToChecks[nodeIdx] : checkToBits[nodeIdx];
+                const nextIsBitNode = !isBitNode;
+
+                for (const neighborIdx of neighbors) {
+                    const neighborKey = nextIsBitNode ? `b${neighborIdx}` : `c${neighborIdx}`;
+                    const currentNodeKey = isBitNode ? `b${nodeIdx}` : `c${nodeIdx}`;
+
+                    // Check if neighbor is the immediate parent (prevents going back and forth on the same edge)
+                    if (neighborKey === parentKey) {
+                        continue;
+                    }
+
+                    if (visited.has(neighborKey)) {
+                        // Cycle detected!
+                        const existingPath = visited.get(neighborKey)!;
+                        // Cycle length = distance from start to current node + distance from start to neighbor + 1 (for the edge between them)
+                        minGirth = Math.min(minGirth, dist + existingPath.dist + 1);
+                    } else {
+                        // Not visited, add to queue
+                        q.push({ nodeIdx: neighborIdx, isBitNode: nextIsBitNode, dist: dist + 1, parentKey: currentNodeKey });
+                        visited.set(neighborKey, { dist: dist + 1, parentKey: currentNodeKey });
+                    }
+                }
+            }
+        }
+        return minGirth === Infinity ? Infinity : minGirth;
     }
 
     /**
@@ -149,8 +167,8 @@ export class LDPCAnalyzer {
     public generateReport(): string {
         const basic = this.getBasicInfo();
         const regularity = this.checkRegularity();
-        const girth = this.estimateGirth();
-        const rank = this.estimateRank();
+        const girth = this.exactGirth();
+        const rank = this.exactRank();
         const density = this.getDensity();
         const colWeights = this.getColumnWeights();
         const rowWeights = this.getRowWeights();
@@ -172,12 +190,12 @@ export class LDPCAnalyzer {
 - 密度: ${(density * 100).toFixed(3)}%
 
 ### 性能指標
-- 推定Girth: ${girth.minPossible} (${girth.analysis})
-- ランク状態: ${rank.isLikelyFullRank ? 'フルランク推定' : 'ランク不足懸念'} (${rank.note})
+- 厳密Girth: ${girth === Infinity ? 'サイクルなし' : girth}
+- ランク状態: ${rank.isFullRank ? 'フルランク' : 'ランク不足'} (rank=${rank.rank}, m=${basic.parityChecks})
 
 ### 推奨事項
-${rank.isLikelyFullRank ? '✅ 構造的に良好' : '⚠️ ランク確認が必要'}
-${girth.minPossible >= 6 ? '✅ 十分なgirth' : '⚠️ girth不足の可能性'}
+${rank.isFullRank ? '✅ 構造的に良好' : '⚠️ ランク確認が必要'}
+${girth >= 6 ? '✅ 十分なgirth' : '⚠️ girth不足の可能性'}
 ${density < 0.1 ? '✅ 適切な疎密度' : '⚠️ 密度が高い'}
 `;
     }

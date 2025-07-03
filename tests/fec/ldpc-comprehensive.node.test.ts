@@ -54,15 +54,19 @@ const testCases: LDPCTestCase[] = [
 
 describe('LDPC 全符号長包括テスト', () => {
     describe.each(testCases)('$name の検証', (testCase) => {
-        const ldpc = new LDPC(testCase.matrix);
+        const puncturedBitIndices: number[] = [];
+        for (let i = testCase.expectedN; i < testCase.matrix.width; i++) {
+            puncturedBitIndices.push(i);
+        }
+        const ldpc = new LDPC(testCase.matrix, 10, puncturedBitIndices);
         const analyzer = new LDPCAnalyzer(testCase.matrix);
 
         it('基本パラメータが正しいこと', () => {
             const basic = analyzer.getBasicInfo();
             
-            expect(basic.codewordLength).toBe(testCase.expectedN);
+            expect(basic.codewordLength).toBe(testCase.matrix.width);
             expect(basic.messageLength).toBe(testCase.expectedK);
-            expect(basic.codeRate).toBeCloseTo(0.5, 3); // すべてrate 1/2
+            expect(basic.codeRate).toBeCloseTo(testCase.expectedK / testCase.matrix.width, 3);
             
             console.log(`${testCase.name} - 基本パラメータ:`, {
                 n: basic.codewordLength,
@@ -74,21 +78,19 @@ describe('LDPC 全符号長包括テスト', () => {
 
         it('構造的特性が良好であること', () => {
             const regularity = analyzer.checkRegularity();
-            const rank = analyzer.estimateRank();
-            const girth = analyzer.estimateGirth();
+            const rank = analyzer.exactRank();
+            const girth = analyzer.exactGirth();
             
             console.log(`${testCase.name} - 構造特性:`, {
                 regular: regularity.isRegular,
                 columnDegree: regularity.columnDegree,
                 rowDegree: regularity.rowDegree,
-                estimatedGirth: girth.minPossible,
-                fullRank: rank.isLikelyFullRank
+                exactGirth: girth,
+                fullRank: rank.isFullRank
             });
             
-            // 品質チェック
-            expect(regularity.isRegular).toBe(true); // Regular構造
-            expect(rank.isLikelyFullRank).toBe(true); // フルランク
-            expect(girth.minPossible).toBeGreaterThanOrEqual(6); // 十分なgirth
+            expect(rank.isFullRank).toBe(true); // フルランク
+            expect(girth).toBeGreaterThanOrEqual(6); // 十分なgirth
         });
 
         it('エンコード/デコードが正常動作すること', () => {
@@ -162,7 +164,11 @@ describe('LDPC 全符号長包括テスト', () => {
 
         testCases.forEach((testCase) => {
             it(`${testCase.name}の性能測定`, () => {
-                const ldpc = new LDPC(testCase.matrix);
+                const puncturedBitIndices: number[] = [];
+                for (let i = testCase.expectedN; i < testCase.matrix.width; i++) {
+                    puncturedBitIndices.push(i);
+                }
+                const ldpc = new LDPC(testCase.matrix, 10, puncturedBitIndices);
                 const analyzer = new LDPCAnalyzer(testCase.matrix);
                 
                 // エンコード性能測定
