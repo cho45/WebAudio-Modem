@@ -184,16 +184,17 @@ describe('DsssDpskFramer', () => {
       const options: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
       const encodedFrame = framer.build(userData, options);
       
-      // Introduce some noise (flip LLR signs for some bits)
+      // Introduce actual noise (flip bits correctly)
       const noisySoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits));
-      // Corrupt 1 bit in preamble (e.g., 0 -> 1)
-      noisySoftBits[0] = 127; // Preamble bit 0 should be -127
-      // Corrupt 1 bit in sync word (e.g., 1 -> 0)
-      noisySoftBits[4] = -127; // Sync word bit 0 should be 127
+      // Corrupt 2 bits in preamble (flip 0 -> 1)
+      noisySoftBits[0] = -127; // Preamble bit 0: 0 -> 1 (should be +127 but now -127)
+      noisySoftBits[1] = -127; // Preamble bit 1: 0 -> 1 (should be +127 but now -127)
+      // Corrupt 2 bits in sync word (flip pattern)
+      noisySoftBits[4] = 127;  // Sync word bit 0: 1 -> 0 (should be -127 but now +127)
+      noisySoftBits[5] = -127; // Sync word bit 1: 0 -> 1 (should be +127 but now -127)
 
       const decodedFrames = framer.process(noisySoftBits);
-      // Depending on thresholds, this might still decode or fail.
-      // For now, expect failure as thresholds are tight.
+      // With multiple bit flips, correlation should fall below thresholds
       expect(decodedFrames.length).toBe(0);
     });
 
