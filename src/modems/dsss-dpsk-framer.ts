@@ -36,6 +36,60 @@ const LDPC_N_TYPE_SHIFT = 1;        // LDPC Nタイプのシフト量
 const PREAMBLE_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
 const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
 
+// ビット操作最適化ユーティリティ
+const BIT_MANIPULATION = {
+  /**
+   * 単一バイトを8ビットの配列に効率的に展開
+   * @param byte 展開するバイト値
+   * @param output 出力先配列（再利用可能）
+   */
+  expandByte(byte: number, output: Uint8Array): void {
+    output[0] = (byte >> 7) & 1;
+    output[1] = (byte >> 6) & 1;
+    output[2] = (byte >> 5) & 1;
+    output[3] = (byte >> 4) & 1;
+    output[4] = (byte >> 3) & 1;
+    output[5] = (byte >> 2) & 1;
+    output[6] = (byte >> 1) & 1;
+    output[7] = byte & 1;
+  },
+
+  /**
+   * バイト配列をビット配列に効率的に展開
+   * @param bytes 入力バイト配列
+   * @param output 出力先ビット配列
+   */
+  expandBytes(bytes: Uint8Array, output: Uint8Array): void {
+    for (let i = 0; i < bytes.length; i++) {
+      const baseIndex = i * 8;
+      const byte = bytes[i];
+      output[baseIndex] = (byte >> 7) & 1;
+      output[baseIndex + 1] = (byte >> 6) & 1;
+      output[baseIndex + 2] = (byte >> 5) & 1;
+      output[baseIndex + 3] = (byte >> 4) & 1;
+      output[baseIndex + 4] = (byte >> 3) & 1;
+      output[baseIndex + 5] = (byte >> 2) & 1;
+      output[baseIndex + 6] = (byte >> 1) & 1;
+      output[baseIndex + 7] = byte & 1;
+    }
+  },
+
+  /**
+   * ソフトビット配列から単一バイトを効率的に再構築
+   * @param softBits LLR値の配列（8要素）
+   * @returns 再構築されたバイト値
+   */
+  reconstructByte(softBits: Int8Array): number {
+    let byte = 0;
+    for (let i = 0; i < 8; i++) {
+      if (softBits[i] < 0) { // LLR < 0 means bit 1
+        byte |= (1 << (7 - i));
+      }
+    }
+    return byte;
+  }
+} as const;
+
 // フレーム構築オプション
 export interface FrameOptions {
   sequenceNumber: number; // 3-bit (0-7)
@@ -43,13 +97,72 @@ export interface FrameOptions {
   ldpcNType: number;      // 2-bit (0-3)
 }
 
-// 構築されたデータフレーム
-export interface DataFrame {
-  preamble: Uint8Array;
-  syncWord: Uint8Array;
-  headerByte: number;
-  payload: Uint8Array; // LDPC符号化済みのペイロード
-  bits: Uint8Array;    // 全体を結合したビット配列
+// フレーム構造統合定数（レイアウト情報を一元管理）
+const FRAME_LAYOUT = {
+  // 各部分の長さ
+  PREAMBLE_LENGTH: 4,   // 4-bit
+  SYNC_WORD_LENGTH: 8,  // 8-bit  
+  HEADER_LENGTH: 8,     // 8-bit
+  
+  // オフセット位置（効率的なアクセス用）
+  OFFSETS: {
+    PREAMBLE_START: 0,
+    PREAMBLE_END: 4,
+    SYNC_WORD_START: 4,
+    SYNC_WORD_END: 12,
+    HEADER_START: 12,
+    HEADER_END: 20,
+    PAYLOAD_START: 20,
+  },
+  
+  // 計算済みの基本構造サイズ
+  FIXED_HEADER_SIZE: 4 + 8 + 8, // preamble + sync + header = 20 bits
+} as const;
+
+/**
+ * 効率的なデータフレームクラス - メモリ重複を排除
+ * bits配列のみを保持し、各部分はスライスで提供
+ */
+export class DataFrame {
+  constructor(
+    private readonly _bits: Uint8Array,
+    private readonly _headerByte: number
+  ) {}
+
+  /** 完全なビット配列を取得 */
+  get bits(): Uint8Array {
+    return this._bits;
+  }
+
+  /** ヘッダバイト値を取得 */
+  get headerByte(): number {
+    return this._headerByte;
+  }
+
+  /** プリアンブル部分を取得（4ビット）*/
+  get preamble(): Uint8Array {
+    return this._bits.slice(FRAME_LAYOUT.OFFSETS.PREAMBLE_START, FRAME_LAYOUT.OFFSETS.PREAMBLE_END);
+  }
+
+  /** 同期ワード部分を取得（8ビット）*/
+  get syncWord(): Uint8Array {
+    return this._bits.slice(FRAME_LAYOUT.OFFSETS.SYNC_WORD_START, FRAME_LAYOUT.OFFSETS.SYNC_WORD_END);
+  }
+
+  /** ヘッダビット部分を取得（8ビット）*/
+  getHeaderBits(): Uint8Array {
+    return this._bits.slice(FRAME_LAYOUT.OFFSETS.HEADER_START, FRAME_LAYOUT.OFFSETS.HEADER_END);
+  }
+
+  /** ペイロード部分を取得（可変長）*/
+  get payload(): Uint8Array {
+    return this._bits.slice(FRAME_LAYOUT.OFFSETS.PAYLOAD_START);
+  }
+
+  /** フレーム全体の長さを取得 */
+  get length(): number {
+    return this._bits.length;
+  }
 }
 
 // デコードされたフレーム
@@ -109,7 +222,6 @@ export class DsssDpskFramer {
 
   // 効率化のための再利用可能バッファ
   private readonly maxPatternWindow: Int8Array;
-  private readonly headerBitsBuffer: Uint8Array;
   private readonly maxRangeReadBuffer: Int8Array;
 
   constructor(bufferSize: number = DEFAULT_BUFFER_SIZE) {
@@ -122,7 +234,6 @@ export class DsssDpskFramer {
     // 効率化のための再利用可能バッファを初期化
     const maxPatternLength = Math.max(PREAMBLE.length, SYNC_WORD.length);
     this.maxPatternWindow = new Int8Array(maxPatternLength);
-    this.headerBitsBuffer = new Uint8Array(HEADER_BITS);
     // 最大読み取り範囲はペイロード長（最大1024ビット）
     this.maxRangeReadBuffer = new Int8Array(1024);
     
@@ -154,29 +265,31 @@ export class DsssDpskFramer {
     // 2. ペイロードを符号化
     const payload = this._encodePayload(userData, options.ldpcNType);
 
-    // 3. 全ビットを結合
-    const headerBits = this._byteToBits(headerByte);
-    const preambleBits = new Uint8Array(PREAMBLE);
-    const syncWordBits = new Uint8Array(SYNC_WORD);
-    
-    // LDPC符号化結果は既にビット配列（各要素は0または1）
-    const payloadBits = payload;
-
-    const totalBits = preambleBits.length + syncWordBits.length + headerBits.length + payloadBits.length;
-    
+    // 3. 全ビットを最大効率で結合（構造化定数使用、中間配列完全排除）
+    // フレーム長を効率的に事前計算
+    const totalBits = FRAME_LAYOUT.FIXED_HEADER_SIZE + payload.length;
     const bits = new Uint8Array(totalBits);
-    bits.set(preambleBits, 0);
-    bits.set(syncWordBits, preambleBits.length);
-    bits.set(headerBits, preambleBits.length + syncWordBits.length);
-    bits.set(payloadBits, preambleBits.length + syncWordBits.length + headerBits.length);
+    
+    // 高速な構造化設定（統合定数基準）
+    let offset = 0;
+    
+    // プリアンブル設定（高速配列コピー）
+    bits.set(PREAMBLE, offset);
+    offset += FRAME_LAYOUT.PREAMBLE_LENGTH;
+    
+    // 同期ワード設定（高速配列コピー）
+    bits.set(SYNC_WORD, offset);
+    offset += FRAME_LAYOUT.SYNC_WORD_LENGTH;
+    
+    // ヘッダビット設定（直接展開、中間配列なし）
+    BIT_MANIPULATION.expandByte(headerByte, bits.subarray(offset, offset + FRAME_LAYOUT.HEADER_LENGTH));
+    offset += FRAME_LAYOUT.HEADER_LENGTH;
+    
+    // ペイロード設定
+    bits.set(payload, offset);
 
-    return {
-      preamble: preambleBits,
-      syncWord: syncWordBits,
-      headerByte: headerByte,
-      payload: payload,
-      bits: bits,
-    };
+    // 新しいDataFrameクラスを返す（メモリ効率向上）
+    return new DataFrame(bits, headerByte);
   }
 
   /**
@@ -385,21 +498,9 @@ export class DsssDpskFramer {
     // 2. LDPC符号化（Uint8Array → Uint8Array）
     const ldpcEncoded = ldpc.encode(ldpcInputBytes);
 
-    // パックされたバイトをビット配列に展開（フレーム構成用）
+    // パックされたバイトをビット配列に効率的に展開（最適化されたユーティリティ使用）
     const ldpcBits = new Uint8Array(ldpcEncoded.length * HEADER_BITS);
-    for (let i = 0; i < ldpcEncoded.length; i++) {
-      const byte = ldpcEncoded[i];
-      const baseIndex = i * HEADER_BITS;
-      // ビット展開を最適化
-      ldpcBits[baseIndex] = (byte >> 7) & 1;
-      ldpcBits[baseIndex + 1] = (byte >> 6) & 1;
-      ldpcBits[baseIndex + 2] = (byte >> 5) & 1;
-      ldpcBits[baseIndex + 3] = (byte >> 4) & 1;
-      ldpcBits[baseIndex + 4] = (byte >> 3) & 1;
-      ldpcBits[baseIndex + 5] = (byte >> 2) & 1;
-      ldpcBits[baseIndex + 6] = (byte >> 1) & 1;
-      ldpcBits[baseIndex + 7] = byte & 1;
-    }
+    BIT_MANIPULATION.expandBytes(ldpcEncoded, ldpcBits);
 
     return ldpcBits; // フレーム構成用にビット配列を返す
   }
@@ -461,30 +562,43 @@ export class DsssDpskFramer {
   }
 
   /**
-   * バッファから指定されたバイト数を消費する
+   * バッファから指定されたバイト数を効率的に消費する
    * @param count 消費するバイト数
    */
   private _consumeBufferBits(count: number): void {
     if (count > 0) {
-      const consumeData = new Int8Array(count);
-      this.softBitBuffer.readArray(consumeData);
+      // 最適化: 不要な配列割り当てを排除し、直接消費
+      // 注: RingBufferに効率的な消費メソッドがある場合は利用すべき
+      for (let i = 0; i < count; i++) {
+        this.softBitBuffer.read();
+      }
     }
   }
 
   /**
-   * バッファから指定された範囲のデータを読み取る（消費はしない）
+   * バッファから指定された範囲のデータを効率的に読み取る（消費はしない）
    * @param start 開始位置
    * @param length 読み取り長
    * @returns 読み取ったデータ
    */
   private _readBufferRange(start: number, length: number): Int8Array {
-    // 再利用可能バッファを使用（効率化）
-    const data = this.maxRangeReadBuffer.subarray(0, length);
-    for (let i = 0; i < length && (start + i) < this.softBitBuffer.length; i++) {
-      data[i] = this.softBitBuffer.get(start + i);
+    // 小さなデータ（ヘッダ等）は直接作成、大きなデータは再利用バッファ使用
+    if (length <= HEADER_BITS) {
+      // 小さなケース: 直接作成（ヘッダ読み取り等）
+      const data = new Int8Array(length);
+      for (let i = 0; i < length && (start + i) < this.softBitBuffer.length; i++) {
+        data[i] = this.softBitBuffer.get(start + i);
+      }
+      return data;
+    } else {
+      // 大きなケース: 再利用バッファ使用（ペイロード読み取り等）
+      const data = this.maxRangeReadBuffer.subarray(0, length);
+      for (let i = 0; i < length && (start + i) < this.softBitBuffer.length; i++) {
+        data[i] = this.softBitBuffer.get(start + i);
+      }
+      // 実際に使用したサイズでコピーを返す（安全性確保）
+      return data.slice(0, length);
     }
-    // 実際に使用したサイズでコピーを返す（安全性確保）
-    return data.slice(0, length);
   }
 
   private _decodeHeader(headerSoftBits: Int8Array): FrameOptions | null {
@@ -496,14 +610,8 @@ export class DsssDpskFramer {
     let receivedParity = 0;
     let calculatedParity = 0;
 
-    // Convert soft bits to hard bits and reconstruct header byte
-    for (let i = 0; i < HEADER_BITS; i++) {
-      // LLR >= 0 means 0, LLR < 0 means 1 (DSSS despread convention)
-      const bit = headerSoftBits[i] >= 0 ? 0 : 1; 
-      if (bit === 1) {
-        headerByte |= (1 << (HEADER_BITS - 1 - i));
-      }
-    }
+    // 最適化されたビット再構築ユーティリティを使用
+    headerByte = BIT_MANIPULATION.reconstructByte(headerSoftBits);
 
     // Extract received parity bit (bit 0)
     receivedParity = (headerByte & PARITY_BIT_MASK);
@@ -562,13 +670,5 @@ export class DsssDpskFramer {
     return { userData, status };
   }
 
-  private _byteToBits(byte: number): Uint8Array {
-      // 再利用可能バッファを使用（効率化）
-      for (let i = 0; i < HEADER_BITS; i++) {
-          this.headerBitsBuffer[i] = (byte >> (HEADER_BITS - 1 - i)) & 1;
-      }
-      // 安全性のためコピーを返す（呼び出し側の変更が内部バッファに影響しないよう）
-      return this.headerBitsBuffer.slice();
-  }
 
 }
