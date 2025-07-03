@@ -26,6 +26,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'demo/index.html'),
+        'dsss-dpsk': resolve(__dirname, 'demo/dsss-dpsk.html'),
+        'ldpc': resolve(__dirname, 'demo/ldpc.html'),
+        'ldpc-worker': resolve(__dirname, 'demo/ldpc-worker.ts'),
         'src/webaudio/processors/fsk-processor': resolve(__dirname, 'src/webaudio/processors/fsk-processor.ts'),
       },
       output: {

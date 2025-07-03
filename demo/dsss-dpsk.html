@@ -417,7 +417,7 @@
 						llrs.push(-llr);
 						// 復調ビット列（時系列）
 						drawSignal(document.getElementById('canvas-bits-demod-audio'), llrs, '#27ae60', [-128, 127]);
-						document.getElementById('audio-decode-info').textContent = `復調ビット: ${llrs.join('')}`;
+						document.getElementById('audio-decode-info').textContent = `復調ビット: ${llrs.join(' ')}`;
 					}
 				};
 			}
