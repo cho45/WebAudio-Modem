@@ -79,7 +79,8 @@
 		<canvas id="canvas-bits-demod-audio" width="600" height="100"></canvas>
 	</div>
 	<script type="module">
-		import * as modem from '../src/modems/dsss-dpsk.js';
+		import * as modem from '../src/modems/dsss-dpsk';
+		import { addAWGN } from '../src/utils';
 
 		function randomBits(n) {
 			const arr = new Int8Array(n);
@@ -322,7 +323,7 @@
 			const samples = modem.modulateCarrier(chipPhases, samplesPerPhase, sampleRate, carrierFreq);
 			// 5. AWGN付加
 			console.log('Adding AWGN with SNR:', snrDb, 'dB');
-			const noisySamples = modem.addAWGN(samples, snrDb);
+			const noisySamples = addAWGN(samples, snrDb);
 			
 			// 6. 同期検出: ノイズ付きサンプルから同期オフセットを検出
 			const modulationParams = { samplesPerPhase, sampleRate, carrierFreq };

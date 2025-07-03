@@ -1,5 +1,5 @@
-import * as modem from '../src/modems/dsss-dpsk.js';
-import {AGCProcessor} from '../src/dsp/agc.js';
+import * as modem from '../src/modems/dsss-dpsk';
+import {AGCProcessor} from '../src/dsp/agc';
 
 // AudioWorkletGlobalScope
 class TestProcessor extends AudioWorkletProcessor {
