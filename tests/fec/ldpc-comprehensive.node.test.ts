@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LDPC } from '../../src/fec/ldpc.js';
 import { LDPCAnalyzer } from '../../src/fec/ldpc-analyzer.js';
-import { addAWGN, generateGaussianNoise, calculateBER } from '../../src/utils';
+import { addAWGN } from '../../src/utils';
 
 // 全符号長のH行列を読み込み
 import ldpcMatrix128 from '../../src/fec/ldpc_h_matrix_n128_k64.json';
@@ -108,7 +108,7 @@ describe('LDPC 全符号長包括テスト', () => {
         for (let i = testCase.expectedN; i < testCase.matrix.width; i++) {
             puncturedBitIndices.push(i);
         }
-        const ldpc = new LDPC(testCase.matrix, 10, puncturedBitIndices);
+        const ldpc = new LDPC(testCase.matrix, 10, new Set(puncturedBitIndices));
         const analyzer = new LDPCAnalyzer(testCase.matrix);
 
         it('基本パラメータが正しいこと', () => {
@@ -287,7 +287,7 @@ describe('LDPC 全符号長包括テスト', () => {
                 for (let i = testCase.expectedN; i < testCase.matrix.width; i++) {
                     puncturedBitIndices.push(i);
                 }
-                const ldpc = new LDPC(testCase.matrix, 10, puncturedBitIndices);
+                const ldpc = new LDPC(testCase.matrix, 10, new Set(puncturedBitIndices));
                 const analyzer = new LDPCAnalyzer(testCase.matrix);
                 
                 // エンコード性能測定

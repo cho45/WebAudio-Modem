@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeEach } from 'vitest';
 import { DsssDpskFramer, type FrameOptions } from '../../src/modems/dsss-dpsk/framer';
 
 describe('DsssDpskFramer', () => {
