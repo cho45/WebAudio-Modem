@@ -1,4 +1,4 @@
-import { bchEncode, bchDecode, getBCHParams, type BCHCodeType } from '../fec/bch';
+import { bchEncode, bchDecode, type BCHCodeType } from '../fec/bch';
 import { LDPC, type HMatrixData } from '../fec/ldpc';
 import { RingBuffer } from '../utils';
 
@@ -11,6 +11,30 @@ import ldpcMatrix1024 from '../fec/ldpc_h_matrix_n1024_k512.json';
 // 定数
 const PREAMBLE = [0, 0, 0, 0]; // 4-bit Preamble
 const SYNC_WORD = [1, 0, 1, 1, 0, 1, 0, 0]; // 8-bit Sync Word (0xB4)
+
+// フレーム構造定数
+const HEADER_BITS = 8;
+const LLR_MAX_VALUE = 127;
+const DEFAULT_BUFFER_SIZE = 4096;
+
+// 処理パラメータ
+const DEFAULT_LDPC_ITERATIONS = 10;
+const ERROR_COUNT_THRESHOLD = 10;
+
+// ヘッダビットマスク
+const SEQUENCE_NUMBER_MASK = 0x7;  // 3-bit mask
+const FRAME_TYPE_MASK = 0x3;       // 2-bit mask
+const LDPC_N_TYPE_MASK = 0x3;      // 2-bit mask
+const PARITY_BIT_MASK = 0x01;      // 1-bit mask for parity
+
+// ヘッダビットシフト量
+const SEQUENCE_NUMBER_SHIFT = 5;    // シーケンス番号のシフト量
+const FRAME_TYPE_SHIFT = 3;         // フレームタイプのシフト量
+const LDPC_N_TYPE_SHIFT = 1;        // LDPC Nタイプのシフト量
+
+// 相関閾値（LLRスケール基準）
+const PREAMBLE_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
+const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
 
 // フレーム構築オプション
 export interface FrameOptions {
@@ -53,10 +77,15 @@ const FEC_PARAMS = {
 };
 
 // 内部状態定義
+// eslint-disable-next-line no-unused-vars
 enum FramerState {
+  // eslint-disable-next-line no-unused-vars
   SEARCHING_PREAMBLE,
+  // eslint-disable-next-line no-unused-vars
   SEARCHING_SYNC_WORD,
+  // eslint-disable-next-line no-unused-vars
   READING_HEADER,
+  // eslint-disable-next-line no-unused-vars
   READING_PAYLOAD,
 }
 
@@ -69,19 +98,33 @@ export class DsssDpskFramer {
   private state: FramerState = FramerState.SEARCHING_PREAMBLE;
   private currentHeader: FrameOptions | null = null; // Store header for payload processing
 
-  // Parameters for detection thresholds (tuned for LLR range -127 to +127)
-  // Preamble: 4 bits, all 0s. Expected LLRs are -127. Max correlation = 4 * 127 = 508.
-  private preambleCorrelationThreshold: number = 400; // Needs tuning, e.g., 80% of max
-  // Sync Word: 8 bits, mixed 0s and 1s. Max correlation = 8 * 127 = 1016.
-  private syncWordCorrelationThreshold: number = 800; // Needs tuning, e.g., 80% of max
+  // 相関閾値（理論最大値から計算）
+  private readonly preambleCorrelationThreshold: number;
+  private readonly syncWordCorrelationThreshold: number;
 
   // 状態管理用変数
   private processedBitsCount: number = 0;
   private lastCorrelationValue: number = 0;
   private errorCount: number = 0;
 
-  constructor(bufferSize: number = 4096) {
+  // 効率化のための再利用可能バッファ
+  private readonly maxPatternWindow: Int8Array;
+  private readonly headerBitsBuffer: Uint8Array;
+  private readonly maxRangeReadBuffer: Int8Array;
+
+  constructor(bufferSize: number = DEFAULT_BUFFER_SIZE) {
     this.softBitBuffer = new RingBuffer(Int8Array, bufferSize);
+    
+    // 相関閾値を理論最大値から計算
+    this.preambleCorrelationThreshold = PREAMBLE.length * LLR_MAX_VALUE * PREAMBLE_CORRELATION_THRESHOLD_RATIO;
+    this.syncWordCorrelationThreshold = SYNC_WORD.length * LLR_MAX_VALUE * SYNC_WORD_CORRELATION_THRESHOLD_RATIO;
+    
+    // 効率化のための再利用可能バッファを初期化
+    const maxPatternLength = Math.max(PREAMBLE.length, SYNC_WORD.length);
+    this.maxPatternWindow = new Int8Array(maxPatternLength);
+    this.headerBitsBuffer = new Uint8Array(HEADER_BITS);
+    // 最大読み取り範囲はペイロード長（最大1024ビット）
+    this.maxRangeReadBuffer = new Int8Array(1024);
     
     // 各LDPCタイプに対応するLDPCインスタンスを生成（パンクチャリング対応）
     for (const key in FEC_PARAMS) {
@@ -94,7 +137,7 @@ export class DsssDpskFramer {
             puncturedBitIndices.push(i);
         }
         
-        this.ldpcInstances.set(type, new LDPC(params.matrix as HMatrixData, 10, puncturedBitIndices));
+        this.ldpcInstances.set(type, new LDPC(params.matrix as HMatrixData, DEFAULT_LDPC_ITERATIONS, new Set(puncturedBitIndices)));
     }
   }
 
@@ -143,122 +186,132 @@ export class DsssDpskFramer {
    */
   public process(softBits: Int8Array): DecodedFrame[] {
     const decodedFrames: DecodedFrame[] = [];
-    this.softBitBuffer.writeArray(softBits); // Direct Int8Array input
-    this.processedBitsCount += softBits.length; // 処理ビット数を更新
+    this.softBitBuffer.writeArray(softBits);
+    this.processedBitsCount += softBits.length;
 
     // Main processing loop
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      switch (this.state) {
-        case FramerState.SEARCHING_PREAMBLE: {
-          const preambleIndex = this._findPreamble();
-          if (preambleIndex !== -1) {
-            const consumeData = new Int8Array(preambleIndex + PREAMBLE.length);
-            this.softBitBuffer.readArray(consumeData); // Consume preamble bits
-            this.state = FramerState.SEARCHING_SYNC_WORD;
-          } else {
-            // No preamble found, consume some bits to avoid getting stuck
-            // Keep enough bits to potentially find a preamble in the next chunk
-            const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - PREAMBLE.length - SYNC_WORD.length - 8);
-            if (consumeCount > 0) {
-              const consumeData = new Int8Array(consumeCount);
-              this.softBitBuffer.readArray(consumeData);
-            } 
-            return decodedFrames; // No more processing possible in this state
-          }
-          break;
-        }
-
-        case FramerState.SEARCHING_SYNC_WORD: {
-          const syncWordIndex = this._findSyncWord();
-          if (syncWordIndex !== -1) {
-            const consumeData = new Int8Array(syncWordIndex + SYNC_WORD.length);
-            this.softBitBuffer.readArray(consumeData); // Consume sync word bits
-            this.state = FramerState.READING_HEADER;
-          } else {
-            // No sync word found, consume some bits and go back to searching preamble
-            // Keep enough bits to potentially find a sync word in the next chunk
-            const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - SYNC_WORD.length - 8);
-            if (consumeCount > 0) {
-              const consumeData = new Int8Array(consumeCount);
-              this.softBitBuffer.readArray(consumeData);
-            } 
-            this.state = FramerState.SEARCHING_PREAMBLE; // Go back to searching preamble
-            return decodedFrames;
-          }
-          break;
-        }
-
-        case FramerState.READING_HEADER: {
-          if (this.softBitBuffer.length < 8) { // Need 8 bits for header
-            return decodedFrames;
-          }
-          const headerSoftBits = new Int8Array(8);
-          for (let i = 0; i < 8 && i < this.softBitBuffer.length; i++) {
-            headerSoftBits[i] = this.softBitBuffer.get(i);
-          }
-          const decodedHeader = this._decodeHeader(headerSoftBits);
-          if (decodedHeader) {
-            const consumeData = new Int8Array(8);
-            this.softBitBuffer.readArray(consumeData); // Consume header bits
-            this.currentHeader = decodedHeader; // Store for payload processing
-            this.state = FramerState.READING_PAYLOAD;
-          } else {
-            this.errorCount++; // エラーカウント増加
-            const consumeData = new Int8Array(1);
-            this.softBitBuffer.readArray(consumeData); // Consume 1 bit and try again (sliding window)
-            this.state = FramerState.SEARCHING_PREAMBLE; // Go back to searching preamble
-          }
-          break;
-        }
-
-        case FramerState.READING_PAYLOAD: {
-          // Check if we have enough bits for the full payload
-          if (!this.currentHeader) {
-            this.state = FramerState.SEARCHING_PREAMBLE;
-            return decodedFrames;
-          }
-
-          const fecParams = FEC_PARAMS[this.currentHeader.ldpcNType as keyof typeof FEC_PARAMS];
-          if (!fecParams) {
-            this.state = FramerState.SEARCHING_PREAMBLE;
-            return decodedFrames;
-          }
-
-          const payloadBitLength = fecParams.ldpcN;
-          if (this.softBitBuffer.length < payloadBitLength) {
-            return decodedFrames; // Not enough data for full payload
-          }
-
-          const payloadSoftBits = new Int8Array(payloadBitLength);
-          for (let i = 0; i < payloadBitLength && i < this.softBitBuffer.length; i++) {
-            payloadSoftBits[i] = this.softBitBuffer.get(i);
-          }
-          const decodedPayload = this._decodePayload(payloadSoftBits, this.currentHeader.ldpcNType);
-
-          if (decodedPayload) {
-            decodedFrames.push({ header: this.currentHeader, userData: decodedPayload.userData, status: decodedPayload.status });
-            const consumeData = new Int8Array(payloadBitLength);
-            this.softBitBuffer.readArray(consumeData); // Consume payload bits
-          } else {
-            this.errorCount++; // エラーカウント増加
-            const consumeData = new Int8Array(1);
-            this.softBitBuffer.readArray(consumeData); // Consume 1 bit and try again (sliding window)
-          }
-          // After processing payload (success or failure), go back to searching for the next frame
-          this.state = FramerState.SEARCHING_PREAMBLE;
-          this.currentHeader = null; // Clear current header
-          break;
-        }
+      const processResult = this._processCurrentState(decodedFrames);
+      if (processResult === 'exit') {
+        break;
+      } else if (processResult === 'return') {
+        return decodedFrames;
       }
-
-      // If we processed a frame or changed state, and there's still data, continue loop
-      // Otherwise, break to wait for more data
-      if (this.state === FramerState.SEARCHING_PREAMBLE && this.softBitBuffer.length < (PREAMBLE.length + SYNC_WORD.length + 8)) {
-        break; // Not enough data to start new search cycle
+      
+      // Check if we have enough data to continue
+      if (this.state === FramerState.SEARCHING_PREAMBLE && 
+          this.softBitBuffer.length < (PREAMBLE.length + SYNC_WORD.length + HEADER_BITS)) {
+        break;
       }
     }
     return decodedFrames;
+  }
+
+  /**
+   * 現在の状態に基づいて処理を実行
+   * @param decodedFrames デコードされたフレームの配列
+   * @returns 処理結果（'continue' | 'return' | 'exit'）
+   */
+  private _processCurrentState(decodedFrames: DecodedFrame[]): 'continue' | 'return' | 'exit' {
+    switch (this.state) {
+      case FramerState.SEARCHING_PREAMBLE:
+        return this._handlePreambleSearch();
+      case FramerState.SEARCHING_SYNC_WORD:
+        return this._handleSyncWordSearch();
+      case FramerState.READING_HEADER:
+        return this._handleHeaderReading();
+      case FramerState.READING_PAYLOAD:
+        return this._handlePayloadReading(decodedFrames);
+      default:
+        return 'exit';
+    }
+  }
+
+  private _handlePreambleSearch(): 'continue' | 'return' {
+    const preambleIndex = this._findPreamble();
+    if (preambleIndex !== -1) {
+      this._consumeBufferBits(preambleIndex + PREAMBLE.length);
+      this.state = FramerState.SEARCHING_SYNC_WORD;
+      return 'continue';
+    } else {
+      const minKeepBits = PREAMBLE.length + SYNC_WORD.length + HEADER_BITS;
+      const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - minKeepBits);
+      this._consumeBufferBits(consumeCount);
+      return 'return';
+    }
+  }
+
+  private _handleSyncWordSearch(): 'continue' | 'return' {
+    const syncWordIndex = this._findSyncWord();
+    if (syncWordIndex !== -1) {
+      this._consumeBufferBits(syncWordIndex + SYNC_WORD.length);
+      this.state = FramerState.READING_HEADER;
+      return 'continue';
+    } else {
+      const minKeepBits = SYNC_WORD.length + HEADER_BITS;
+      const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - minKeepBits);
+      this._consumeBufferBits(consumeCount);
+      this.state = FramerState.SEARCHING_PREAMBLE;
+      return 'return';
+    }
+  }
+
+  private _handleHeaderReading(): 'continue' | 'return' {
+    if (this.softBitBuffer.length < HEADER_BITS) {
+      return 'return';
+    }
+    
+    const headerSoftBits = this._readBufferRange(0, HEADER_BITS);
+    const decodedHeader = this._decodeHeader(headerSoftBits);
+    
+    if (decodedHeader) {
+      this._consumeBufferBits(HEADER_BITS);
+      this.currentHeader = decodedHeader;
+      this.state = FramerState.READING_PAYLOAD;
+    } else {
+      this.errorCount++;
+      this._consumeBufferBits(1);
+      this.state = FramerState.SEARCHING_PREAMBLE;
+    }
+    return 'continue';
+  }
+
+  private _handlePayloadReading(decodedFrames: DecodedFrame[]): 'continue' | 'return' {
+    if (!this.currentHeader) {
+      this.state = FramerState.SEARCHING_PREAMBLE;
+      return 'return';
+    }
+
+    const fecParams = FEC_PARAMS[this.currentHeader.ldpcNType as keyof typeof FEC_PARAMS];
+    if (!fecParams) {
+      this.state = FramerState.SEARCHING_PREAMBLE;
+      return 'return';
+    }
+
+    const payloadBitLength = fecParams.ldpcN;
+    if (this.softBitBuffer.length < payloadBitLength) {
+      return 'return';
+    }
+
+    const payloadSoftBits = this._readBufferRange(0, payloadBitLength);
+    const decodedPayload = this._decodePayload(payloadSoftBits, this.currentHeader.ldpcNType);
+
+    if (decodedPayload) {
+      decodedFrames.push({ 
+        header: this.currentHeader, 
+        userData: decodedPayload.userData, 
+        status: decodedPayload.status 
+      });
+      this._consumeBufferBits(payloadBitLength);
+    } else {
+      this.errorCount++;
+      this._consumeBufferBits(1);
+    }
+    
+    this.state = FramerState.SEARCHING_PREAMBLE;
+    this.currentHeader = null;
+    return 'continue';
   }
 
   /**
@@ -279,26 +332,26 @@ export class DsssDpskFramer {
       bufferLength: this.softBitBuffer.length,
       processedBits: this.processedBitsCount,
       lastCorrelation: this.lastCorrelationValue,
-      isHealthy: this.errorCount < 10 // 10回未満のエラーなら健全
+      isHealthy: this.errorCount < ERROR_COUNT_THRESHOLD
     };
   }
 
   private _buildHeaderByte(options: FrameOptions): number {
     let header = 0;
-    header |= (options.sequenceNumber & 0x7) << 5; // S (bit 7-5)
-    header |= (options.frameType & 0x3) << 3;    // T (bit 4-3)
-    header |= (options.ldpcNType & 0x3) << 1;    // N (bit 2-1)
+    header |= (options.sequenceNumber & SEQUENCE_NUMBER_MASK) << SEQUENCE_NUMBER_SHIFT; // S (bit 7-5)
+    header |= (options.frameType & FRAME_TYPE_MASK) << FRAME_TYPE_SHIFT;              // T (bit 4-3)
+    header |= (options.ldpcNType & LDPC_N_TYPE_MASK) << LDPC_N_TYPE_SHIFT;            // N (bit 2-1)
 
     // Calculate parity for bit 7-1
     let parity = 0;
-    for (let i = 1; i < 8; i++) {
+    for (let i = 1; i < HEADER_BITS; i++) {
       if ((header >> i) & 1) {
         parity++;
       }
     }
     // 偶数パリティにする
     if (parity % 2 !== 0) {
-      header |= 1; // P (bit 0)
+      header |= PARITY_BIT_MASK; // P (bit 0)
     }
 
     return header;
@@ -333,17 +386,25 @@ export class DsssDpskFramer {
     const ldpcEncoded = ldpc.encode(ldpcInputBytes);
 
     // パックされたバイトをビット配列に展開（フレーム構成用）
-    const ldpcBits = new Uint8Array(ldpcEncoded.length * 8);
+    const ldpcBits = new Uint8Array(ldpcEncoded.length * HEADER_BITS);
     for (let i = 0; i < ldpcEncoded.length; i++) {
-      for (let j = 0; j < 8; j++) {
-        ldpcBits[i * 8 + j] = (ldpcEncoded[i] >> (7 - j)) & 1;
-      }
+      const byte = ldpcEncoded[i];
+      const baseIndex = i * HEADER_BITS;
+      // ビット展開を最適化
+      ldpcBits[baseIndex] = (byte >> 7) & 1;
+      ldpcBits[baseIndex + 1] = (byte >> 6) & 1;
+      ldpcBits[baseIndex + 2] = (byte >> 5) & 1;
+      ldpcBits[baseIndex + 3] = (byte >> 4) & 1;
+      ldpcBits[baseIndex + 4] = (byte >> 3) & 1;
+      ldpcBits[baseIndex + 5] = (byte >> 2) & 1;
+      ldpcBits[baseIndex + 6] = (byte >> 1) & 1;
+      ldpcBits[baseIndex + 7] = byte & 1;
     }
 
     return ldpcBits; // フレーム構成用にビット配列を返す
   }
 
-  private _correlate(softBits: Int8Array, pattern: number[]): number {
+  private _correlate(softBits: Int8Array, pattern: readonly number[]): number {
     if (softBits.length < pattern.length) {
       return -Infinity; // Not enough data
     }
@@ -363,44 +424,71 @@ export class DsssDpskFramer {
     return correlation;
   }
 
-  private _findPreamble(): number {
-    if (this.softBitBuffer.length < PREAMBLE.length) {
+  /**
+   * 指定されたパターンをバッファ内で検索する汎用メソッド（効率化版）
+   * @param pattern 検索するビットパターン
+   * @param threshold 相関閾値
+   * @returns パターンが見つかった位置（見つからない場合は-1）
+   */
+  private _findPattern(pattern: readonly number[], threshold: number): number {
+    if (this.softBitBuffer.length < pattern.length) {
       return -1;
     }
-    // Search for preamble using sliding window correlation
-    for (let i = 0; i <= this.softBitBuffer.length - PREAMBLE.length; i++) {
-      const window = new Int8Array(PREAMBLE.length);
-      for (let j = 0; j < PREAMBLE.length; j++) {
+    
+    // 再利用可能バッファを使用（メモリアロケーション削減）
+    const window = this.maxPatternWindow.subarray(0, pattern.length);
+    
+    for (let i = 0; i <= this.softBitBuffer.length - pattern.length; i++) {
+      // ウィンドウデータをコピー
+      for (let j = 0; j < pattern.length; j++) {
         window[j] = this.softBitBuffer.get(i + j);
       }
-      const correlation = this._correlate(window, PREAMBLE);
-      if (correlation > this.preambleCorrelationThreshold) {
-        return i; // Preamble found
+      
+      const correlation = this._correlate(window, pattern);
+      if (correlation > threshold) {
+        return i;
       }
     }
-    return -1; // Not found
+    return -1;
+  }
+
+  private _findPreamble(): number {
+    return this._findPattern(PREAMBLE, this.preambleCorrelationThreshold);
   }
 
   private _findSyncWord(): number {
-    if (this.softBitBuffer.length < SYNC_WORD.length) {
-      return -1;
+    return this._findPattern(SYNC_WORD, this.syncWordCorrelationThreshold);
+  }
+
+  /**
+   * バッファから指定されたバイト数を消費する
+   * @param count 消費するバイト数
+   */
+  private _consumeBufferBits(count: number): void {
+    if (count > 0) {
+      const consumeData = new Int8Array(count);
+      this.softBitBuffer.readArray(consumeData);
     }
-    // Search for sync word using sliding window correlation
-    for (let i = 0; i <= this.softBitBuffer.length - SYNC_WORD.length; i++) {
-      const window = new Int8Array(SYNC_WORD.length);
-      for (let j = 0; j < SYNC_WORD.length; j++) {
-        window[j] = this.softBitBuffer.get(i + j);
-      }
-      const correlation = this._correlate(window, SYNC_WORD);
-      if (correlation > this.syncWordCorrelationThreshold) {
-        return i; // Sync word found
-      }
+  }
+
+  /**
+   * バッファから指定された範囲のデータを読み取る（消費はしない）
+   * @param start 開始位置
+   * @param length 読み取り長
+   * @returns 読み取ったデータ
+   */
+  private _readBufferRange(start: number, length: number): Int8Array {
+    // 再利用可能バッファを使用（効率化）
+    const data = this.maxRangeReadBuffer.subarray(0, length);
+    for (let i = 0; i < length && (start + i) < this.softBitBuffer.length; i++) {
+      data[i] = this.softBitBuffer.get(start + i);
     }
-    return -1; // Not found
+    // 実際に使用したサイズでコピーを返す（安全性確保）
+    return data.slice(0, length);
   }
 
   private _decodeHeader(headerSoftBits: Int8Array): FrameOptions | null {
-    if (headerSoftBits.length < 8) {
+    if (headerSoftBits.length < HEADER_BITS) {
       return null;
     }
 
@@ -409,37 +497,33 @@ export class DsssDpskFramer {
     let calculatedParity = 0;
 
     // Convert soft bits to hard bits and reconstruct header byte
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < HEADER_BITS; i++) {
       // LLR >= 0 means 0, LLR < 0 means 1 (DSSS despread convention)
-      // This is based on the assumption that 0 is represented by positive LLR and 1 by negative LLR.
-      // If the convention is reversed, this logic needs to be flipped.
       const bit = headerSoftBits[i] >= 0 ? 0 : 1; 
       if (bit === 1) {
-        headerByte |= (1 << (7 - i));
+        headerByte |= (1 << (HEADER_BITS - 1 - i));
       }
     }
 
     // Extract received parity bit (bit 0)
-    receivedParity = (headerByte & 0x01);
+    receivedParity = (headerByte & PARITY_BIT_MASK);
 
     // Calculate parity for bit 7-1
-    for (let i = 1; i < 8; i++) { // bit 7 から bit 1 までをチェック
+    for (let i = 1; i < HEADER_BITS; i++) {
       if ((headerByte >> i) & 1) {
         calculatedParity++;
       }
     }
 
     // Check parity (even parity)
-    // If calculated parity (sum of 1s in bits 7-1) is odd, receivedParity should be 1.
-    // If calculated parity is even, receivedParity should be 0.
     if ((calculatedParity % 2) !== receivedParity) { 
       return null; // Parity check failed
     }
 
     // Decode FrameOptions
-    const sequenceNumber = (headerByte >> 5) & 0x7;
-    const frameType = (headerByte >> 3) & 0x3;
-    const ldpcNType = (headerByte >> 1) & 0x3;
+    const sequenceNumber = (headerByte >> SEQUENCE_NUMBER_SHIFT) & SEQUENCE_NUMBER_MASK;
+    const frameType = (headerByte >> FRAME_TYPE_SHIFT) & FRAME_TYPE_MASK;
+    const ldpcNType = (headerByte >> LDPC_N_TYPE_SHIFT) & LDPC_N_TYPE_MASK;
 
     return { sequenceNumber, frameType, ldpcNType };
   }
@@ -453,7 +537,7 @@ export class DsssDpskFramer {
 
     // 1. LDPC復号 - decodeメソッドを使用して情報ビットを直接取得
     // payloadSoftBits は既にInt8Array（LLR soft values）
-    const ldpcDecodeResult = ldpc.decode(payloadSoftBits, 10); // Max 10 iterations
+    const ldpcDecodeResult = ldpc.decode(payloadSoftBits, DEFAULT_LDPC_ITERATIONS);
 
     if (!ldpcDecodeResult.converged) {
       // Even if not converged, we can still try BCH, but for now, consider it a failure
@@ -479,11 +563,12 @@ export class DsssDpskFramer {
   }
 
   private _byteToBits(byte: number): Uint8Array {
-      const bits = new Uint8Array(8);
-      for (let i = 0; i < 8; i++) {
-          bits[i] = (byte >> (7 - i)) & 1;
+      // 再利用可能バッファを使用（効率化）
+      for (let i = 0; i < HEADER_BITS; i++) {
+          this.headerBitsBuffer[i] = (byte >> (HEADER_BITS - 1 - i)) & 1;
       }
-      return bits;
+      // 安全性のためコピーを返す（呼び出し側の変更が内部バッファに影響しないよう）
+      return this.headerBitsBuffer.slice();
   }
 
 }
