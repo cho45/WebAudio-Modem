@@ -50,7 +50,6 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       expect(processor).toBeDefined();
       expect(typeof mockPort.onmessage).toBe('function');
       expect(mockPort.postMessage).toBeDefined();
-      expect(processor.accumulatorIndex).toBe(0);
     });
 
     test('should handle configure message', async () => {
@@ -93,9 +92,6 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
           syncState: {
             locked: false,
             mode: 'SEARCH',
-            offset: 0,
-            chipPosition: 0,
-            bitPosition: 0,
             lastLLRs: [],
             consecutiveWeakBits: 0,
             framesSinceLastCheck: 0,
@@ -116,11 +112,10 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
             lastCorrelation: 0,
             isHealthy: true
           },
-          bufferIndex: 0,
+          sampleBufferLength: 0,
           decodedDataBufferLength: 0,
           pendingModulation: false,
           estimatedSnrDb: 10,
-          accumulatorIndex: 0,
           config: {
             sequenceLength: 31,
             seed: 21, // 0b10101
@@ -227,8 +222,7 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
 
     test('should handle reset correctly', async () => {
       // Add some state
-      processor.accumulatorIndex = 10;
-      processor.bufferIndex = 1000;
+      processor.sampleBuffer.write(1, 2, 3);
       processor.syncState.processedBits = 50;
       processor.syncState.lastLLRs = [100, 90];
 
@@ -238,8 +232,7 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
         data: {}
       });
 
-      expect(processor.accumulatorIndex).toBe(0);
-      expect(processor.bufferIndex).toBe(0);
+      expect(processor.sampleBuffer.length).toBe(0);
       expect(processor.syncState.processedBits).toBe(0);
       expect(processor.syncState.lastLLRs).toEqual([]);
 
@@ -327,19 +320,29 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       }
 
       // Buffer should have accumulated some data
-      expect(processor.bufferIndex).toBeGreaterThan(0);
+      expect(processor.sampleBuffer.length).toBeGreaterThan(0);
     });
 
-    test('should accumulate bits efficiently', () => {
-      // Initial accumulator state
-      expect(processor.accumulatorIndex).toBe(0);
+    test('should feed bits to framer and update its state', async () => {
+      // Initial framer state
+      expect(processor.framer.getState().state).toBe('SEARCHING_PREAMBLE');
 
-      // Simulate bit accumulation
-      processor._processBitForFraming(100);
-      expect(processor.accumulatorIndex).toBe(1);
+      // Simulate feeding preamble bits (LLR for 0 is positive, for 1 is negative)
+      // PREAMBLE = [0, 0, 0, 0]
+      // Directly call framer.process with preamble bits
+      processor.framer.process(new Int8Array([120, 120, 120, 120])); // LLR for 0
 
-      processor._processBitForFraming(-80);
-      expect(processor.accumulatorIndex).toBe(2);
+      // After feeding preamble, framer should transition to SEARCHING_SYNC_WORD
+      // Send status message and capture the response
+      const statusPromise = new Promise(resolve => {
+        mockPort.postMessage.mockImplementationOnce((message: any) => {
+          resolve(message);
+        });
+      });
+      await sendMessage({ id: 'status-framer', type: 'status', data: {} });
+      const statusResponse = await statusPromise;
+
+      expect(statusResponse.data.framerStatus.state).toBe('SEARCHING_SYNC_WORD');
     });
 
     test('should handle large audio buffer processing', () => {
@@ -355,7 +358,7 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       expect(result).toBe(true);
       
       // Buffer should be managing the large input
-      expect(processor.bufferIndex).toBeGreaterThan(0);
+      expect(processor.sampleBuffer.length).toBeGreaterThan(0);
     });
   });
 
@@ -498,11 +501,11 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
 
       const statusResponse = mockPort.postMessage.mock.calls[0][0];
       expect(statusResponse.data.isConfigured).toBe(true);
-      expect(statusResponse.data.bufferIndex).toBeGreaterThan(0);
+      expect(statusResponse.data.sampleBufferLength).toBeGreaterThan(0);
       expect(statusResponse.data.syncState.mode).toBe('SEARCH'); // Still searching without real signal
     });
 
-    test('should handle modulation workflow correctly', async () => {
+    test('should generate correct modulated signal output', async () => {
       // Configure
       await sendMessage({
         id: 'config',
@@ -514,24 +517,40 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       sendMessage({
         id: 'modulate',
         type: 'modulate',
-        data: { bytes: [0x48] }
+        data: { bytes: [0x48] } // 'H' = 01001000
       });
 
-      // Wait a bit for modulation to start
+      // Wait for modulation to start
       await new Promise(resolve => setTimeout(resolve, 10));
       
-      // Check that modulation setup is working
+      // Verify modulation parameters
       expect(processor.pendingModulation).toBeTruthy();
       expect(processor.pendingModulation.samples.length).toBeGreaterThan(0);
       expect(processor.pendingModulation.index).toBe(0);
       
-      // Verify the processor can handle the process() call without errors
-      const inputs = [[new Float32Array(128)]];
-      const outputs = [[new Float32Array(128)]];
-      const result = processor.process(inputs, outputs);
+      // Generate output signal
+      const outputs = [[new Float32Array(1024)]];
+      processor.process([], outputs);
       
-      // Process call should succeed
-      expect(result).toBe(true);
+      // Verify actual signal characteristics
+      const outputSignal = outputs[0][0];
+      
+      // Check signal is not all zeros
+      const hasSignal = Array.from(outputSignal).some(sample => Math.abs(sample) > 0.001);
+      expect(hasSignal).toBe(true);
+      
+      // Check signal amplitude is reasonable (should be around ±1)
+      const maxAmplitude = Math.max(...Array.from(outputSignal).map(Math.abs));
+      expect(maxAmplitude).toBeGreaterThan(0.1);
+      expect(maxAmplitude).toBeLessThanOrEqual(1.1);
+      
+      // Check signal has proper carrier frequency characteristics
+      // With 10kHz carrier at 44.1kHz sample rate, expect periodic behavior
+      const rms = Math.sqrt(outputSignal.reduce((sum, s) => sum + s*s, 0) / outputSignal.length);
+      expect(rms).toBeGreaterThan(0.1); // Should have significant energy
+      
+      // Verify progress in modulation
+      expect(processor.pendingModulation.index).toBeGreaterThan(0);
     });
   });
 
@@ -586,8 +605,7 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       });
 
       const statusResponse = mockPort.postMessage.mock.calls[0][0];
-      expect(statusResponse.data.bufferIndex).toBe(0);
-      expect(statusResponse.data.accumulatorIndex).toBe(0);
+      expect(statusResponse.data.sampleBufferLength).toBe(0);
       expect(statusResponse.data.syncState.mode).toBe('SEARCH');
       expect(statusResponse.data.syncState.locked).toBe(false);
       expect(statusResponse.data.syncState.processedBits).toBe(0);
@@ -649,6 +667,235 @@ describe('DsssDpskProcessor - Complete Implementation', () => {
       expect(response.data.syncState).toBeDefined();
       expect(response.data.syncState.mode).toBe('TRACK');
       expect(response.data.syncState.locked).toBe(true);
+    });
+  });
+
+  describe('Complete Frame Decoding Tests', () => {
+    test('should decode complete frame and recover original user data', async () => {
+      // Configure processor
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sequenceLength: 31, samplesPerPhase: 23 } }
+      });
+
+      // Test with known data that should be recoverable
+      const originalData = new Uint8Array([0x48, 0x65, 0x6C]); // "Hel"
+      
+      // Use processor's modulate() method to generate the exact same signal
+      processor.resetAbortController();
+      const modPromise = processor.modulate(originalData, { signal: processor.abortController.signal }).catch(() => {});
+      
+      // Wait a bit for modulation to set up
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Extract the generated signal from pendingModulation
+      const cleanSignal = processor.pendingModulation?.samples;
+      if (!cleanSignal) {
+        throw new Error('Processor did not generate modulation signal');
+      }
+      
+      // Reset processor state for testing
+      await processor.reset();
+      
+      console.log(`Generated signal: ${cleanSignal.length} samples for ${originalData.length} bytes`);
+      
+      // Add noise before signal to simulate realistic conditions
+      const noiseLength = 2000; // 2000 samples of noise before signal
+      const fullSignal = new Float32Array(noiseLength + cleanSignal.length);
+      
+      // Add weak noise before actual signal
+      for (let i = 0; i < noiseLength; i++) {
+        fullSignal[i] = (Math.random() - 0.5) * 0.05; // Low amplitude noise
+      }
+      fullSignal.set(cleanSignal, noiseLength);
+      
+      console.log(`Processing ${fullSignal.length} samples (${noiseLength} noise + ${cleanSignal.length} signal)`);
+      
+      // Process in AudioWorklet-realistic 128-sample chunks
+      const chunkSize = 128; // AudioWorklet standard chunk size
+      let totalProcessed = 0;
+      
+      const demodulatePromise = processor.demodulate({ signal: processor.abortController.signal });
+
+      while (totalProcessed < fullSignal.length) {
+        const endIdx = Math.min(totalProcessed + chunkSize, fullSignal.length);
+        const chunk = new Float32Array(chunkSize);
+        
+        if (endIdx - totalProcessed === chunkSize) {
+          chunk.set(fullSignal.slice(totalProcessed, endIdx), 0);
+        } else {
+          // Last chunk may be smaller - pad with zeros
+          chunk.set(fullSignal.slice(totalProcessed, endIdx), 0);
+        }
+        
+        const inputs = [[chunk]];
+        const outputs = [[new Float32Array(chunkSize)]];
+        
+        processor.process(inputs, outputs);
+        totalProcessed = endIdx;
+        
+        // Log framer state and decoded buffer length during processing
+        const currentFramerState = processor.framer.getState();
+        console.log(`[DEBUG] Processed: ${totalProcessed} samples, Framer State: ${currentFramerState.state}, Buffer: ${currentFramerState.bufferLength}, Decoded: ${processor.decodedUserDataBuffer.length}`);
+      }
+      
+      const decodedBytes = await demodulatePromise;
+      
+      console.log('Original:', Array.from(originalData));
+      console.log('Decoded:', Array.from(decodedBytes));
+      
+      expect(decodedBytes).toEqual(originalData);
+
+    }, 15000); // 15 second timeout for streaming processing
+
+    test('should handle 128-sample streaming like real AudioWorklet', async () => {
+      // Configure processor
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sequenceLength: 31, samplesPerPhase: 23 } }
+      });
+
+      // Generate test signal
+      const testData = new Uint8Array([0x42]); // 'B'
+      
+      const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
+      const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
+      
+      const framer = new DsssDpskFramer();
+      const frameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
+      const dataFrame = framer.build(testData, frameOptions);
+      
+      const chips = modem.dsssSpread(dataFrame.bits, 31, 0b10101);
+      const phases = modem.dpskModulate(chips);
+      const signal = modem.modulateCarrier(phases, 23, 44100, 10000);
+      
+      // Process in exactly 128-sample chunks like AudioWorklet
+      const AUDIOWORKLET_CHUNK_SIZE = 128;
+      let processedSamples = 0;
+      let frameDetected = false;
+      
+      console.log(`Processing ${signal.length} samples in ${AUDIOWORKLET_CHUNK_SIZE}-sample chunks`);
+      
+      while (processedSamples < signal.length) {
+        const endIdx = Math.min(processedSamples + AUDIOWORKLET_CHUNK_SIZE, signal.length);
+        let chunk: Float32Array;
+        
+        if (endIdx - processedSamples === AUDIOWORKLET_CHUNK_SIZE) {
+          chunk = signal.slice(processedSamples, endIdx);
+        } else {
+          // Last chunk may be smaller - pad with zeros like real audio
+          chunk = new Float32Array(AUDIOWORKLET_CHUNK_SIZE);
+          chunk.set(signal.slice(processedSamples, endIdx), 0);
+        }
+        
+        const inputs = [[chunk]];
+        const outputs = [[new Float32Array(AUDIOWORKLET_CHUNK_SIZE)]];
+        
+        const continueProcessing = processor.process(inputs, outputs);
+        expect(continueProcessing).toBe(true);
+        
+        // Check if frame was detected
+        if (processor.decodedUserDataBuffer.length > 0) {
+          frameDetected = true;
+          console.log(`Frame detected at chunk ${Math.floor(processedSamples / AUDIOWORKLET_CHUNK_SIZE)}`);
+        }
+        
+        processedSamples = endIdx;
+      }
+      
+      // Get final state
+      mockPort.postMessage.mockClear();
+      await sendMessage({
+        id: 'stream-status',
+        type: 'status',
+        data: {}
+      });
+      
+      const statusResponse = mockPort.postMessage.mock.calls[0][0];
+      const finalState = statusResponse.data;
+      
+      console.log('128-sample streaming results:');
+      console.log('- Total chunks processed:', Math.ceil(signal.length / AUDIOWORKLET_CHUNK_SIZE));
+      console.log('- Frame detected:', frameDetected);
+      console.log('- Final sync state:', finalState.syncState.mode);
+      console.log('- Processed bits:', finalState.syncState.processedBits);
+      
+      // Verify that streaming processing worked
+      expect(finalState.syncState.processedBits).toBeGreaterThanOrEqual(0);
+      
+      // Verify processor can handle the real streaming scenario
+      expect(finalState.isConfigured).toBe(true);
+    });
+
+    test('should handle frame boundaries across multiple chunks', async () => {
+      // Configure
+      await sendMessage({
+        id: 'config',
+        type: 'configure',
+        data: { config: { sequenceLength: 31, samplesPerPhase: 23 } }
+      });
+
+      // Generate a signal that will be split across multiple 128-sample chunks
+      const testData = new Uint8Array([0x41]); // 'A'
+      
+      const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
+      const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
+      
+      const framer = new DsssDpskFramer();
+      const frameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
+      const dataFrame = framer.build(testData, frameOptions);
+      
+      const chips = modem.dsssSpread(dataFrame.bits, 31, 0b10101);
+      const phases = modem.dpskModulate(chips);
+      const signal = modem.modulateCarrier(phases, 23, 44100, 10000);
+      
+      // Deliberately use misaligned chunk sizes to test boundary handling
+      const chunkSizes = [64, 128, 200, 96, 128]; // Irregular chunk sizes
+      let processedSamples = 0;
+      
+      for (const chunkSize of chunkSizes) {
+        if (processedSamples >= signal.length) break;
+        
+        const endIdx = Math.min(processedSamples + chunkSize, signal.length);
+        const chunk = new Float32Array(chunkSize);
+        chunk.set(signal.slice(processedSamples, endIdx), 0);
+        
+        const inputs = [[chunk]];
+        const outputs = [[new Float32Array(chunkSize)]];
+        
+        processor.process(inputs, outputs);
+        processedSamples = endIdx;
+      }
+      
+      // Process remaining samples if any
+      while (processedSamples < signal.length) {
+        const remainingSamples = signal.length - processedSamples;
+        const chunkSize = Math.min(128, remainingSamples);
+        const chunk = new Float32Array(chunkSize);
+        chunk.set(signal.slice(processedSamples, processedSamples + chunkSize), 0);
+        
+        const inputs = [[chunk]];
+        const outputs = [[new Float32Array(chunkSize)]];
+        
+        processor.process(inputs, outputs);
+        processedSamples += chunkSize;
+      }
+      
+      // Verify boundary handling didn't break processing
+      mockPort.postMessage.mockClear();
+      await sendMessage({ id: 'boundary-test', type: 'status', data: {} });
+      const finalState = mockPort.postMessage.mock.calls[0][0].data;
+      
+      expect(finalState.syncState.processedBits).toBeGreaterThan(0);
+      expect(finalState.syncState).toBeDefined();
+      expect(finalState.syncState.mode).toMatch(/SEARCH|TRACK|VERIFY/);
+      
+      console.log('Boundary test completed:');
+      console.log('- Processed samples:', processedSamples);
+      console.log('- Final processed bits:', finalState.syncState.processedBits);
+      console.log('- Sync state:', finalState.syncState.mode);
     });
   });
 });

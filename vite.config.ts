@@ -30,6 +30,7 @@ export default defineConfig({
         'ldpc': resolve(__dirname, 'demo/ldpc.html'),
         'ldpc-worker': resolve(__dirname, 'demo/ldpc-worker.ts'),
         'src/webaudio/processors/fsk-processor': resolve(__dirname, 'src/webaudio/processors/fsk-processor.ts'),
+        'src/webaudio/processors/dsss-dpsk-processor': resolve(__dirname, 'src/webaudio/processors/dsss-dpsk-processor.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {

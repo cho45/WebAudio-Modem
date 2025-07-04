@@ -302,21 +302,33 @@ export class DsssDpskFramer {
     this.softBitBuffer.writeArray(softBits);
     this.processedBitsCount += softBits.length;
 
-    // Main processing loop
+    // Main processing loop with safety limit
+    const maxIterations = this.softBitBuffer.length * 2; // 最大でバッファサイズの2倍まで
+    let iterations = 0;
+    
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const processResult = this._processCurrentState(decodedFrames);
-      if (processResult === 'exit') {
+      iterations++;
+      if (iterations > maxIterations) {
+        console.warn(`[DsssDpskFramer] Processing hit iteration limit (${maxIterations}), breaking`);
         break;
-      } else if (processResult === 'return') {
-        return decodedFrames;
       }
       
-      // Check if we have enough data to continue
-      if (this.state === FramerState.SEARCHING_PREAMBLE && 
-          this.softBitBuffer.length < (PREAMBLE.length + SYNC_WORD.length + HEADER_BITS)) {
+      const initialBufferLength = this.softBitBuffer.length;
+      const processResult = this._processCurrentState(decodedFrames);
+
+      if (processResult === 'exit') {
         break;
       }
+
+      // If no progress was made (buffer length is the same and no frames decoded),
+      // and the state handler returned 'return', then we need more data.
+      // Break the loop to wait for more input.
+      if (processResult === 'return' && this.softBitBuffer.length === initialBufferLength && decodedFrames.length === 0) {
+          break;
+      }
+      // If progress was made (buffer consumed or frame decoded) or result is 'continue',
+      // continue the loop to process more.
     }
     return decodedFrames;
   }
@@ -342,31 +354,37 @@ export class DsssDpskFramer {
   }
 
   private _handlePreambleSearch(): 'continue' | 'return' {
+    if (this.softBitBuffer.length < PREAMBLE.length) {
+      return 'return'; // Not enough data to even check for preamble
+    }
+
     const preambleIndex = this._findPreamble();
     if (preambleIndex !== -1) {
       this._consumeBufferBits(preambleIndex + PREAMBLE.length);
       this.state = FramerState.SEARCHING_SYNC_WORD;
       return 'continue';
     } else {
-      const minKeepBits = PREAMBLE.length + SYNC_WORD.length + HEADER_BITS;
-      const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - minKeepBits);
-      this._consumeBufferBits(consumeCount);
-      return 'return';
+      // If preamble not found, consume only 1 bit to slide the window
+      this._consumeBufferBits(1);
+      return 'continue';
     }
   }
 
   private _handleSyncWordSearch(): 'continue' | 'return' {
+    if (this.softBitBuffer.length < SYNC_WORD.length) {
+      return 'return'; // Not enough data to even check for sync word
+    }
+
     const syncWordIndex = this._findSyncWord();
     if (syncWordIndex !== -1) {
       this._consumeBufferBits(syncWordIndex + SYNC_WORD.length);
       this.state = FramerState.READING_HEADER;
       return 'continue';
     } else {
-      const minKeepBits = SYNC_WORD.length + HEADER_BITS;
-      const consumeCount = this.softBitBuffer.length - Math.max(0, this.softBitBuffer.length - minKeepBits);
-      this._consumeBufferBits(consumeCount);
-      this.state = FramerState.SEARCHING_PREAMBLE;
-      return 'return';
+      // If sync word not found, consume only 1 bit to slide the window
+      this._consumeBufferBits(1);
+      this.state = FramerState.SEARCHING_PREAMBLE; // Go back to searching preamble
+      return 'continue';
     }
   }
 
