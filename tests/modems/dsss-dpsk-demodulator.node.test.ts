@@ -129,7 +129,7 @@ describe('DsssDpskDemodulator', () => {
       demodulator.addSamples(noiseSamples);
       
       // Generate signal with extra bits for better sync
-      const testBits = new Uint8Array([1, 0, 1, 0, 0, 1, 1, 0]);
+      const testBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0]);
       const chips = modem.dsssSpread(testBits, defaultConfig.sequenceLength, defaultConfig.seed);
       const phases = modem.dpskModulate(chips);
       const signal = modem.modulateCarrier(
