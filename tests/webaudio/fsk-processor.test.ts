@@ -18,6 +18,9 @@ vi.stubGlobal('AudioWorkletProcessor', MockAudioWorkletProcessor);
 vi.stubGlobal('registerProcessor', mockRegisterProcessor);
 vi.stubGlobal('sampleRate', 44100);
 
+// Import MyAbort first (needed for dynamic import)
+await import('../../src/webaudio/processors/myabort.js');
+
 // Import the module dynamically
 await import('../../src/webaudio/processors/fsk-processor.js');
 

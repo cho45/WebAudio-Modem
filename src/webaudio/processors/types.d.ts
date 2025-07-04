@@ -6,15 +6,16 @@ declare global {
   class AudioWorkletProcessor {
     readonly port: MessagePort;
     process(
-      inputs: Float32Array[][],
-      outputs: Float32Array[][],
-      parameters: Record<string, Float32Array>
+      _inputs: Float32Array[][],
+      _outputs: Float32Array[][],
+      _parameters: Record<string, Float32Array>
     ): boolean;
   }
 
+  // eslint-disable-next-line no-unused-vars
   function registerProcessor(
-    name: string,
-    processorCtor: new (options?: AudioWorkletNodeOptions) => AudioWorkletProcessor
+    _name: string,
+    _processorCtor: new (_options?: AudioWorkletNodeOptions) => AudioWorkletProcessor
   ): void;
 }
 

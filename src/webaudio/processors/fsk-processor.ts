@@ -11,6 +11,7 @@ import { IAudioProcessor, IDataChannel } from '../../core';
 import { FSKCore } from '../../modems/fsk';
 import { ChunkedModulator } from '../chunked-modulator';
 import { RingBuffer } from '../../utils';
+import { MyAbortController } from './myabort';
 
 interface WorkletMessage {
   id: string;
@@ -18,47 +19,6 @@ interface WorkletMessage {
   data?: any
 }
 
-/**
- * Note:
- * AudioWorkletGlobalScope では標準の AbortController / AbortSignal が利用できません。
- * そのため、キャンセル制御には独自実装の MyAbortController / MyAbortSignal を使用しています。
- */
-class MyAbortSignal {
-  private _aborted = false;
-  private listeners: (() => void)[] = [];
-  onabort: (() => void) | null = null;
-
-  get aborted() { return this._aborted; }
-
-  addEventListener(type: 'abort', listener: () => void) {
-    if (type === 'abort') this.listeners.push(listener);
-  }
-
-  removeEventListener(type: 'abort', listener: () => void) {
-    if (type === 'abort') this.listeners = this.listeners.filter(l => l !== listener);
-  }
-
-  dispatchEvent() {
-    this.onabort?.();
-    this.listeners.forEach(l => l());
-    this.listeners = [];
-  }
-
-  throwIfAborted() {
-    if (this._aborted) throw new DOMException('Aborted', 'AbortError');
-  }
-}
-
-class MyAbortController {
-  signal = new MyAbortSignal();
-
-  abort() {
-    if (!this.signal.aborted) {
-      (this.signal as any)._aborted = true;
-      this.signal.dispatchEvent();
-    }
-  }
-}
 
 export class FSKProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
   private fskCore: FSKCore;
