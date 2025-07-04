@@ -139,20 +139,17 @@ export function dsssDespread(
   let estimatedNoiseVar = noiseVariance;
   if (!estimatedNoiseVar) {
     // Check if we have perfect noiseless chips (all values exactly +1 or -1)
-    const isPerfectSignal = Array.from(chips).every(chip => Math.abs(Math.abs(chip) - 1.0) < 1e-6);
+    // const isPerfectSignal = Array.from(chips).every(chip => Math.abs(Math.abs(chip) - 1.0) < 1e-6); // 常にfalseになるようにコメントアウト
     
-    if (isPerfectSignal) {
-      // For perfect noiseless DSSS signals, use theoretical minimum noise variance
-      // This ensures maximum LLR values (±127) as expected by tests
-      estimatedNoiseVar = 0.01; // Very small value for noiseless case
-    } else {
-      // Robust noise variance estimation from chip magnitudes for noisy signals
+    // if (isPerfectSignal) {
+    //   estimatedNoiseVar = 0.01;
+    // } else {
       const sortedMagnitudes = Array.from(chips).map(Math.abs).sort((a, b) => a - b);
       const medianMagnitude = sortedMagnitudes[Math.floor(sortedMagnitudes.length / 2)];
-      // For BPSK chips, noise variance ≈ (median_magnitude / 0.674)² when signal present
+      console.log(`[DsssDpskDemodulator] dsssDespread: medianMagnitude=${medianMagnitude}`);
       estimatedNoiseVar = Math.pow(medianMagnitude / 0.674, 2);
-      estimatedNoiseVar = Math.max(estimatedNoiseVar, 0.1); // Prevent division by zero
-    }
+      estimatedNoiseVar = Math.max(estimatedNoiseVar, 1.0); // Prevent division by zero, adjusted for noisy signals
+    // }
   }
 
   for (let bitIndex = 0; bitIndex < numBits; bitIndex++) {
@@ -212,6 +209,7 @@ export function dpskDemodulate(
     softChips[i - 1] = Math.cos(phaseDiff);
   }
   
+  console.log(`[DsssDpskDemodulator] dpskDemodulate: softChips (first 10) = ${softChips.slice(0, 10).join(', ')}`); // ここにログを追加
   return softChips;
 }
 
@@ -713,6 +711,7 @@ export class DsssDpskDemodulator {
     consecutiveWeakBits: number;
     processedBits: number; // 復調したビット数
     targetBits: number; // 上位層から要求されているビット数
+    resyncCounter: number;
   } = {
     locked: false,
     sampleOffset: 0,
@@ -720,7 +719,8 @@ export class DsssDpskDemodulator {
     lastCorrelation: 0,
     consecutiveWeakBits: 0,
     processedBits: 0,
-    targetBits: 0
+    targetBits: 0,
+    resyncCounter: 0
   };
   
   constructor(config: {
@@ -757,19 +757,16 @@ export class DsssDpskDemodulator {
    * Add audio samples to the demodulator
    */
   addSamples(samples: Float32Array): void {
-    // サンプルをバッファに追加
+    // console.log(`[DsssDpskDemodulator] addSamples: Adding ${samples.length} samples. Current write: ${this.sampleWriteIndex}, read: ${this.sampleReadIndex}`);
     for (let i = 0; i < samples.length; i++) {
       this.sampleBuffer[this.sampleWriteIndex] = samples[i];
       this.sampleWriteIndex = (this.sampleWriteIndex + 1) % this.sampleBuffer.length;
-      
-      // バッファがオーバーフローした場合、読み出し位置も進める
       if (this.sampleWriteIndex === this.sampleReadIndex) {
         this.sampleReadIndex = (this.sampleReadIndex + 1) % this.sampleBuffer.length;
+        // console.log(`[DsssDpskDemodulator] addSamples: Buffer overflow, read index advanced to ${this.sampleReadIndex}`);
       }
     }
-    
-    // 処理は getAvailableBits() で行うため、ここでは何もしない
-    // ストリーミング処理のため、サンプル追加時に毎回処理するのは非効率
+    // console.log(`[DsssDpskDemodulator] addSamples: Finished. New write: ${this.sampleWriteIndex}, read: ${this.sampleReadIndex}, available: ${this._getAvailableSampleCount()}`);
   }
   
   /**
@@ -783,8 +780,11 @@ export class DsssDpskDemodulator {
     }
     
     // 同期が取れていない場合、同期を試みる
-    if (!this.syncState.locked && this._getAvailableSampleCount() >= this.samplesPerBit * 1.5) {
-      this._trySync();
+    if (!this.syncState.locked) {
+      // Only try to sync if enough samples are available for at least one bit
+      if (this._getAvailableSampleCount() >= this.samplesPerBit) {
+        this._trySync();
+      }
     }
     
     // 同期が取れている場合、ビットを処理
@@ -793,7 +793,10 @@ export class DsssDpskDemodulator {
       let processedCount = 0;
       const maxBitsPerCall = 50; // 一度の呼び出しで最大50ビット
       
-      while (this._getAvailableSampleCount() >= this.samplesPerBit && processedCount < maxBitsPerCall) {
+      const maxIterations = 1000; // Hard limit to prevent infinite loops during debugging
+      let iterationCount = 0;
+      while (this._getAvailableSampleCount() >= this.samplesPerBit && processedCount < maxBitsPerCall && iterationCount < maxIterations) {
+        iterationCount++;
         this._processBit();
         processedCount++;
         
@@ -814,10 +817,10 @@ export class DsssDpskDemodulator {
     // 処理済みビット数を更新
     this.syncState.processedBits += result.length;
     
-    // 要求されたビット数に達したらリセット
+    // 要求されたビット数に達したらtargetBitsのみリセット（processedBitsは維持）
     if (this.syncState.targetBits > 0 && this.syncState.processedBits >= this.syncState.targetBits) {
       this.syncState.targetBits = 0;
-      this.syncState.processedBits = 0;
+      // processedBits は維持して、その後の弱いビット検出で使用
     }
     
     return result;
@@ -848,7 +851,8 @@ export class DsssDpskDemodulator {
       lastCorrelation: 0,
       consecutiveWeakBits: 0,
       processedBits: 0,
-      targetBits: 0
+      targetBits: 0,
+      resyncCounter: 0
     };
   }
   
@@ -856,26 +860,23 @@ export class DsssDpskDemodulator {
     // 同期検索に必要なサンプル数がバッファにあるか確認
     const minSamplesNeeded = Math.floor(this.samplesPerBit * 1.5);
     const availableCount = this._getAvailableSampleCount();
-    
+
     if (availableCount < minSamplesNeeded) {
       return false;
     }
-    
-    // 利用可能なサンプルを取得（最大で必要分の2倍まで）
-    const maxSamples = Math.min(availableCount, this.samplesPerBit * 3);
-    const availableSamples = new Float32Array(maxSamples);
-    for (let i = 0; i < maxSamples; i++) {
-      availableSamples[i] = this.sampleBuffer[(this.sampleReadIndex + i) % this.sampleBuffer.length];
+
+    // Create a linear view of the circular buffer for sync search
+    const searchWindowSize = Math.min(availableCount, this.samplesPerBit * 3); // Search up to 3 bits worth of samples
+    const searchSamples = new Float32Array(searchWindowSize);
+    for (let i = 0; i < searchWindowSize; i++) {
+      searchSamples[i] = this.sampleBuffer[(this.sampleReadIndex + i) % this.sampleBuffer.length];
     }
-    
-    // 同期検索（検索範囲を制限）
-    const maxChipOffset = Math.min(
-      Math.floor(maxSamples / this.config.samplesPerPhase),
-      this.config.sequenceLength * 2 // 最大2ビット分まで
-    );
-    
+
+    // Max chip offset for search should be based on the search window size
+    const maxChipOffset = Math.floor(searchSamples.length / this.config.samplesPerPhase);
+
     const result = findSyncOffset(
-      availableSamples,
+      searchSamples,
       this.reference,
       {
         samplesPerPhase: this.config.samplesPerPhase,
@@ -888,19 +889,20 @@ export class DsssDpskDemodulator {
         peakToNoiseRatio: this.config.peakToNoiseRatio
       }
     );
-    
+
     if (result.isFound) {
       console.log(`[DsssDpskDemodulator] Sync found! offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation}`);
       this.syncState.locked = true;
-      this.syncState.sampleOffset = result.bestSampleOffset;
-      this.syncState.chipOffset = result.bestChipOffset;
-      this.syncState.lastCorrelation = result.peakCorrelation;
-      
-      // 同期点までのサンプルを消費
+      // result.bestSampleOffset is relative to the `searchSamples` array, which starts at `this.sampleReadIndex`.
+      // So, we consume `result.bestSampleOffset` samples to align the buffer.
       this._consumeSamples(result.bestSampleOffset);
+      this.syncState.sampleOffset = this.sampleReadIndex; // Update to the new absolute read index
+      this.syncState.chipOffset = Math.round(this.syncState.sampleOffset / this.config.samplesPerPhase);
+      this.syncState.lastCorrelation = result.peakCorrelation;
+      this.syncState.resyncCounter = 0; // Reset resync counter on successful sync
       return true;
     } else {
-      // 同期が見つからない場合は半分のサンプルを消費して次の検索に備える
+      // If sync not found, consume a small portion to advance and try again
       this._consumeSamples(Math.floor(this.samplesPerBit / 2));
       return false;
     }
@@ -910,6 +912,7 @@ export class DsssDpskDemodulator {
     const availableCount = this._getAvailableSampleCount();
     
     if (availableCount < this.samplesPerBit) {
+      console.log(`[DsssDpskDemodulator] _processBit: Not enough samples for a bit. Available: ${availableCount}, Needed: ${this.samplesPerBit}`);
       return;
     }
     
@@ -936,15 +939,18 @@ export class DsssDpskDemodulator {
       if (chipLlrs.length === this.reference.length - 1) {
         adjustedChipLlrs = new Float32Array(this.reference.length);
         adjustedChipLlrs.set(chipLlrs, 0);
-        adjustedChipLlrs[this.reference.length - 1] = chipLlrs[chipLlrs.length - 1];
+        // The last chip LLR should be the same as the previous one if it's a padding.
+        // Or, more robustly, it should be treated as a weak LLR.
+        // For now, let's assume it's a repetition of the last valid LLR.
+        adjustedChipLlrs[this.reference.length - 1] = chipLlrs[chipLlrs.length - 2];
       } else if (chipLlrs.length === this.reference.length) {
         adjustedChipLlrs = chipLlrs;
       } else {
-        console.log(`[DsssDpskDemodulator] Chip length mismatch: ${chipLlrs.length} vs ${this.reference.length}`);
-        // 長さが合わない場合は同期をリセット
+        console.log(`[DsssDpskDemodulator] Chip length mismatch: ${chipLlrs.length} vs ${this.reference.length}. Losing sync.`);
+        // 長さが合わない場合は同期をリセットし、このビット分のサンプルを消費して次に進む
         this.syncState.locked = false;
         this.syncState.lastCorrelation = 0; // 相関値もリセット
-        this._consumeSamples(1); // 1サンプルずらして再試行
+        this._consumeSamples(this.samplesPerBit); // このビット分のサンプルを消費
         return;
       }
       
@@ -954,63 +960,72 @@ export class DsssDpskDemodulator {
       if (llrs && llrs.length > 0) {
         // LLRを量子化してInt8Arrayに変換
         const llr = Math.max(-127, Math.min(127, Math.round(llrs[0])));
+        console.log(`[DsssDpskDemodulator] _processBit: LLR=${llr}`);
         if (this.bitBufferIndex < this.bitBuffer.length) {
           this.bitBuffer[this.bitBufferIndex++] = llr;
           
+          // 処理済みビット数を更新
+          this.syncState.processedBits++; // Always increment processedBits
+
           // 弱いビットの検出
-          const weakThreshold = 30; // 適切な閾値
+          const weakThreshold = 10; // 適切な閾値 (以前の30から10に調整)
+          console.log(`[DsssDpskDemodulator] _processBit: LLR=${llr}, weakThreshold=${weakThreshold}, abs(LLR)<weakThreshold=${Math.abs(llr) < weakThreshold}, consecutiveWeakBits=${this.syncState.consecutiveWeakBits}`);
           if (Math.abs(llr) < weakThreshold) {
             this.syncState.consecutiveWeakBits++;
             console.log(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.syncState.consecutiveWeakBits}`);
             
             // 上位層から要求されているビット数がある場合は同期を維持
             if (this.syncState.targetBits > 0 && this.syncState.processedBits < this.syncState.targetBits) {
-              // FECで復元できる可能性があるため、要求されたビット数分は復調を続ける
+              // If targetBits are set and not yet reached, maintain sync regardless of weak bits
               console.log(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.syncState.processedBits}/${this.syncState.targetBits}`);
             } else if (this.syncState.consecutiveWeakBits >= 10) {
-              // 要求がない場合で弱いビットが連続したら同期を失う
-              console.log(`[DsssDpskDemodulator] Too many weak bits without target, losing sync`);
+              // 要求がない場合、または要求ビット数に達した後に弱いビットが連続したら同期を失う
+              console.log(`[DsssDpskDemodulator] Too many weak bits without target or after target, losing sync`);
               this.syncState.locked = false;
               this.syncState.lastCorrelation = 0;
-              this.syncState.consecutiveWeakBits = 0;
+              // Don't reset consecutiveWeakBits - keep it to show why sync was lost
+              this.syncState.resyncCounter = 0;
               return;
             }
           } else {
             this.syncState.consecutiveWeakBits = 0; // 強いビットでリセット
-            
-            // 強いビットで0ビット（LLR > 0）が検出されたら再同期を試みる
-            // 現在は再同期を無効化（無限ループ回避のため）
-            // TODO: 再同期ロジックの改善
-            // if (llr > 50 && this.syncState.processedBits > 0 && this.syncState.processedBits % 10 === 0) {
-            //   this._tryResync();
-            // }
+            this.syncState.resyncCounter++; // 強いビットで再同期カウンタを増やす
+
+            // 0 ビット周辺での再同期を試みる
+             if (llr > 50 && this.syncState.resyncCounter > 10) {
+               this._tryResync();
+             }
           }
         }
         
         // 1ビット分のサンプルを消費
         this._consumeSamples(this.samplesPerBit);
+        console.log(`[DsssDpskDemodulator] _processBit: Bit processed. New read: ${this.sampleReadIndex}`);
       } else {
         console.log(`[DsssDpskDemodulator] Despread failed, losing sync`);
         // 復調失敗、同期をリセット
         this.syncState.locked = false;
         this.syncState.lastCorrelation = 0; // 相関値もリセット
-        this._consumeSamples(1);
+        this._consumeSamples(this.samplesPerBit); // Consume a full bit to move past bad data
       }
     } catch (error) {
       console.log(`[DsssDpskDemodulator] Error in _processBit: ${error}`);
       // エラー時は同期をリセット
       this.syncState.locked = false;
       this.syncState.lastCorrelation = 0; // 相関値もリセット
-      this._consumeSamples(1);
+      this._consumeSamples(this.samplesPerBit); // Consume a full bit to move past bad data
     }
   }
   
   private _getAvailableSampleCount(): number {
+    let count;
     if (this.sampleWriteIndex >= this.sampleReadIndex) {
-      return this.sampleWriteIndex - this.sampleReadIndex;
+      count = this.sampleWriteIndex - this.sampleReadIndex;
     } else {
-      return this.sampleBuffer.length - this.sampleReadIndex + this.sampleWriteIndex;
+      count = this.sampleBuffer.length - this.sampleReadIndex + this.sampleWriteIndex;
     }
+    console.log(`[DsssDpskDemodulator] _getAvailableSampleCount: write=${this.sampleWriteIndex}, read=${this.sampleReadIndex}, count=${count}`);
+    return count;
   }
   
   private _getAvailableSamples(): Float32Array {
@@ -1029,71 +1044,22 @@ export class DsssDpskDemodulator {
   private _consumeSamples(count: number): void {
     const availableCount = this._getAvailableSampleCount();
     const consumeCount = Math.min(count, availableCount);
+    const oldReadIndex = this.sampleReadIndex;
     this.sampleReadIndex = (this.sampleReadIndex + consumeCount) % this.sampleBuffer.length;
+    console.log(`[DsssDpskDemodulator] _consumeSamples: Requested=${count}, Available=${availableCount}, Consumed=${consumeCount}. Old read: ${oldReadIndex}, New read: ${this.sampleReadIndex}`);
+  }
+
+  private _setSampleReadIndex(newIndex: number): void {
+    const oldReadIndex = this.sampleReadIndex;
+    this.sampleReadIndex = newIndex % this.sampleBuffer.length;
+    console.log(`[DsssDpskDemodulator] _setSampleReadIndex: Old read: ${oldReadIndex}, New read: ${this.sampleReadIndex}`);
   }
   
   /**
    * 再同期を試みる（0ビット周辺で相関を取り直す）
    */
   private _tryResync(): void {
-    // 現在の位置周辺でDSSS相関を取る
-    const searchRange = Math.floor(this.config.samplesPerPhase / 2); // ±半位相分探索
-    const availableSamples = this._getAvailableSamples();
-    
-    if (availableSamples.length < this.samplesPerBit + searchRange * 2) {
-      return; // 十分なサンプルがない
-    }
-    
-    let bestOffset = 0;
-    let bestCorrelation = -1;
-    
-    // 現在位置の前後で相関を探索
-    for (let offset = -searchRange; offset <= searchRange; offset++) {
-      if (offset === 0) continue; // 現在位置はスキップ
-      
-      const startIdx = Math.max(0, offset);
-      const endIdx = startIdx + this.samplesPerBit;
-      
-      if (endIdx > availableSamples.length) continue;
-      
-      // この位置でのサンプルを取得
-      const testSamples = availableSamples.slice(startIdx, endIdx);
-      
-      // 0ビット用の参照信号と相関を取る
-      const result = findSyncOffset(
-        testSamples,
-        this.reference, // 0ビット用のM系列
-        {
-          samplesPerPhase: this.config.samplesPerPhase,
-          sampleRate: this.config.sampleRate,
-          carrierFreq: this.config.carrierFreq
-        },
-        0, // オフセット探索なし
-        {
-          correlationThreshold: this.config.correlationThreshold * 0.8, // 少し緩めの閾値
-          peakToNoiseRatio: this.config.peakToNoiseRatio * 0.8
-        }
-      );
-      
-      if (result.isFound && result.peakCorrelation > bestCorrelation) {
-        bestCorrelation = result.peakCorrelation;
-        bestOffset = offset + result.bestSampleOffset;
-      }
-    }
-    
-    // より良い同期点が見つかった場合、オフセットを調整
-    if (bestCorrelation > this.syncState.lastCorrelation * 1.1) { // 10%以上改善
-      console.log(`[DsssDpskDemodulator] Resync: adjusting offset by ${bestOffset} samples, correlation: ${this.syncState.lastCorrelation} -> ${bestCorrelation}`);
-      
-      // オフセット分だけサンプルを消費/巻き戻し
-      if (bestOffset > 0) {
-        this._consumeSamples(bestOffset);
-      } else {
-        // 巻き戻しはバッファ構造上難しいので、次のビットから適用
-        this.syncState.sampleOffset += bestOffset;
-      }
-      
-      this.syncState.lastCorrelation = bestCorrelation;
-    }
+      // 直前のビットの開始位置付近で再同期を試みる
+      // todo
   }
 }
