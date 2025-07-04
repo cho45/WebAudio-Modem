@@ -436,7 +436,7 @@ describe('DsssDpskDemodulator', () => {
       
       console.log(`[Test] Final state: locked=${syncState.locked}, bitsProcessed=${bitsProcessed}, iterations=${iterations}`);
       expect(syncState.locked).toBe(false);
-      expect(demodulator['syncState'].consecutiveWeakBits).toBeGreaterThanOrEqual(10);
+      expect(demodulator['syncState'].bits.consecutiveWeakCount).toBeGreaterThanOrEqual(10);
     });
 
     test('should maintain sync with consecutive weak bits when targetBits is set', () => {
@@ -488,7 +488,7 @@ describe('DsssDpskDemodulator', () => {
 
       // After targetBits are processed, sync should eventually be lost due to weak bits
       expect(syncState.locked).toBe(false);
-      expect(demodulator['syncState'].processedBits).toBeGreaterThanOrEqual(targetBitsCount);
+      expect(demodulator['syncState'].bits.processedCount).toBeGreaterThanOrEqual(targetBitsCount);
     });
 
     test.skip('should lose sync on demodulation processing error (e.g., chip length mismatch)', () => {
