@@ -324,6 +324,7 @@ export class DsssDpskDemodulator {
 
             // 0 ビット周辺での再同期を試みる
              if (llr > 50 && this.syncState.resyncCounter > 10) {
+               console.log(`[DsssDpskDemodulator] Strong 0-bit detected (LLR=${llr}), attempting resync after ${this.syncState.resyncCounter} strong bits`);
                this._tryResync();
              }
           }
@@ -359,19 +360,6 @@ export class DsssDpskDemodulator {
     return count;
   }
   
-  private _getAvailableSamples(): Float32Array {
-    const count = this._getAvailableSampleCount();
-    if (count === 0) {
-      return new Float32Array(0);
-    }
-    
-    const result = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this.sampleBuffer[(this.sampleReadIndex + i) % this.sampleBuffer.length];
-    }
-    return result;
-  }
-  
   private _consumeSamples(count: number): void {
     const availableCount = this._getAvailableSampleCount();
     const consumeCount = Math.min(count, availableCount);
@@ -390,7 +378,71 @@ export class DsssDpskDemodulator {
    * 再同期を試みる（0ビット周辺で相関を取り直す）
    */
   private _tryResync(): void {
-      // 直前のビットの開始位置付近で再同期を試みる
-      // todo
+    console.log(`[DsssDpskDemodulator] Attempting resync around current position`);
+    
+    // 直前のビット開始位置を計算（現在の読み取り位置から1ビット分戻る）
+    const currentReadIndex = this.sampleReadIndex;
+    const bitStartIndex = (currentReadIndex - this.samplesPerBit + this.sampleBuffer.length) % this.sampleBuffer.length;
+    
+    // 検索範囲を設定（前後0.5チップ = 約11.5サンプル）
+    const searchRange = Math.floor(this.config.samplesPerPhase * 0.5);
+    const searchStartOffset = -searchRange;
+    
+    // 検索に必要なサンプル数（1ビット分 + 前後の検索範囲）
+    const samplesNeeded = this.samplesPerBit + searchRange * 2;
+    const availableCount = this._getAvailableSampleCount();
+    
+    // バッファに十分なサンプルがあるか確認
+    if (availableCount < samplesNeeded) {
+      console.log(`[DsssDpskDemodulator] Not enough samples for resync. Available: ${availableCount}, Needed: ${samplesNeeded}`);
+      return;
+    }
+    
+    // 検索開始位置を計算（ビット開始位置の前searchRangeサンプル）
+    const searchStartIndex = (bitStartIndex + searchStartOffset + this.sampleBuffer.length) % this.sampleBuffer.length;
+    
+    // 検索範囲のサンプルを取得
+    const searchWindowSize = this.samplesPerBit + searchRange * 2;
+    const searchSamples = new Float32Array(searchWindowSize);
+    for (let i = 0; i < searchWindowSize; i++) {
+      searchSamples[i] = this.sampleBuffer[(searchStartIndex + i) % this.sampleBuffer.length];
+    }
+    
+    // 限定的な範囲で同期を検索
+    const maxChipOffsetForSearch = Math.floor(searchRange * 2 / this.config.samplesPerPhase) + 1; // 約1チップ分
+    
+    const result = findSyncOffset(
+      searchSamples,
+      this.reference,
+      {
+        samplesPerPhase: this.config.samplesPerPhase,
+        sampleRate: this.config.sampleRate,
+        carrierFreq: this.config.carrierFreq
+      },
+      maxChipOffsetForSearch,
+      {
+        correlationThreshold: this.config.correlationThreshold * 0.8, // 再同期では閾値を少し下げる
+        peakToNoiseRatio: this.config.peakToNoiseRatio * 0.8
+      }
+    );
+    
+    if (result.isFound) {
+      // 新しい同期位置を計算
+      const newSyncOffset = searchStartOffset + result.bestSampleOffset;
+      
+      // 読み取り位置を調整
+      const newReadIndex = (bitStartIndex + newSyncOffset + this.sampleBuffer.length) % this.sampleBuffer.length;
+      this._setSampleReadIndex(newReadIndex);
+      
+      // 同期状態を更新
+      this.syncState.sampleOffset = newReadIndex;
+      this.syncState.chipOffset = Math.round(this.syncState.sampleOffset / this.config.samplesPerPhase);
+      this.syncState.lastCorrelation = result.peakCorrelation;
+      this.syncState.resyncCounter = 0; // 成功したらカウンタをリセット
+      
+      console.log(`[DsssDpskDemodulator] Resync successful! Offset adjustment: ${newSyncOffset}, New correlation: ${result.peakCorrelation}`);
+    } else {
+      console.log(`[DsssDpskDemodulator] Resync failed. No valid sync found in search range.`);
+    }
   }
 }

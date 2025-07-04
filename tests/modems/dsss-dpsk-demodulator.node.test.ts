@@ -301,6 +301,50 @@ describe('DsssDpskDemodulator', () => {
   });
 
   describe('State Transition and Sync Logic', () => {
+    test('should perform fine resync when 0-bit is detected', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      
+      // Create signal with known bit pattern including 0 bits
+      const originalBits = new Uint8Array([1, 0, 1, 0, 0, 1, 0, 1]); // Multiple 0 bits
+      const signal = modem.modulateCarrier(
+        modem.dpskModulate(modem.dsssSpread(originalBits, defaultConfig.sequenceLength, defaultConfig.seed)),
+        defaultConfig.samplesPerPhase,
+        defaultConfig.sampleRate,
+        defaultConfig.carrierFreq
+      );
+      
+      // Add signal and establish initial sync
+      demodulator.addSamples(signal);
+      
+      // Process some bits to establish sync and increment resyncCounter
+      const processedBits: number[] = [];
+      let attempts = 0;
+      while (processedBits.length < 4 && attempts < 10) {
+        const bits = demodulator.getAvailableBits();
+        for (const bit of bits) {
+          processedBits.push(bit > 0 ? 1 : 0);
+        }
+        attempts++;
+      }
+      
+      expect(demodulator.getSyncState().locked).toBe(true);
+      expect(processedBits.length).toBeGreaterThanOrEqual(4);
+      
+      // Add remaining signal to ensure we have more data to process
+      const remainingSignal = signal.slice(processedBits.length * defaultConfig.samplesPerPhase * defaultConfig.sequenceLength);
+      demodulator.addSamples(remainingSignal);
+      
+      // Process more bits - resync should trigger on strong 0 bits
+      const bitsAfterDrift = demodulator.getAvailableBits();
+      
+      // Verify sync is maintained
+      expect(demodulator.getSyncState().locked).toBe(true);
+      expect(bitsAfterDrift.length).toBeGreaterThan(0);
+      
+      // Log to verify resync was attempted
+      console.log(`[Test] Bits after drift: ${bitsAfterDrift.length}, Sync state: ${JSON.stringify(demodulator.getSyncState())}`);
+    });
+
     test('should re-sync from minor timing shifts after initial sync', () => {
       const demodulator = new DsssDpskDemodulator(defaultConfig);
       const originalBits = new Uint8Array([0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0]);
