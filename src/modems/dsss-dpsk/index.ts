@@ -10,3 +10,5 @@ export * from './dsss-dpsk';
 
 // Frame processing functionality  
 export * from './framer';
+
+export * from './dsss-dpsk-demodulator';

@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { DsssDpskDemodulator } from '../../src/modems/dsss-dpsk/dsss-dpsk';
+import { DsssDpskDemodulator } from '../../src/modems/dsss-dpsk';
 import * as modem from '../../src/modems/dsss-dpsk/dsss-dpsk';
 import { DsssDpskFramer } from '../../src/modems/dsss-dpsk/framer';
 
