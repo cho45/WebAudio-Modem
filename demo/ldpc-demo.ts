@@ -286,6 +286,12 @@ async function runSimulation() {
             const progress = Math.round((chunksProcessed / numChunks) * 100);
             progressBar.style.width = `${progress}%`;
             progressBar.textContent = `${progress}%`;
+
+            // Update decoded image incrementally
+            if (chunksProcessed % 10 === 0 || chunksProcessed === numChunks) { // Update every 10 chunks or at the end
+                const reconstructedGrayscalePartial = reconstructImage(decodedMessageChunks);
+                drawImageFromGrayscale(decodedCanvas, reconstructedGrayscalePartial);
+            }
         }
 
         // --- 4. All chunks processed, finalize ---
