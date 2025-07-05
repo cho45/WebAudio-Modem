@@ -44,6 +44,10 @@
 		<canvas id="canvas-bits" width="600" height="100"></canvas>
 	</div>
 	<div class="section">
+		<h2>0. 入力ビット列（時系列） / 最初のnビット</h2>
+		<canvas id="canvas-bits-truncated" width="600" height="100"></canvas>
+	</div>
+	<div class="section">
 		<h2>1. DSSSチップ列（時系列）</h2>
 		<canvas id="canvas-chips" width="600" height="100"></canvas>
 		<canvas id="canvas-chips-spectrum" width="600" height="100"></canvas>
@@ -97,7 +101,7 @@
 			let max = yRange ? yRange[1] : Math.max(...arr);
 			if (min === max) { min -= 1; max += 1; }
 			ctx.beginPath();
-			if (canvas.id.includes('bits')) {
+			if (canvas.id.includes('bits') || canvas.id.includes('chips')) {
 				// 矩形波（ステップ状）で描画
 				for (let i = 0; i < N; i++) {
 					const x0 = i / N * w;
@@ -299,7 +303,7 @@
 				sampleRate: 48000, // サンプルレート（任意）
 				lowerBound: 100, // 下限周波数（Hz, 任意）
 				upperBound: 12000, // 上限周波数（Hz, 任意）
-				sequenceLength: 31, // DSSS拡散長
+				sequenceLength: 15, // DSSS拡散長
 			});
 			console.log('params:', params);
 			let { sequenceLength, samplesPerPhase, sampleRate, carrierFreq, bandwidth } = params;
@@ -371,16 +375,20 @@
 				console.log('Sync failed - using neutral LLRs');
 			}
 
+			const SHOW_BIT_LENGTH = 8;
+
 			// 入力ビット列
 			drawSignal(document.getElementById('canvas-bits'), bits, '#8e44ad', [0, 1]);
+			// 入力ビット列(truncated)
+			drawSignal(document.getElementById('canvas-bits-truncated'), bits.slice(0, SHOW_BIT_LENGTH), '#8e44ad', [0, 1]);
 			// DSSSチップ列
-			drawSignal(document.getElementById('canvas-chips'), chips, '#2c3e50', [-1, 1]);
+			drawSignal(document.getElementById('canvas-chips'), chips.slice(0, sequenceLength * SHOW_BIT_LENGTH), '#2c3e50', [-1, 1]);
 			drawSpectrum(document.getElementById('canvas-chips-spectrum'), chips);
 			// サンプル単位DPSK変調信号
-			drawSignal(document.getElementById('canvas-dpsk'), samples, '#16a085', [-1, 1]);
+			drawSignal(document.getElementById('canvas-dpsk'), samples.slice(0, samplesPerPhase * sequenceLength), '#16a085', [-1, 1]);
 			drawSpectrum(document.getElementById('canvas-dpsk-spectrum'), samples);
 			// AWGN付加後
-			drawSignal(document.getElementById('canvas-noisy'), noisySamples, '#e74c3c', [-1, 1]);
+			drawSignal(document.getElementById('canvas-noisy'), noisySamples.slice(0, samplesPerPhase * sequenceLength), '#e74c3c', [-2, 2]);
 			drawSpectrum(document.getElementById('canvas-noisy-spectrum'), noisySamples);
 			// ソフトバリュー (LLR)
 			drawHistogram(document.getElementById('hist-soft'), llr, 32, [-128, 127]);
@@ -445,7 +453,7 @@
  				sampleRate,
  				lowerBound: 100, // 下限周波数（Hz, 任意）
  				upperBound: 12000, // 上限周波数（Hz, 任意）
- 				sequenceLength: 31 // DSSS拡散長
+ 				sequenceLength: 15 // DSSS拡散長
  			});
  			const { sequenceLength, samplesPerPhase, carrierFreq, bandwidth } = params;
  
