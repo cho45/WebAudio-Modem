@@ -153,7 +153,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     } catch (error) {
       // Log detailed error but continue processing to maintain AudioWorklet stability
       console.error(`[DsssDpskProcessor:${this.instanceName}] FATAL Error in process() at call #${this.processCallCount}:`, error);
-      console.error(`[DsssDpskProcessor:${this.instanceName}] Error details: name=${error.name}, message=${error.message}, stack=${error.stack}`);
+      console.error(`[DsssDpskProcessor:${this.instanceName}] Error details: name=${(error as Error).name}, message=${(error as Error).message}, stack=${(error as Error).stack}`);
       return true;
     }
   }
@@ -253,7 +253,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
         
         // Debug: Log modulation progress (minimal)
         if (index === 0) {
-          this.log(`Started outputting ${samples.length} samples, first values: [${samples.slice(0,5).map(x=>x.toFixed(3)).join(',')}]`);
+          this.log(`Started outputting ${samples.length} samples, first values: [${Array.from(samples.slice(0,5)).map(x=>x.toFixed(3)).join(',')}]`);
         }
         if (this.pendingModulation.index >= samples.length) {
           this.log(`Completed outputting all samples`);
@@ -369,6 +369,11 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
           }
           this.resetAbortController();
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController!.signal });
+          // Clear receive buffer and reset demodulator after modulation to avoid self-reception
+          this.decodedDataBuffer = [];
+          this.demodulator.reset();
+          this.framer.reset();
+          this.log('Cleared receive buffer and reset demodulator/framer after modulation to prevent echo-back');
           result = { success: true };
           break;
           
@@ -562,8 +567,8 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       this.pendingModulation = { samples: combinedSamples, index: 0 };
       this.log(`[DsssDpskProcessor] ✓ pendingModulation set: ${!!this.pendingModulation}, samples length: ${this.pendingModulation.samples.length}`);
 
-      const promise = new Promise((resolve, reject) => {
-        this.modulationPromise = { resolve, reject };
+      const promise = new Promise<void>((resolve, reject) => {
+        this.modulationPromise = { resolve: () => resolve(), reject };
         this.log(`[DsssDpskProcessor] ✓ Promise created, waiting for AudioWorklet processing...`);
 
         options?.signal?.addEventListener('abort', () => {

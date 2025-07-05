@@ -186,6 +186,7 @@ export class XModemTransport extends BaseTransport {
   }
 
   async receiveData(options?: {signal?: AbortSignal}): Promise<Uint8Array> {
+    console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: receiveData started`);
     this.ensureIdle('receiveData');
     
     // Create operation controller for this receive operation
@@ -232,12 +233,15 @@ export class XModemTransport extends BaseTransport {
   }
 
   private async receiveAllPackets(externalSignal?: AbortSignal): Promise<Uint8Array[]> {
+    console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Starting receiveAllPackets`);
     fragment: for (;;) {
       this.checkAbort(externalSignal);
 
       try {
         // Read first byte to determine if it's EOT or SOH
+        console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Waiting for first byte (EOT or SOH)`);
         const firstByte = await this.waitForByte({ signal: this.createTimeoutSignal(externalSignal) });
+        console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Received first byte: ${firstByte} (EOT=${ControlType.EOT}, SOH=${ControlType.SOH})`);
         
         if (firstByte === ControlType.EOT) {
           console.log(`[XModemTransport:${this.config.name}] EOT Received byte: ${firstByte}`);
@@ -265,11 +269,17 @@ export class XModemTransport extends BaseTransport {
   }
 
   private async receiveAndProcessPacket(externalSignal?: AbortSignal): Promise<void> {
+    console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Starting receiveAndProcessPacket`);
+    
     // Read packet structure: seq, nseq, len
+    console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Waiting for 3 bytes (seq, nseq, len)`);
     const bytes = await this.waitForBytes(3, { signal: this.createTimeoutSignal(externalSignal) });
     const [seq, nseq, len] = [bytes[0], bytes[1], bytes[2]];
     
+    console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Received header bytes: seq=${seq}, nseq=${nseq}, len=${len}`);
+    
     if ((seq + nseq) !== 255) {
+      console.log(`[XModemTransport:${this.config.name}] 🔍 DEBUG: Invalid sequence number check failed: ${seq} + ${nseq} = ${seq + nseq} !== 255`);
       this.statistics.packetsDropped++;
       this.emit('error', new Event({ error: 'Invalid sequence number', seq, nseq }));
       throw new Error('Invalid sequence number');
