@@ -723,4 +723,202 @@ describe('DsssDpskDemodulator', () => {
       expect(bits2.length).toBeLessThanOrEqual(2); // 最大でも2ビット以下
     });
   });
+
+  describe('Amplitude Dependency Tests', () => {
+    // Helper function to generate signal with specific amplitude
+    const generateSignalWithAmplitude = (bits: Uint8Array, amplitude: number): Float32Array => {
+      const chips = modem.dsssSpread(bits, defaultConfig.sequenceLength, defaultConfig.seed);
+      const phases = modem.dpskModulate(chips);
+      const signal = modem.modulateCarrier(
+        phases,
+        defaultConfig.samplesPerPhase,
+        defaultConfig.sampleRate,
+        defaultConfig.carrierFreq
+      );
+      
+      // Scale signal by amplitude
+      const scaledSignal = new Float32Array(signal.length);
+      for (let i = 0; i < signal.length; i++) {
+        scaledSignal[i] = signal[i] * amplitude;
+      }
+      
+      return scaledSignal;
+    };
+
+    test('should sync and demodulate with micro amplitude (0.001)', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      const testBits = new Uint8Array([0, 1, 0, 1, 1, 0]);
+      
+      // Generate signal with very small amplitude (near quantization noise level)
+      const microSignal = generateSignalWithAmplitude(testBits, 0.001);
+      
+      demodulator.addSamples(microSignal);
+      
+      // Should still be able to sync despite micro amplitude
+      const bits = demodulator.getAvailableBits();
+      const state = demodulator.getSyncState();
+      
+      expect(state.locked).toBe(true);
+      expect(bits.length).toBe(testBits.length);
+      
+      // Verify correct demodulation
+      const demodulatedBits = new Uint8Array(bits.length);
+      for (let i = 0; i < bits.length; i++) {
+        demodulatedBits[i] = bits[i] >= 0 ? 0 : 1;
+      }
+      expect(demodulatedBits).toEqual(testBits);
+    });
+
+    test('should sync and demodulate with small amplitude (0.01)', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      const testBits = new Uint8Array([0, 1, 0, 1, 1, 0]); // プリアンブル要件：0から開始
+      
+      // Generate signal with small amplitude (practical minimum level)
+      const smallSignal = generateSignalWithAmplitude(testBits, 0.01);
+      
+      demodulator.addSamples(smallSignal);
+      
+      const bits = demodulator.getAvailableBits();
+      const state = demodulator.getSyncState();
+      
+      expect(state.locked).toBe(true);
+      expect(bits.length).toBe(testBits.length);
+      
+      // Verify correct demodulation
+      const demodulatedBits = new Uint8Array(bits.length);
+      for (let i = 0; i < bits.length; i++) {
+        demodulatedBits[i] = bits[i] >= 0 ? 0 : 1;
+      }
+      expect(demodulatedBits).toEqual(testBits);
+    });
+
+    test('should sync and demodulate with medium amplitude (0.1)', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      const testBits = new Uint8Array([0, 0, 1, 1, 0, 1]);
+      
+      // Generate signal with medium amplitude
+      const mediumSignal = generateSignalWithAmplitude(testBits, 0.1);
+      
+      demodulator.addSamples(mediumSignal);
+      
+      const bits = demodulator.getAvailableBits();
+      const state = demodulator.getSyncState();
+      
+      expect(state.locked).toBe(true);
+      expect(bits.length).toBe(testBits.length);
+      
+      // Verify correct demodulation
+      const demodulatedBits = new Uint8Array(bits.length);
+      for (let i = 0; i < bits.length; i++) {
+        demodulatedBits[i] = bits[i] >= 0 ? 0 : 1;
+      }
+      expect(demodulatedBits).toEqual(testBits);
+    });
+
+    test('should handle amplitude variation during transmission', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      const testBits = new Uint8Array([0, 1, 0, 1, 1, 0, 1, 0]);
+      
+      // Generate signal segments with different amplitudes
+      const segment1 = generateSignalWithAmplitude(testBits.slice(0, 3), 0.5);
+      const segment2 = generateSignalWithAmplitude(testBits.slice(3, 6), 0.1);
+      const segment3 = generateSignalWithAmplitude(testBits.slice(6, 8), 0.01);
+      
+      // Process segments sequentially (simulating amplitude variation)
+      demodulator.addSamples(segment1);
+      const bits1 = demodulator.getAvailableBits();
+      
+      demodulator.addSamples(segment2);
+      const bits2 = demodulator.getAvailableBits();
+      
+      demodulator.addSamples(segment3);
+      const bits3 = demodulator.getAvailableBits();
+      
+      // Should maintain sync throughout amplitude changes
+      const state = demodulator.getSyncState();
+      expect(state.locked).toBe(true);
+      
+      // Collect all bits
+      const allBits = new Int8Array(bits1.length + bits2.length + bits3.length);
+      allBits.set(bits1, 0);
+      allBits.set(bits2, bits1.length);
+      allBits.set(bits3, bits1.length + bits2.length);
+      
+      expect(allBits.length).toBe(testBits.length);
+      
+      // Verify correct demodulation across amplitude changes
+      const demodulatedBits = new Uint8Array(allBits.length);
+      for (let i = 0; i < allBits.length; i++) {
+        demodulatedBits[i] = allBits[i] >= 0 ? 0 : 1;
+      }
+      expect(demodulatedBits).toEqual(testBits);
+    });
+
+    test('should determine amplitude independence limits', () => {
+      const demodulator = new DsssDpskDemodulator(defaultConfig);
+      const testBits = new Uint8Array([0, 1, 0, 1]);
+      
+      // Test extremely small amplitude to find practical limits
+      const amplitudes = [1.0, 0.1, 0.01, 0.001, 0.0001];
+      const results: { amplitude: number; synced: boolean; bitsCorrect: boolean }[] = [];
+      
+      for (const amplitude of amplitudes) {
+        const testDemod = new DsssDpskDemodulator(defaultConfig);
+        const signal = generateSignalWithAmplitude(testBits, amplitude);
+        
+        testDemod.addSamples(signal);
+        const bits = testDemod.getAvailableBits();
+        const state = testDemod.getSyncState();
+        
+        const synced = state.locked;
+        let bitsCorrect = false;
+        
+        if (synced && bits.length === testBits.length) {
+          const demodulatedBits = new Uint8Array(bits.length);
+          for (let i = 0; i < bits.length; i++) {
+            demodulatedBits[i] = bits[i] >= 0 ? 0 : 1;
+          }
+          bitsCorrect = demodulatedBits.every((bit, idx) => bit === testBits[idx]);
+        }
+        
+        results.push({ amplitude, synced, bitsCorrect });
+      }
+      
+      // All reasonable amplitudes should work without AGC
+      const workingAmplitudes = results.filter(r => r.synced && r.bitsCorrect);
+      
+      // Should work down to at least 0.01 amplitude
+      const minimumWorkingAmplitude = Math.min(...workingAmplitudes.map(r => r.amplitude));
+      expect(minimumWorkingAmplitude).toBeLessThanOrEqual(0.01);
+      
+      // Log results for analysis
+      console.log('Amplitude independence test results:');
+      results.forEach(r => {
+        console.log(`  Amplitude ${r.amplitude}: sync=${r.synced}, correct=${r.bitsCorrect}`);
+      });
+    });
+
+    test('should maintain sync quality across different amplitude levels', () => {
+      const testBits = new Uint8Array([0, 1, 0, 1, 1, 0, 1, 0]);
+      const amplitudes = [1.0, 0.5, 0.1, 0.05, 0.01];
+      
+      for (const amplitude of amplitudes) {
+        const demodulator = new DsssDpskDemodulator(defaultConfig);
+        const signal = generateSignalWithAmplitude(testBits, amplitude);
+        
+        demodulator.addSamples(signal);
+        const bits = demodulator.getAvailableBits();
+        const state = demodulator.getSyncState();
+        
+        // Should maintain reasonable correlation quality
+        expect(state.locked).toBe(true);
+        expect(state.correlation).toBeGreaterThan(0.1); // Minimum acceptable correlation
+        expect(bits.length).toBe(testBits.length);
+        
+        // LLR values should remain meaningful (not near zero)
+        const avgLLRMagnitude = bits.reduce((sum, llr) => sum + Math.abs(llr), 0) / bits.length;
+        expect(avgLLRMagnitude).toBeGreaterThan(1); // Meaningful LLR values
+      }
+    });
+  });
 });
