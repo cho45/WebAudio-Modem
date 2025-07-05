@@ -991,5 +991,228 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       
       console.log(`=== End Load Level Analysis ===\n`);
     });
+
+    test('should handle cyclic signal processing without infinite loops', async () => {
+      console.log(`\n=== Cyclic Signal Processing Stability Test ===`);
+      
+      // 実際のフレームデータを構築
+      const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
+      const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
+      
+      const framer = new DsssDpskFramer();
+      const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
+      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      
+      const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
+      const phases = modem.dpskModulate(chips);
+      const fullSignal = modem.modulateCarrier(phases, 23, 44100, 10000);
+      
+      console.log(`Generated signal: ${fullSignal.length} samples (${(fullSignal.length / 44100 * 1000).toFixed(1)}ms)`);
+      
+      // Reset processor for clean test
+      await processor.reset();
+      
+      // Cyclic signal processing for extended duration
+      const testDurationIterations = 1000; // Significant duration to test stability
+      let sampleIndex = 0; // Global sample index for cycling
+      let iterationCount = 0;
+      let totalBitsReceived = 0;
+      let infiniteLoopDetected = false;
+      let successfulFrameDecodes = 0;
+      const processingTimes: number[] = [];
+      
+      console.log(`\n--- Processing Cyclic Signal for Stability (${testDurationIterations} iterations) ---`);
+      
+      // Track console.warn calls to detect iteration limit warnings
+      const originalWarn = console.warn;
+      let warningCount = 0;
+      console.warn = (...args: any[]) => {
+        if (args[0]?.includes?.('Processing hit iteration limit')) {
+          warningCount++;
+          infiniteLoopDetected = true;
+        }
+        originalWarn(...args);
+      };
+      
+      try {
+        while (iterationCount < testDurationIterations) {
+          const inputs = [[new Float32Array(128)]];
+          const outputs = [[new Float32Array(128)]];
+          
+          // Copy signal using cyclic indexing (this previously caused the infinite loop)
+          for (let j = 0; j < 128; j++) {
+            const signalIndex = sampleIndex % fullSignal.length;
+            inputs[0][0][j] = fullSignal[signalIndex];
+            sampleIndex++;
+          }
+          
+          const stateBefore = processor.framer.getState();
+          
+          const startTime = performance.now();
+          processor.process(inputs, outputs);
+          const endTime = performance.now();
+          
+          processingTimes.push(endTime - startTime);
+          
+          const stateAfter = processor.framer.getState();
+          const demodSyncAfter = processor.demodulator.getSyncState();
+          
+          // Track progress
+          const bitsDelta = stateAfter.processedBits - stateBefore.processedBits;
+          totalBitsReceived += bitsDelta;
+          
+          // Count successful frame transitions (indicating proper processing)
+          if (stateBefore.state !== stateAfter.state && (
+              stateAfter.state === 'SEARCHING_SYNC_WORD' ||
+              stateAfter.state === 'READING_HEADER' ||
+              stateAfter.state === 'READING_PAYLOAD'
+            )) {
+            successfulFrameDecodes++;
+          }
+          
+          if (iterationCount % 200 === 0) {
+            console.log(`Iteration ${iterationCount}: State=${stateAfter.state}, Bits=${totalBitsReceived}, Sync=${demodSyncAfter.locked}, Cycles=${Math.floor(sampleIndex / fullSignal.length)}`);
+          }
+          
+          iterationCount++;
+        }
+      } finally {
+        console.warn = originalWarn; // Restore original console.warn
+      }
+      
+      const finalState = processor.framer.getState();
+      const finalDemodSync = processor.demodulator.getSyncState();
+      const totalCycles = Math.floor(sampleIndex / fullSignal.length);
+      const avgProcessingTime = processingTimes.reduce((a, b) => a + b, 0) / processingTimes.length;
+      
+      console.log(`\n--- Stability Test Results ---`);
+      console.log(`Completed iterations: ${iterationCount}/${testDurationIterations}`);
+      console.log(`Total signal cycles: ${totalCycles}`);
+      console.log(`Total bits received: ${totalBitsReceived}`);
+      console.log(`Successful frame transitions: ${successfulFrameDecodes}`);
+      console.log(`Infinite loop warnings: ${warningCount}`);
+      console.log(`Average processing time: ${avgProcessingTime.toFixed(3)}ms`);
+      console.log(`Final state: ${finalState.state}`);
+      console.log(`Final demod sync: ${finalDemodSync.locked} (correlation: ${finalDemodSync.correlation.toFixed(3)})`);
+      
+      // Regression test assertions: Verify no infinite loops and proper operation
+      expect(infiniteLoopDetected).toBe(false); // Main regression test
+      expect(warningCount).toBe(0); // No iteration limit warnings
+      expect(iterationCount).toBe(testDurationIterations); // Completed all iterations
+      expect(totalBitsReceived).toBeGreaterThan(0); // Bits are being processed
+      expect(successfulFrameDecodes).toBeGreaterThan(0); // Frame processing is working
+      expect(avgProcessingTime).toBeLessThan(1.0); // Performance is reasonable (< 1ms avg)
+      expect(totalCycles).toBeGreaterThanOrEqual(1); // At least one full signal cycle
+      
+      console.log(`✅ Cyclic signal processing is stable - no infinite loops detected!`);
+      console.log(`=== End Stability Test ===\n`);
+    }, 20000);
+
+    test('should diagnose demodulator sync issues with controlled signal conditions', async () => {
+      console.log(`\n=== Demodulator Sync Diagnosis ===`);
+      
+      const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
+      const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
+      
+      // Test different signal conditions that might cause sync issues
+      const testConditions = [
+        {
+          name: 'Perfect signal',
+          modifier: (signal: Float32Array) => signal, // No modification
+          expectedSync: true
+        },
+        {
+          name: 'Low amplitude (0.1x)',
+          modifier: (signal: Float32Array) => {
+            const modified = new Float32Array(signal.length);
+            for (let i = 0; i < signal.length; i++) {
+              modified[i] = signal[i] * 0.1;
+            }
+            return modified;
+          },
+          expectedSync: false // Low amplitude might prevent sync
+        },
+        {
+          name: 'With noise (SNR ≈ 10dB)',
+          modifier: (signal: Float32Array) => {
+            const modified = new Float32Array(signal.length);
+            const noiseLevel = 0.3;
+            for (let i = 0; i < signal.length; i++) {
+              const noise = (Math.random() - 0.5) * noiseLevel;
+              modified[i] = signal[i] + noise;
+            }
+            return modified;
+          },
+          expectedSync: false // Noise might prevent sync
+        },
+        {
+          name: 'Frequency offset (+100Hz)',
+          modifier: (signal: Float32Array) => {
+            const modified = new Float32Array(signal.length);
+            const offsetFreq = 100; // Hz offset
+            for (let i = 0; i < signal.length; i++) {
+              const t = i / 44100;
+              const offset = Math.cos(2 * Math.PI * offsetFreq * t);
+              modified[i] = signal[i] * offset;
+            }
+            return modified;
+          },
+          expectedSync: false // Frequency offset should prevent sync
+        }
+      ];
+      
+      // Generate reference signal
+      const framer = new DsssDpskFramer();
+      const testData = new Uint8Array([0x42]); // Simple test data
+      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
+      const phases = modem.dpskModulate(chips);
+      const baseSignal = modem.modulateCarrier(phases, 23, 44100, 10000);
+      
+      console.log(`Base signal: ${baseSignal.length} samples`);
+      
+      for (const condition of testConditions) {
+        console.log(`\n--- Testing: ${condition.name} ---`);
+        
+        await processor.reset();
+        const testSignal = condition.modifier(baseSignal);
+        
+        // Process signal and monitor sync
+        let sampleIndex = 0;
+        let syncAchieved = false;
+        let maxCorrelation = 0;
+        let bitsReceived = 0;
+        
+        while (sampleIndex < testSignal.length) {
+          const inputs = [[new Float32Array(128)]];
+          const outputs = [[new Float32Array(128)]];
+          
+          for (let j = 0; j < 128 && sampleIndex < testSignal.length; j++) {
+            inputs[0][0][j] = testSignal[sampleIndex++];
+          }
+          
+          const stateBefore = processor.framer.getState();
+          processor.process(inputs, outputs);
+          const stateAfter = processor.framer.getState();
+          
+          const syncState = processor.demodulator.getSyncState();
+          if (syncState.locked) syncAchieved = true;
+          maxCorrelation = Math.max(maxCorrelation, syncState.correlation);
+          bitsReceived += (stateAfter.processedBits - stateBefore.processedBits);
+        }
+        
+        console.log(`  Sync achieved: ${syncAchieved} (expected: ${condition.expectedSync})`);
+        console.log(`  Max correlation: ${maxCorrelation.toFixed(3)}`);
+        console.log(`  Bits received: ${bitsReceived}`);
+        console.log(`  Final framer state: ${processor.framer.getState().state}`);
+        
+        // This helps us understand which signal conditions cause the issue
+        if (!syncAchieved && bitsReceived === 0) {
+          console.log(`  🔍 This condition reproduces the demo issue!`);
+        }
+      }
+      
+      console.log(`=== End Demodulator Sync Diagnosis ===\n`);
+    }, 20000);
   });
 });

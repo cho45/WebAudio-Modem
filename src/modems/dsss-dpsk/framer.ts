@@ -305,15 +305,24 @@ export class DsssDpskFramer {
     this.softBitBuffer.writeArray(softBits);
     this.processedBitsCount += softBits.length;
 
-    // Main processing loop with safety limit
-    const maxIterations = this.softBitBuffer.length * 2; // 最大でバッファサイズの2倍まで
+    // Main processing loop with enhanced safety mechanisms
+    const maxIterations = Math.max(this.softBitBuffer.length * 2, 64); // 最小64回は保証
     let iterations = 0;
+    let consecutiveNoProgressIterations = 0; // 連続して進歩のない反復をカウント
     
     // eslint-disable-next-line no-constant-condition
     while (true) {
       iterations++;
+      
+      // 早期終了条件1: 反復制限
       if (iterations > maxIterations) {
         console.warn(`[DsssDpskFramer] Processing hit iteration limit (${maxIterations}), breaking. State: ${FramerState[this.state]}, Buffer length: ${this.softBitBuffer.length}`);
+        break;
+      }
+      
+      // 早期終了条件2: 空バッファでのSEARCHING_PREAMBLE状態
+      if (this.state === FramerState.SEARCHING_PREAMBLE && this.softBitBuffer.length === 0) {
+        // console.log(`[DsssDpskFramer] Early exit: Empty buffer in SEARCHING_PREAMBLE state`);
         break;
       }
       
@@ -329,14 +338,26 @@ export class DsssDpskFramer {
         break;
       }
 
-      // If no progress was made (buffer length is the same and no frames decoded),
-      // and the state handler returned 'return', then we need more data.
-      // Break the loop to wait for more input.
-      if (processResult === 'return' && this.softBitBuffer.length === initialBufferLength && decodedFrames.length === 0) {
-          break;
+      // 進歩の検出: バッファサイズの変化またはフレーム復号をチェック
+      const progressMade = (this.softBitBuffer.length !== initialBufferLength) || (decodedFrames.length > 0);
+      
+      if (progressMade) {
+        consecutiveNoProgressIterations = 0; // 進歩があったのでリセット
+      } else {
+        consecutiveNoProgressIterations++;
       }
-      // If progress was made (buffer consumed or frame decoded) or result is 'continue',
-      // continue the loop to process more.
+      
+      // 早期終了条件3: 連続で進歩がない場合
+      if (consecutiveNoProgressIterations >= 10) {
+        // console.log(`[DsssDpskFramer] Early exit: No progress for ${consecutiveNoProgressIterations} iterations`);
+        break;
+      }
+
+      // 標準の終了条件: データ待ち
+      if (processResult === 'return' && !progressMade) {
+        break;
+      }
+      // If progress was made or result is 'continue', continue the loop to process more.
     }
     return decodedFrames;
   }
