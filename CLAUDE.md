@@ -251,6 +251,34 @@ The `docs/` directory contains detailed design documents:
 - **XModemTransport**: Protocol changes must maintain backward compatibility
 - **IModulator/ITransport**: Interface changes affect all implementations
 
+## Known Issues and Solutions
+
+### AudioWorklet Processing Considerations
+#### Infinite Loop Prevention in Framer
+**Issue**: DSSS-DPSK framer can enter infinite loop when processing empty buffer in SEARCHING_PREAMBLE state
+**Solution**: Implemented in `src/modems/dsss-dpsk/framer.ts`:
+- Early exit condition for empty buffer: `if (this.state === FramerState.SEARCHING_PREAMBLE && this.softBitBuffer.length === 0) break;`
+- Progress tracking to prevent infinite iterations
+- Maximum iteration limit with warning logging
+
+#### Echo-back Prevention in Half-Duplex Communication
+**Issue**: In loopback testing, transmitted signals can be demodulated by the receiver, causing incorrect data reception
+**Symptoms**: XModem receiver gets NAK (21) and zeros instead of expected SOH (1) byte
+**Solution**: Clear receive buffers after modulation completes:
+```typescript
+// In FSK and DSSS-DPSK processors, after modulation:
+this.demodulatedBuffer.clear();  // FSK
+this.decodedDataBuffer = [];      // DSSS-DPSK
+this.demodulator.reset();         // DSSS-DPSK
+this.framer.reset();              // DSSS-DPSK
+```
+
+### Real-time Processing Constraints
+**AudioWorklet constraint**: Process must complete within 2.9ms (128 samples at 44.1kHz)
+- Limit demodulation iterations per process() call
+- Use efficient buffer management
+- Avoid excessive logging in process() method
+
 ## Future Extensibility
 
 The architecture supports future modulation schemes:

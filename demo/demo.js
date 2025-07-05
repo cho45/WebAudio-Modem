@@ -55,10 +55,10 @@ const app = createApp({
     
     // DSSS-DPSK設定
     const dsssDpskConfig = reactive({
-      sequenceLength: 31,
+      sequenceLength: 15,
       seed: 21,
-      samplesPerPhase: 23,
-      carrierFreq: 10000,
+      samplesPerPhase: 26,
+      carrierFreq: 8000,
       correlationThreshold: 0.5,
       peakToNoiseRatio: 4
     });
