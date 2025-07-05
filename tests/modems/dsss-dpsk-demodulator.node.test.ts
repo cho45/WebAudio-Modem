@@ -236,13 +236,13 @@ describe('DsssDpskDemodulator', () => {
       }
 
       // Process extra samples to flush any remaining bits
-      console.log(`[Test] Before extra samples: totalBitsReceived=${totalBitsReceived}`);
+      // console.log(`[Test] Before extra samples: totalBitsReceived=${totalBitsReceived}`);
       demodulator.addSamples(extraSamples);
       const finalBits = demodulator.getAvailableBits();
-      console.log(`[Test] After extra samples: got ${finalBits.length} more bits`);
+      // console.log(`[Test] After extra samples: got ${finalBits.length} more bits`);
       totalBitsReceived += finalBits.length;
 
-      console.log(`[Test] Total bits received: ${totalBitsReceived}, expected: ${originalBits.length}`);
+      // console.log(`[Test] Total bits received: ${totalBitsReceived}, expected: ${originalBits.length}`);
 
       // Should have received all bits
       expect(totalBitsReceived).toBe(originalBits.length);
@@ -293,7 +293,7 @@ describe('DsssDpskDemodulator', () => {
       // 現在の実装では、weak bitだけでは同期を失わない
       // このテストは期待される動作を反映するように修正
       // 完全に異なる周波数の信号でも、同期を維持する可能性がある
-      console.log(`[Sync Loss Test] Final sync state: locked=${state.locked}`);
+      // console.log(`[Sync Loss Test] Final sync state: locked=${state.locked}`);
 
       // このテストはスキップ（現在の実装の仕様として）
       // expect(state.locked).toBe(false);
@@ -342,7 +342,7 @@ describe('DsssDpskDemodulator', () => {
       expect(bitsAfterDrift.length).toBeGreaterThan(0);
       
       // Log to verify resync was attempted
-      console.log(`[Test] Bits after drift: ${bitsAfterDrift.length}, Sync state: ${JSON.stringify(demodulator.getSyncState())}`);
+      // console.log(`[Test] Bits after drift: ${bitsAfterDrift.length}, Sync state: ${JSON.stringify(demodulator.getSyncState())}`);
     });
 
     test('should re-sync from minor timing shifts after initial sync', () => {
@@ -360,13 +360,13 @@ describe('DsssDpskDemodulator', () => {
       demodulator.getAvailableBits(); // Trigger sync
       expect(demodulator.getSyncState().locked).toBe(true);
       const initialOffset = demodulator['syncState'].sampleOffset;
-      console.log(`[Test] Initial sync offset: ${initialOffset}`);
+      // console.log(`[Test] Initial sync offset: ${initialOffset}`);
 
       // Introduce a small timing shift (e.g., half a chip duration)
       const shiftSamples = Math.floor(defaultConfig.samplesPerPhase / 2);
       const shiftedSignal = new Float32Array(initialSignal.length + shiftSamples);
       shiftedSignal.set(initialSignal, shiftSamples); // Shift signal forward
-      console.log(`[Test] Introducing shift of ${shiftSamples} samples.`);
+      // console.log(`[Test] Introducing shift of ${shiftSamples} samples.`);
 
       // Add shifted signal and process
       demodulator.addSamples(shiftedSignal);
@@ -427,16 +427,16 @@ describe('DsssDpskDemodulator', () => {
         
         // If no bits are being produced for several iterations, break
         if (iterations > 20 && bitsProcessed === 0) {
-          console.log(`[Test] Breaking: No bits produced after ${iterations} iterations`);
+          // console.log(`[Test] Breaking: No bits produced after ${iterations} iterations`);
           break;
         }
         
         syncState = demodulator.getSyncState();
       }
       
-      console.log(`[Test] Final state: locked=${syncState.locked}, bitsProcessed=${bitsProcessed}, iterations=${iterations}`);
+      // console.log(`[Test] Final state: locked=${syncState.locked}, bitsProcessed=${bitsProcessed}, iterations=${iterations}`);
       expect(syncState.locked).toBe(false);
-      expect(demodulator['syncState'].bits.consecutiveWeakCount).toBeGreaterThanOrEqual(3);
+      expect(demodulator['syncState'].quality.consecutiveWeakCount).toBeGreaterThanOrEqual(3);
     });
 
     test('should maintain sync with consecutive weak bits when targetBits is set', () => {
@@ -488,7 +488,7 @@ describe('DsssDpskDemodulator', () => {
 
       // After targetBits are processed, sync should eventually be lost due to weak bits
       expect(syncState.locked).toBe(false);
-      expect(demodulator['syncState'].bits.processedCount).toBeGreaterThanOrEqual(targetBitsCount);
+      expect(demodulator['syncState'].processing.processedCount).toBeGreaterThanOrEqual(targetBitsCount);
     });
 
     test.skip('should lose sync on demodulation processing error (e.g., chip length mismatch)', () => {
@@ -501,7 +501,7 @@ describe('DsssDpskDemodulator', () => {
 
   describe('Integration with Framer', () => {
     test('should produce bits compatible with DsssDpskFramer', () => {
-      console.log('[Framer Test] Starting integration test with DsssDpskFramer');
+      // console.log('[Framer Test] Starting integration test with DsssDpskFramer');
       const demodulator = new DsssDpskDemodulator(defaultConfig);
       const framer = new DsssDpskFramer();
 
@@ -526,7 +526,7 @@ describe('DsssDpskDemodulator', () => {
         // ビットが出てきたら収集（ノイズからは出ないはず）
         const bits = demodulator.getAvailableBits();
         if (bits.length > 0) {
-          console.log(`[Framer Test] Unexpected bits from noise: ${bits.length}`);
+          // console.log(`[Framer Test] Unexpected bits from noise: ${bits.length}`);
         }
 
         noiseProcessed += CHUNK_SIZE;
@@ -541,9 +541,9 @@ describe('DsssDpskDemodulator', () => {
           ldpcNType: 0
         };
 
-        console.log(`[Framer Test] Building frame with data: ${Array.from(testData)}`);
+        // console.log(`[Framer Test] Building frame with data: ${Array.from(testData)}`);
         const dataFrame = framer.build(testData, frameOptions);
-        console.log(`[Framer Test] Built frame with ${dataFrame.bits.length} bits`);
+        // console.log(`[Framer Test] Built frame with ${dataFrame.bits.length} bits`);
         sentBits.push([...dataFrame.bits]);
 
         // Modulate the frame
@@ -556,7 +556,7 @@ describe('DsssDpskDemodulator', () => {
           defaultConfig.carrierFreq
         );
 
-        console.log(`[Framer Test] Generated signal with ${signal.length} samples`);
+        // console.log(`[Framer Test] Generated signal with ${signal.length} samples`);
 
         // 信号を128サンプルずつ処理
         let processedSamples = 0;
@@ -575,7 +575,7 @@ describe('DsssDpskDemodulator', () => {
           // 利用可能なビットを取得
           const bits = demodulator.getAvailableBits();
           if (bits.length > 0) {
-            console.log(`[Framer Test][${i}] Got ${bits.length} bits at chunk ${Math.floor(processedSamples / CHUNK_SIZE)}`);
+            // console.log(`[Framer Test][${i}] Got ${bits.length} bits at chunk ${Math.floor(processedSamples / CHUNK_SIZE)}`);
             for (const bit of bits) {
               collectedBits.push(bit);
             }
@@ -595,9 +595,9 @@ describe('DsssDpskDemodulator', () => {
           demodulator.addSamples(extraChunk);
           const bits = demodulator.getAvailableBits();
 
-          console.log(`[Framer Test] Sync state after chunk: ${JSON.stringify(demodulator.getSyncState())}`);
+          // console.log(`[Framer Test] Sync state after chunk: ${JSON.stringify(demodulator.getSyncState())}`);
           if (bits.length > 0) {
-            console.log(`[Framer Test] Got ${bits.length} more bits from gap chunk ${i}`);
+            // console.log(`[Framer Test] Got ${bits.length} more bits from gap chunk ${i}`);
             for (const bit of bits) {
               collectedBits.push(bit);
             }
@@ -618,7 +618,7 @@ describe('DsssDpskDemodulator', () => {
         const bits = demodulator.getAvailableBits();
 
         if (bits.length > 0) {
-          console.log(`[Framer Test] Got ${bits.length} more bits from extra chunk ${i}`);
+          // console.log(`[Framer Test] Got ${bits.length} more bits from extra chunk ${i}`);
           for (const bit of bits) {
             collectedBits.push(bit);
           }
@@ -627,8 +627,8 @@ describe('DsssDpskDemodulator', () => {
 
       const totalSentBits = sentBits.reduce((acc, bits) => acc + bits.length, 0);
 
-      console.log(`[Framer Test] Total collected bits: ${collectedBits.length}, expected: ${totalSentBits}`);
-      console.log(`[Framer Test] Collected bits: ${collectedBits.slice(0, 20).join(', ')}...`);
+      // console.log(`[Framer Test] Total collected bits: ${collectedBits.length}, expected: ${totalSentBits}`);
+      // console.log(`[Framer Test] Collected bits: ${collectedBits.slice(0, 20).join(', ')}...`);
 
       expect(collectedBits.length).toBeGreaterThanOrEqual(totalSentBits);
 
@@ -639,15 +639,15 @@ describe('DsssDpskDemodulator', () => {
 
       // LLR配列に変換
       const llrBits = new Int8Array(collectedBits);
-      console.log(`llrBits length: ${llrBits.map(b => b > 0 ? 0 : 1).join('')}`);
+      // console.log(`llrBits length: ${llrBits.map(b => b > 0 ? 0 : 1).join('')}`);
 
       // Framerに渡す
       const decodedFrames = framer.process(llrBits);
-      console.log(`[Framer Test] Framer decoded ${decodedFrames.length} frames`);
+      // console.log(`[Framer Test] Framer decoded ${decodedFrames.length} frames`);
 
       // デバッグ: Framerの状態を確認
       const framerState = framer.getState();
-      console.log(`[Framer Test] Framer state: ${framerState.state}, buffer: ${framerState.bufferLength}`);
+      // console.log(`[Framer Test] Framer state: ${framerState.state}, buffer: ${framerState.bufferLength}`);
 
       // Should decode at least one frame
       expect(decodedFrames.length).toBe(FRAME_COUNT);

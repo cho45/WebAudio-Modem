@@ -460,7 +460,7 @@ function decimatedMatchedFilter(
   // console.log(`[MatchedFilter DEBUG] Search: refLength=${refLength}, searchLength=${searchLength}`);
   
   if (searchLength <= 0) {
-    console.log(`[MatchedFilter DEBUG] SearchLength <= 0, returning empty result`);
+    // console.log(`[MatchedFilter DEBUG] SearchLength <= 0, returning empty result`);
     return {
       correlations: new Float32Array(0),
       sampleOffsets: []
@@ -617,11 +617,11 @@ export function findSyncOffset(
   const maxSampleOffset = maxChipOffset * samplesPerPhase;
   const minSamplesNeeded = referenceSamples.length;
   
-  console.log(`[FindSync DEBUG] Input: received=${receivedSamples.length}, reference=${referenceSamples.length}, maxChipOffset=${maxChipOffset}`);
+  // console.log(`[FindSync DEBUG] Input: received=${receivedSamples.length}, reference=${referenceSamples.length}, maxChipOffset=${maxChipOffset}`);
   // console.log(`[FindSync DEBUG] Calculated: maxSampleOffset=${maxSampleOffset}, minSamplesNeeded=${minSamplesNeeded}`);
   
   if (receivedSamples.length < minSamplesNeeded) {
-    console.log(`[FindSync DEBUG] Insufficient samples: ${receivedSamples.length} < ${minSamplesNeeded}`);
+    // console.log(`[FindSync DEBUG] Insufficient samples: ${receivedSamples.length} < ${minSamplesNeeded}`);
     return {
       bestSampleOffset: -1,
       bestChipOffset: -1,
