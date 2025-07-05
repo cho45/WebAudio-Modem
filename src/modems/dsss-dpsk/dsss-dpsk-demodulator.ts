@@ -131,6 +131,9 @@ export class DsssDpskDemodulator {
     this.reference = generateSyncReference(this.config.sequenceLength, this.config.seed);
     this.samplesPerBit = this.config.sequenceLength * this.config.samplesPerPhase;
     
+    // Debug: Log the M-sequence reference used for sync
+    // console.log(`[DsssDpskDemodulator] RECEIVE M-sequence reference (len=${this.config.sequenceLength}, seed=${this.config.seed}): first 8 chips=[${Array.from(this.reference.slice(0, 8)).join(',')}]`);
+    
     // バッファサイズは十分なサイズを確保（同期検索＋複数ビット分）
     const bufferSize = Math.floor(this.samplesPerBit * CONSTANTS.BUFFER.SAMPLE_BUFFER_BITS);
     this.sampleBuffer = new Float32Array(bufferSize);
@@ -247,7 +250,6 @@ export class DsssDpskDemodulator {
   }
   
   private _trySync(): boolean {
-    debugLog(`[DsssDpskDemodulator] Attempting sync...`);
     // 同期検索に必要なサンプル数がバッファにあるか確認
     const minSamplesNeeded = Math.floor(this.samplesPerBit * 1.5);
     const availableCount = this._getAvailableSampleCount();
@@ -279,14 +281,15 @@ export class DsssDpskDemodulator {
     );
 
     if (result.isFound) {
-      debugLog(`[DsssDpskDemodulator] Sync found! offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation}`);
       this.syncState.synchronization.isLocked = true;
       // result.bestSampleOffset is relative to the `searchSamples` array, which starts at `this.sampleReadIndex`.
       // So, we consume `result.bestSampleOffset` samples to align the buffer.
+      
       this._consumeSamples(result.bestSampleOffset);
       this.syncState.synchronization.sampleOffset = this.sampleReadIndex; // Update to the new absolute read index
       this.syncState.synchronization.correlation = result.peakCorrelation;
       this.syncState.quality.resyncCounter = 0; // Reset resync counter on successful sync
+      
       return true;
     } else {
       // If sync not found, consume a small portion to advance and try again
@@ -305,6 +308,8 @@ export class DsssDpskDemodulator {
     
     // 1ビット分のサンプルを取得
     const bitSamples = this._peekSamples(this.samplesPerBit);
+    
+    // Debug logging removed for production
     
     // デモジュレーションとデスプレッドを実行
     const llr = this._demodulateAndDespread(bitSamples);
@@ -342,6 +347,12 @@ export class DsssDpskDemodulator {
       // DPSK復調
       const chipLlrs = dpskDemodulate(phases);
       
+      // Debug: 復調チェーンの各ステップを記録（最初の数ビットのみ）
+      // if (this.syncState.processing.processedCount < 8) {
+      //   console.log(`[DsssDpskDemodulator] Demod chain bit${this.syncState.processing.processedCount}: phases.length=${phases.length}, first8phases=[${Array.from(phases.slice(0,8)).map(x=>x.toFixed(2)).join(',')}]`);
+      //   console.log(`[DsssDpskDemodulator] DPSK result bit${this.syncState.processing.processedCount}: chipLlrs.length=${chipLlrs.length}, first8chips=[${Array.from(chipLlrs.slice(0,8)).map(x=>x.toFixed(1)).join(',')}]`);
+      // }
+      
       // パディング調整
       const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
       if (!adjustedChipLlrs) {
@@ -357,7 +368,9 @@ export class DsssDpskDemodulator {
       if (llrs && llrs.length > 0) {
         // LLRを量子化してInt8に変換
         const llr = Math.max(-127, Math.min(127, Math.round(llrs[0])));
-        debugLog(`[DsssDpskDemodulator] _demodulateAndDespread: LLR=${llr}`);
+        // if (this.syncState.processing.processedCount < 8) {
+        //   console.log(`[DsssDpskDemodulator] DESPREAD result bit${this.syncState.processing.processedCount}: chipLLRs=[${Array.from(adjustedChipLlrs.slice(0,8)).map(x=>x.toFixed(1)).join(',')}] → bitLLR=${llr}`);
+        // }
         return llr;
       } else {
         debugLog(`[DsssDpskDemodulator] Despread failed`);

@@ -34,7 +34,7 @@ const LDPC_N_TYPE_SHIFT = 1;        // LDPC Nタイプのシフト量
 
 // 相関閾値（LLRスケール基準）
 const PREAMBLE_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
-const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
+const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.6; // 実際の相関値508に基づいて調整
 
 // ビット操作最適化ユーティリティ
 const BIT_MANIPULATION = {
@@ -288,6 +288,9 @@ export class DsssDpskFramer {
     // ペイロード設定
     bits.set(payload, offset);
 
+    // Debug: 構築されたフレームのログ出力
+    // console.log(`[Framer] Frame built: preamble=[${Array.from(bits.slice(0,4)).join(',')}], syncWord=[${Array.from(bits.slice(4,12)).join(',')}], header=[${Array.from(bits.slice(12,20)).join(',')}]`);
+    
     // 新しいDataFrameクラスを返す（メモリ効率向上）
     return new DataFrame(bits, headerByte);
   }
@@ -545,6 +548,12 @@ export class DsssDpskFramer {
       }
     }
     this.lastCorrelationValue = correlation; // 状態管理用に保存
+    
+    // Debug: 同期ワード検出時のログ（簡略版）
+    // if (pattern.length === 8 && pattern[0] === 1 && correlation > this.syncWordCorrelationThreshold) {
+    //   console.log(`[Framer] Sync word detected: correlation=${correlation.toFixed(1)}, threshold=${this.syncWordCorrelationThreshold.toFixed(1)}`);
+    // }
+    
     return correlation;
   }
 

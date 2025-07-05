@@ -64,7 +64,7 @@ const app = createApp({
     });
     
     const xmodemConfig = reactive({
-      timeoutMs: 5000,
+      timeoutMs: 15000, // 理論8.6秒+マージンで15秒
       maxRetries: 3,
       maxPayloadSize: 255
     });
@@ -421,8 +421,9 @@ const app = createApp({
       }
       
       // XModem設定をTransportに適用
-      await senderTransport.value.configure({ ...toRaw(xmodemConfig), name: 'sender', timeoutMs: xmodemConfig.timeoutMs * xmodemConfig.maxRetries });
-      logSend(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
+      const senderTimeout = xmodemConfig.timeoutMs * xmodemConfig.maxRetries;
+      await senderTransport.value.configure({ ...toRaw(xmodemConfig), name: 'sender', timeoutMs: senderTimeout });
+      logSend(`XModem configured: timeout=${senderTimeout}ms (base=${xmodemConfig.timeoutMs}ms), maxRetries=${xmodemConfig.maxRetries}`);
     };
     
     // Receiver transport準備
@@ -442,8 +443,9 @@ const app = createApp({
       }
       
       // XModem設定をTransportに適用
-      await receiverTransport.value.configure({...toRaw(xmodemConfig), name: 'receiver'});
-      logReceive(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
+      const receiverTimeout = xmodemConfig.timeoutMs * xmodemConfig.maxRetries;
+      await receiverTransport.value.configure({...toRaw(xmodemConfig), name: 'receiver', timeoutMs: receiverTimeout});
+      logReceive(`XModem configured: timeout=${receiverTimeout}ms (base=${xmodemConfig.timeoutMs}ms), maxRetries=${xmodemConfig.maxRetries}`);
     };
     
     // 相互接続設定

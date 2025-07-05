@@ -797,5 +797,199 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       // Should complete 1 second of continuous processing
       expect(processed).toBeGreaterThanOrEqual(totalSamples);
     });
+
+    test('should measure process() performance with real DSSS-DPSK frames', async () => {
+      // リアルタイム制約: 128samples@44.1kHz ≈ 2.9ms
+      const REALTIME_CONSTRAINT_MS = (128 / 44100) * 1000; // ≈2.9ms
+      
+      console.log(`\n=== Real DSSS-DPSK Frame Performance Measurement ===`);
+      console.log(`Target: 128 samples per ${REALTIME_CONSTRAINT_MS.toFixed(2)}ms (realtime constraint)`);
+      
+      // 実際のフレームデータを構築
+      const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
+      const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
+      
+      const framer = new DsssDpskFramer();
+      const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
+      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      
+      const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
+      const phases = modem.dpskModulate(chips);
+      const fullSignal = modem.modulateCarrier(phases, 23, 44100, 10000);
+      
+      console.log(`Generated real frame: ${dataFrame.bits.length} bits, ${chips.length} chips, ${fullSignal.length} samples`);
+      console.log(`Frame duration: ${(fullSignal.length / 44100 * 1000).toFixed(1)}ms`);
+      
+      // 継続的な処理時間の測定 (10秒間)
+      const testDurationMs = 10000; // 10秒
+      const totalSamples = Math.floor(testDurationMs * 44100 / 1000);
+      const iterations = Math.ceil(totalSamples / 128);
+      
+      console.log(`Testing ${testDurationMs}ms of continuous processing (${iterations} iterations)`);
+      
+      const processingTimes: number[] = [];
+      let sampleIndex = 0;
+      
+      for (let i = 0; i < iterations; i++) {
+        const inputs = [[new Float32Array(128)]];
+        const outputs = [[new Float32Array(128)]];
+        
+        // 実際のフレーム信号を循環使用
+        for (let j = 0; j < 128; j++) {
+          const signalIndex = sampleIndex % fullSignal.length;
+          inputs[0][0][j] = fullSignal[signalIndex];
+          sampleIndex++;
+        }
+        
+        const startTime = performance.now();
+        const result = processor.process(inputs, outputs);
+        const endTime = performance.now();
+        
+        const processingTime = endTime - startTime;
+        processingTimes.push(processingTime);
+        
+        expect(result).toBe(true);
+      }
+      
+      // 統計分析
+      processingTimes.sort((a, b) => a - b);
+      const avgTime = processingTimes.reduce((a, b) => a + b) / iterations;
+      const minTime = processingTimes[0];
+      const maxTime = processingTimes[iterations - 1];
+      const p95Time = processingTimes[Math.floor(iterations * 0.95)];
+      const p99Time = processingTimes[Math.floor(iterations * 0.99)];
+      
+      console.log(`\n--- Real Frame Performance Statistics (${iterations} iterations) ---`);
+      console.log(`Average: ${avgTime.toFixed(3)}ms`);
+      console.log(`Minimum: ${minTime.toFixed(3)}ms`);
+      console.log(`Maximum: ${maxTime.toFixed(3)}ms`);
+      console.log(`95th percentile: ${p95Time.toFixed(3)}ms`);
+      console.log(`99th percentile: ${p99Time.toFixed(3)}ms`);
+      console.log(`Realtime constraint: ${REALTIME_CONSTRAINT_MS.toFixed(2)}ms`);
+      
+      // リアルタイム制約分析
+      const exceedsConstraint = processingTimes.filter(t => t > REALTIME_CONSTRAINT_MS);
+      const exceedsPercentage = (exceedsConstraint.length / iterations) * 100;
+      
+      console.log(`\n--- Realtime Constraint Analysis (Real Signal) ---`);
+      console.log(`Samples exceeding constraint: ${exceedsConstraint.length}/${iterations} (${exceedsPercentage.toFixed(2)}%)`);
+      
+      if (exceedsConstraint.length > 0) {
+        console.log(`Worst violations: ${exceedsConstraint.slice(-5).map(t => t.toFixed(3)).join(', ')}ms`);
+      }
+      
+      // 実際の処理負荷の分析
+      const highLoadSamples = processingTimes.filter(t => t > avgTime * 2);
+      console.log(`High load samples (>2x avg): ${highLoadSamples.length}/${iterations} (${(highLoadSamples.length/iterations*100).toFixed(1)}%)`);
+      
+      // Performance assertions - 実際のフレーム処理用に調整
+      expect(avgTime).toBeLessThan(REALTIME_CONSTRAINT_MS); // 平均は制約内
+      expect(p95Time).toBeLessThan(REALTIME_CONSTRAINT_MS * 1.5); // 95%は1.5倍以内
+      
+      if (exceedsPercentage > 5) {
+        console.warn(`⚠️  WARNING: ${exceedsPercentage.toFixed(1)}% of samples exceed realtime constraint`);
+        console.warn(`Real DSSS-DPSK processing may cause audio dropouts`);
+      } else {
+        console.log(`✅ Real frame processing acceptable: ${(100 - exceedsPercentage).toFixed(1)}% within constraint`);
+      }
+      
+      console.log(`=== End Real Frame Performance Measurement ===\n`);
+    }, 15000); // 15秒のタイムアウト
+
+    test('should measure process() performance with different load levels', async () => {
+      const REALTIME_CONSTRAINT_MS = (128 / 44100) * 1000; 
+      const iterations = 500;
+      
+      console.log(`\n=== Process Load Level Performance Analysis ===`);
+      
+      const loadTests = [
+        {
+          name: 'Empty Processing (baseline)',
+          setup: () => {
+            // No special setup, just empty inputs
+            const inputs = [[new Float32Array(128)]];
+            const outputs = [[new Float32Array(128)]];
+            return { inputs, outputs };
+          }
+        },
+        {
+          name: 'Signal Processing (carrier + DPSK)',
+          setup: () => {
+            const inputs = [[new Float32Array(128)]];
+            const outputs = [[new Float32Array(128)]];
+            
+            // Generate realistic modulated signal
+            for (let i = 0; i < 128; i++) {
+              inputs[0][0][i] = Math.sin(2 * Math.PI * 10000 * i / 44100) * 0.7;
+            }
+            return { inputs, outputs };
+          }
+        },
+        {
+          name: 'Full Load (demod + framing)',
+          setup: async () => {
+            // Add some data to framer to trigger full processing
+            processor.framer.process(new Int8Array([100, 100, 100, 100])); // Strong bits
+            
+            const inputs = [[new Float32Array(128)]];
+            const outputs = [[new Float32Array(128)]];
+            
+            // Complex signal with multiple frequency components
+            for (let i = 0; i < 128; i++) {
+              const t = i / 44100;
+              inputs[0][0][i] = Math.sin(2 * Math.PI * 10000 * t) * 0.5 +
+                              Math.sin(2 * Math.PI * 11000 * t) * 0.3;
+            }
+            return { inputs, outputs };
+          }
+        }
+      ];
+      
+      const results: Array<{name: string, avgTime: number, maxTime: number, p95Time: number}> = [];
+      
+      for (const loadTest of loadTests) {
+        const processingTimes: number[] = [];
+        
+        for (let i = 0; i < iterations; i++) {
+          const { inputs, outputs } = await loadTest.setup();
+          
+          const startTime = performance.now();
+          processor.process(inputs, outputs);
+          const endTime = performance.now();
+          
+          processingTimes.push(endTime - startTime);
+        }
+        
+        processingTimes.sort((a, b) => a - b);
+        const avgTime = processingTimes.reduce((a, b) => a + b) / iterations;
+        const maxTime = processingTimes[iterations - 1];
+        const p95Time = processingTimes[Math.floor(iterations * 0.95)];
+        
+        results.push({ name: loadTest.name, avgTime, maxTime, p95Time });
+        
+        console.log(`\n${loadTest.name}:`);
+        console.log(`  Average: ${avgTime.toFixed(3)}ms`);
+        console.log(`  Maximum: ${maxTime.toFixed(3)}ms`);
+        console.log(`  95th percentile: ${p95Time.toFixed(3)}ms`);
+        console.log(`  vs Constraint: ${(avgTime / REALTIME_CONSTRAINT_MS * 100).toFixed(1)}%`);
+      }
+      
+      // Analyze performance progression
+      console.log(`\n--- Load Impact Analysis ---`);
+      const baseline = results[0];
+      for (let i = 1; i < results.length; i++) {
+        const current = results[i];
+        const overhead = current.avgTime - baseline.avgTime;
+        console.log(`${current.name}: +${overhead.toFixed(3)}ms over baseline`);
+      }
+      
+      // All load levels should be reasonable
+      for (const result of results) {
+        expect(result.avgTime).toBeLessThan(REALTIME_CONSTRAINT_MS * 2);
+        expect(result.p95Time).toBeLessThan(REALTIME_CONSTRAINT_MS * 4);
+      }
+      
+      console.log(`=== End Load Level Analysis ===\n`);
+    });
   });
 });

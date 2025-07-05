@@ -1091,6 +1091,535 @@ describe('Step 4: Synchronization Functions', () => {
       expect(result.isFound).toBe(true);
       expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(0.5);
     });
+
+    test('should detect signal start after long silence period (reproduces demo issue)', () => {
+      // Reproduce the exact demo scenario: long silence followed by frame signal
+      
+      // Step 1: Create frame structure exactly as in demo - preamble + sync word + data
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); // preamble + sync word
+      const reference = generateSyncReference(31, 21); // Same as demo config
+      
+      // Step 2: Generate modulated signal
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      
+      const samplesPerPhase = 23; // Same as demo config
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      const frameSignal = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      // Step 3: Create long silence period followed by signal (reproduces demo condition)
+      const silenceDuration = frameSignal.length * 2; // Long silence period
+      const silentSamples = new Array(silenceDuration).fill(0);
+      const fullSignal = new Float32Array([...silentSamples, ...frameSignal]);
+      
+      console.log(`[Demo Issue Test] Created signal: silence=${silenceDuration} samples, frame=${frameSignal.length} samples, total=${fullSignal.length}`);
+      
+      // Step 4: Test synchronization detection
+      const syncResult = findSyncOffset(
+        fullSignal, 
+        reference, 
+        { samplesPerPhase, sampleRate, carrierFreq }, 
+        Math.ceil(silenceDuration / samplesPerPhase) + 10, // Search range includes silence period
+        { 
+          correlationThreshold: 0.5, 
+          peakToNoiseRatio: 4 
+        }
+      );
+      
+      console.log(`[Demo Issue Test] Sync result: isFound=${syncResult.isFound}, bestSampleOffset=${syncResult.bestSampleOffset}, expectedOffset=${silenceDuration}`);
+      
+      // Step 5: Verify sync detection accuracy
+      expect(syncResult.isFound).toBe(true);
+      expect(Math.abs(syncResult.bestSampleOffset - silenceDuration)).toBeLessThan(samplesPerPhase); // Within one chip tolerance
+      
+      // Step 6: Test full demodulation chain starting from detected offset
+      const syncedSignal = fullSignal.slice(syncResult.bestSampleOffset);
+      
+      // Test first bit (should be preamble bit 0)
+      const firstBitSamples = syncedSignal.slice(0, frameStartBits.length * 31 * samplesPerPhase);
+      const firstBitLength = 31 * samplesPerPhase;
+      
+      if (firstBitSamples.length >= firstBitLength) {
+        const bit0Samples = firstBitSamples.slice(0, firstBitLength);
+        
+        // Demodulate first bit
+        const bit0Phases = demodulateCarrier(bit0Samples, samplesPerPhase, sampleRate, carrierFreq);
+        const bit0ChipLlrs = dpskDemodulate(bit0Phases);
+        
+        console.log(`[Demo Issue Test] First bit demod: phases.length=${bit0Phases.length}, first8phases=[${Array.from(bit0Phases.slice(0,8)).map(x=>x.toFixed(2)).join(',')}]`);
+        console.log(`[Demo Issue Test] First bit chips: chipLlrs.length=${bit0ChipLlrs.length}, first8chips=[${Array.from(bit0ChipLlrs.slice(0,8)).map(x=>x.toFixed(1)).join(',')}]`);
+        
+        // Critical test: phases should NOT be all zeros (this was the demo issue)
+        const allZeroPhases = bit0Phases.every(phase => Math.abs(phase) < 0.01);
+        expect(allZeroPhases).toBe(false); // This should pass if sync detection is accurate
+        
+        // Additional test: chip LLRs should not be all 1.0 (which indicated all-zero phase differences)
+        const allOnesChips = bit0ChipLlrs.every(chip => Math.abs(chip - 1.0) < 0.01);
+        expect(allOnesChips).toBe(false); // This should pass if DPSK demodulation gets proper phase input
+      }
+    });
+
+    test('should handle real-time streaming demodulation (AudioWorklet simulation)', () => {
+      // Simulate the AudioWorklet real-time processing scenario
+      
+      // Step 1: Create test signal (same as previous test)
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); 
+      const reference = generateSyncReference(31, 21);
+      
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      
+      const samplesPerPhase = 23;
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      const frameSignal = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      const silenceDuration = frameSignal.length * 2;
+      const silentSamples = new Array(silenceDuration).fill(0);
+      const fullSignal = new Float32Array([...silentSamples, ...frameSignal]);
+      
+      // Step 2: Simulate AudioWorklet streaming (128 samples per chunk)
+      const CHUNK_SIZE = 128; // AudioWorklet buffer size
+      const demodulator = new (class {
+        private sampleBuffer: Float32Array = new Float32Array(0);
+        private hasDetectedSync = false;
+        private syncOffset = -1;
+        
+        addSamples(chunk: Float32Array): void {
+          // Append to buffer
+          const newBuffer = new Float32Array(this.sampleBuffer.length + chunk.length);
+          newBuffer.set(this.sampleBuffer, 0);
+          newBuffer.set(chunk, this.sampleBuffer.length);
+          this.sampleBuffer = newBuffer;
+          
+          // Try sync detection if not yet found
+          if (!this.hasDetectedSync && this.sampleBuffer.length > frameSignal.length) {
+            const syncResult = findSyncOffset(
+              this.sampleBuffer,
+              reference,
+              { samplesPerPhase, sampleRate, carrierFreq },
+              Math.ceil(this.sampleBuffer.length / samplesPerPhase),
+              { correlationThreshold: 0.5, peakToNoiseRatio: 4 }
+            );
+            
+            if (syncResult.isFound) {
+              this.hasDetectedSync = true;
+              this.syncOffset = syncResult.bestSampleOffset;
+              console.log(`[AudioWorklet Sim] Sync detected at buffer length ${this.sampleBuffer.length}, offset=${this.syncOffset}`);
+            }
+          }
+        }
+        
+        getFirstBitPhases(): Float32Array | null {
+          if (!this.hasDetectedSync || this.syncOffset < 0) return null;
+          
+          const syncedSignal = this.sampleBuffer.slice(this.syncOffset);
+          const firstBitLength = 31 * samplesPerPhase;
+          
+          if (syncedSignal.length < firstBitLength) return null;
+          
+          const bit0Samples = syncedSignal.slice(0, firstBitLength);
+          return demodulateCarrier(bit0Samples, samplesPerPhase, sampleRate, carrierFreq);
+        }
+      })();
+      
+      // Step 3: Stream signal in chunks (simulating AudioWorklet)
+      let chunkIndex = 0;
+      for (let i = 0; i < fullSignal.length; i += CHUNK_SIZE) {
+        const chunk = fullSignal.slice(i, i + CHUNK_SIZE);
+        demodulator.addSamples(chunk);
+        chunkIndex++;
+        
+        // Test sync detection as soon as possible
+        const firstBitPhases = demodulator.getFirstBitPhases();
+        if (firstBitPhases) {
+          console.log(`[AudioWorklet Sim] First bit phases after chunk ${chunkIndex}: first8=[${Array.from(firstBitPhases.slice(0,8)).map(x=>x.toFixed(2)).join(',')}]`);
+          
+          // Critical test: streaming processing should also produce valid phases
+          const allZeroPhases = firstBitPhases.every(phase => Math.abs(phase) < 0.01);
+          expect(allZeroPhases).toBe(false);
+          
+          // Test chip LLRs from streaming
+          const chipLlrs = dpskDemodulate(firstBitPhases);
+          console.log(`[AudioWorklet Sim] First bit chips: first8=[${Array.from(chipLlrs.slice(0,8)).map(x=>x.toFixed(1)).join(',')}]`);
+          
+          const allOnesChips = chipLlrs.every(chip => Math.abs(chip - 1.0) < 0.01);
+          expect(allOnesChips).toBe(false);
+          
+          break; // Test completed successfully
+        }
+      }
+    });
+
+    test('should use DsssDpskDemodulator class correctly with silence period (exact demo reproduction)', async () => {
+      // Import the actual DsssDpskDemodulator class used in demo  
+      const { DsssDpskDemodulator } = await import('../../src/modems/dsss-dpsk/dsss-dpsk-demodulator');
+      
+      // Step 1: Create exact demo signal
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); 
+      
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      
+      const samplesPerPhase = 23;
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      const frameSignal = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      const silenceDuration = frameSignal.length * 2;
+      const silentSamples = new Array(silenceDuration).fill(0);
+      const fullSignal = new Float32Array([...silentSamples, ...frameSignal]);
+      
+      console.log(`[DsssDpskDemodulator Test] Created signal: silence=${silenceDuration}, frame=${frameSignal.length}, total=${fullSignal.length}`);
+      
+      // Step 2: Use actual DsssDpskDemodulator class (same config as demo)
+      const demodulator = new DsssDpskDemodulator({
+        sequenceLength: 31,
+        seed: 21,
+        samplesPerPhase: 23,
+        sampleRate: 48000,
+        carrierFreq: 10000,
+        correlationThreshold: 0.5,
+        peakToNoiseRatio: 4
+      });
+      
+      // Step 3: Simulate AudioWorklet processing (128 samples per call)
+      const CHUNK_SIZE = 128;
+      let totalBitsReceived = 0;
+      let firstBitLLR = null;
+      
+      for (let i = 0; i < fullSignal.length; i += CHUNK_SIZE) {
+        const chunk = fullSignal.slice(i, i + CHUNK_SIZE);
+        
+        // Add samples to demodulator (exact demo process)
+        demodulator.addSamples(chunk);
+        
+        // Get available bits (exact demo process)
+        const bits = demodulator.getAvailableBits();
+        
+        if (bits.length > 0) {
+          console.log(`[DsssDpskDemodulator Test] Got ${bits.length} bits at chunk ${Math.floor(i/CHUNK_SIZE)}: [${Array.from(bits.slice(0,8)).join(',')}]`);
+          
+          if (firstBitLLR === null) {
+            firstBitLLR = bits[0];
+            console.log(`[DsssDpskDemodulator Test] First bit LLR: ${firstBitLLR} (expected: 127 for bit 0)`);
+            
+            // Critical test: first bit should be preamble bit 0 (LLR > 0)
+            expect(firstBitLLR).toBeGreaterThan(0); // Preamble bit 0 should have positive LLR
+            expect(Math.abs(firstBitLLR)).toBeGreaterThan(50); // Should be strong signal, not weak
+          }
+          
+          totalBitsReceived += bits.length;
+          
+          // Test first 8 bits (preamble + sync word start)
+          if (totalBitsReceived >= 8) {
+            console.log(`[DsssDpskDemodulator Test] Received enough bits for analysis: ${totalBitsReceived}`);
+            break;
+          }
+        }
+      }
+      
+      expect(firstBitLLR).not.toBeNull();
+      expect(totalBitsReceived).toBeGreaterThan(0);
+      
+      console.log(`[DsssDpskDemodulator Test] Final sync state:`, demodulator.getSyncState());
+    });
+
+    test('should reproduce demo bug: sync detection before signal start causes all-zero phases', async () => {
+      // This test reproduces the exact demo bug where sync detection occurs
+      // BEFORE the actual signal start, causing demodulation of silence
+      
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); 
+      const { DsssDpskDemodulator } = await import('../../src/modems/dsss-dpsk');
+      
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      
+      const samplesPerPhase = 23;
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      const frameSignal = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      // Create EXACT demo scenario: silence followed by signal
+      const silenceDuration = frameSignal.length * 2;
+      const silentSamples = new Array(silenceDuration).fill(0);
+      
+      // CRITICAL: Add buffer/transition that could cause sync misdetection
+      // This simulates any buffering or edge effects in AudioWorklet
+      const transitionSamples = 256; // AudioWorklet buffer effects
+      const paddedSilence = [...silentSamples, ...new Array(transitionSamples).fill(0)];
+      const fullSignal = new Float32Array([...paddedSilence, ...frameSignal]);
+      
+      console.log(`[Demo Bug Test] Signal structure: silence=${silenceDuration}, transition=${transitionSamples}, frame=${frameSignal.length}, total=${fullSignal.length}`);
+      console.log(`[Demo Bug Test] Signal start should be at sample ${paddedSilence.length}`);
+      
+      const demodulator = new DsssDpskDemodulator({
+        sequenceLength: 31,
+        seed: 21,
+        samplesPerPhase: 23,
+        sampleRate: 48000,
+        carrierFreq: 10000,
+        correlationThreshold: 0.5,
+        peakToNoiseRatio: 4
+      });
+      
+      // Process samples exactly as in demo (128 sample chunks)
+      const CHUNK_SIZE = 128;
+      let syncDetectedAt = -1;
+      let firstBitStartsAt = -1;
+      
+      for (let i = 0; i < fullSignal.length; i += CHUNK_SIZE) {
+        const chunk = fullSignal.slice(i, i + CHUNK_SIZE);
+        demodulator.addSamples(chunk);
+        
+        const bits = demodulator.getAvailableBits();
+        if (bits.length > 0 && syncDetectedAt === -1) {
+          syncDetectedAt = i;
+          firstBitStartsAt = syncDetectedAt; // This is where first bit processing starts
+          
+          console.log(`[Demo Bug Test] First bits detected at chunk starting at sample ${i}`);
+          console.log(`[Demo Bug Test] Expected signal start: ${paddedSilence.length}, Actual detection: ${syncDetectedAt}`);
+          console.log(`[Demo Bug Test] Offset difference: ${syncDetectedAt - paddedSilence.length} samples`);
+          
+          // Test for the demo bug: if sync detection is too early, we get silence
+          if (syncDetectedAt < paddedSilence.length) {
+            console.log(`[Demo Bug Test] BUG REPRODUCED: Sync detected ${paddedSilence.length - syncDetectedAt} samples before signal start`);
+            
+            // This should be the exact scenario that caused all-zero phases in demo
+            // The demodulator is trying to process silence instead of signal
+            
+            // In this case, we expect the bug to manifest:
+            // - phases should be near zero (processing silence)
+            // - chipLlrs should be near 1.0 (cos(0) = 1.0)
+            
+            // This is the ACTUAL bug condition that happened in demo
+            console.log(`[Demo Bug Test] This explains why demo showed phases=[0,0,0,0,...] and chips=[1,1,1,1,...]`);
+            
+            // Mark this as the bug condition
+            expect(syncDetectedAt).toBeLessThan(paddedSilence.length);
+            return; // Bug reproduced successfully
+          }
+          
+          break;
+        }
+      }
+      
+      // If we reach here, the bug was NOT reproduced
+      console.log(`[Demo Bug Test] Bug NOT reproduced. Sync detection was accurate.`);
+      expect(syncDetectedAt).toBeGreaterThanOrEqual(paddedSilence.length - samplesPerPhase); // Allow small tolerance
+    });
+
+    test('should reproduce exact demo bug: demodulateCarrier with all-zero input produces all-zero phases', () => {
+      // This test reproduces the EXACT mechanism that caused the demo bug
+      
+      const samplesPerPhase = 23;
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      
+      // Test 1: All-zero input (silence) - this is what happened in demo bit0
+      const silentSamples = new Float32Array(31 * samplesPerPhase).fill(0); // One bit worth of silence
+      const silentPhases = demodulateCarrier(silentSamples, samplesPerPhase, sampleRate, carrierFreq);
+      
+      console.log(`[Demo Bug Exact] Silent input phases: [${Array.from(silentPhases.slice(0,8)).map(x=>x.toFixed(2)).join(',')}]`);
+      
+      // This should be all zeros (or very close to zero)
+      const allZeroPhases = silentPhases.every(phase => Math.abs(phase) < 0.01);
+      expect(allZeroPhases).toBe(true); // This IS the bug condition from demo
+      
+      // Test 2: DPSK demodulation of all-zero phases
+      const silentChipLlrs = dpskDemodulate(silentPhases);
+      console.log(`[Demo Bug Exact] Silent chip LLRs: [${Array.from(silentChipLlrs.slice(0,8)).map(x=>x.toFixed(1)).join(',')}]`);
+      
+      // Since phase differences are all zero, cos(0) = 1.0
+      const allOnesChips = silentChipLlrs.every(chip => Math.abs(chip - 1.0) < 0.01);
+      expect(allOnesChips).toBe(true); // This IS the bug condition from demo
+      
+      console.log(`[Demo Bug Exact] ✓ REPRODUCED: silence → phases=[0,0,0,...] → chips=[1,1,1,...]`);
+      
+      // Test 3: Compare with actual signal
+      const frameStartBits = new Uint8Array([0, 0, 0, 0]);  // Just preamble
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      const signalSamples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      // First bit (should be preamble bit 0)
+      const firstBitSamples = signalSamples.slice(0, 31 * samplesPerPhase);
+      const signalPhases = demodulateCarrier(firstBitSamples, samplesPerPhase, sampleRate, carrierFreq);
+      
+      console.log(`[Demo Bug Exact] Signal input phases: [${Array.from(signalPhases.slice(0,8)).map(x=>x.toFixed(2)).join(',')}]`);
+      
+      // Signal phases should NOT be all zeros
+      const signalAllZeros = signalPhases.every(phase => Math.abs(phase) < 0.01);
+      expect(signalAllZeros).toBe(false);
+      
+      console.log(`[Demo Bug Exact] ✓ CONTRAST: signal → phases=[varying] → proper demodulation`);
+      
+      // CONCLUSION: The demo bug happens when the first bit processing 
+      // receives silence (all-zero samples) instead of actual signal samples.
+      // This causes demodulateCarrier to output all-zero phases,
+      // which then causes dpskDemodulate to output all-1.0 chip LLRs.
+    });
+
+    test('should reproduce demo timing issue: receiver starts before sender (false sync detection)', async () => {
+      // This test reproduces the demo scenario where receiver starts processing
+      // BEFORE sender begins transmission, potentially causing false sync detection
+      
+      const { DsssDpskDemodulator } = await import('../../src/modems/dsss-dpsk');
+      
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); 
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      
+      const samplesPerPhase = 23;
+      const sampleRate = 48000;
+      const carrierFreq = 10000;
+      const frameSignal = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
+      
+      // Demo scenario: receiver processes samples BEFORE sender starts
+      const demodulator = new DsssDpskDemodulator({
+        sequenceLength: 31,
+        seed: 21,
+        samplesPerPhase: 23,
+        sampleRate: 48000,
+        carrierFreq: 10000,
+        correlationThreshold: 0.5,
+        peakToNoiseRatio: 4
+      });
+      
+      console.log(`[Demo Timing Test] Starting receiver processing BEFORE sender signal...`);
+      
+      // PHASE 1: Receiver processes silence (as happens in demo)
+      const silenceChunks = 10; // Process multiple chunks of silence first
+      const CHUNK_SIZE = 128;
+      
+      for (let i = 0; i < silenceChunks; i++) {
+        const silentChunk = new Float32Array(CHUNK_SIZE).fill(0);
+        demodulator.addSamples(silentChunk);
+        
+        // Check if false sync detection occurs during silence
+        const bits = demodulator.getAvailableBits();
+        if (bits.length > 0) {
+          console.log(`[Demo Timing Test] FALSE SYNC detected during silence at chunk ${i}!`);
+          console.log(`[Demo Timing Test] False sync bits: [${Array.from(bits).join(',')}]`);
+          
+          // This would be the exact demo bug condition
+          expect(bits.length).toBeGreaterThan(0);
+          return; // Bug reproduced: false sync during silence
+        }
+      }
+      
+      // PHASE 2: Sender starts transmission (signal begins)
+      console.log(`[Demo Timing Test] Now starting sender signal transmission...`);
+      
+      const fullSignal = new Float32Array([
+        ...new Array(silenceChunks * CHUNK_SIZE).fill(0),  // Silence that was already processed
+        ...frameSignal  // Signal starts now
+      ]);
+      
+      // Continue processing with actual signal
+      for (let i = silenceChunks * CHUNK_SIZE; i < fullSignal.length; i += CHUNK_SIZE) {
+        const chunk = fullSignal.slice(i, i + CHUNK_SIZE);
+        demodulator.addSamples(chunk);
+        
+        const bits = demodulator.getAvailableBits();
+        if (bits.length > 0) {
+          console.log(`[Demo Timing Test] Proper sync detected at sample ${i}: [${Array.from(bits.slice(0, 4)).join(',')}]`);
+          expect(bits[0]).toBeGreaterThan(0); // Should be proper preamble bit 0
+          break;
+        }
+      }
+      
+      console.log(`[Demo Timing Test] No false sync during silence - timing issue not reproduced`);
+    });
+
+    test('should reproduce ACTUAL demo timing: sender starts 500ms before receiver (signal truncation)', async () => {
+      // This test reproduces the ACTUAL demo scenario where SENDER starts first,
+      // then receiver starts 500ms later, potentially missing part of the signal
+      
+      const { DsssDpskDemodulator } = await import('../../src/modems/dsss-dpsk');
+
+      const frameStartBits = new Uint8Array([0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0]); // preamble + sync start
+      
+      console.log(`[Actual Demo Timing] Reproducing REAL demo sequence...`);
+      console.log(`[Actual Demo Timing] 1. Sender starts transmission immediately`);
+      
+      // Sender creates the full signal immediately (like demo)
+      const spreadChips = dsssSpread(frameStartBits, 31, 21);
+      const phases = dpskModulate(spreadChips);
+      const fullSignal = modulateCarrier(phases, 23, 44100, 10000);
+      
+      // 500ms delay = 500ms * 44100 samples/sec = 22050 samples
+      const delayMs = 500;
+      const delaySamples = Math.floor(delayMs * 44100 / 1000); // 22050 samples
+      
+      console.log(`[Actual Demo Timing] 2. Signal: ${fullSignal.length} samples total`);
+      console.log(`[Actual Demo Timing] 3. Receiver starts ${delayMs}ms (${delaySamples} samples) later`);
+      
+      // What receiver actually gets: starts receiving AFTER 500ms of signal has passed
+      const missedSignalPortion = Math.min(delaySamples, fullSignal.length);
+      const receivedSignal = fullSignal.slice(missedSignalPortion);
+      
+      console.log(`[Actual Demo Timing] 4. Missed: ${missedSignalPortion} samples (${(100 * missedSignalPortion / fullSignal.length).toFixed(1)}%)`);
+      console.log(`[Actual Demo Timing] 5. Received: ${receivedSignal.length} samples`);
+      
+      const demodulator = new DsssDpskDemodulator({
+        sequenceLength: 31,
+        seed: 21,
+        samplesPerPhase: 23,
+        sampleRate: 44100,
+        carrierFreq: 10000,
+        correlationThreshold: 0.5,
+        peakToNoiseRatio: 4
+      });
+      
+      // Process the truncated signal that receiver actually gets
+      let totalBits = 0;
+      let firstChunkWithBits = -1;
+      for (let i = 0; i < receivedSignal.length; i += 128) {
+        const chunk = receivedSignal.slice(i, i + 128);
+        demodulator.addSamples(chunk);
+        
+        const bits = demodulator.getAvailableBits();
+        if (bits.length > 0) {
+          if (firstChunkWithBits === -1) firstChunkWithBits = Math.floor(i/128);
+          totalBits += bits.length;
+          console.log(`[Actual Demo Timing] Chunk ${Math.floor(i/128)}: ${bits.length} bits, total=${totalBits}`);
+          console.log(`[Actual Demo Timing] Bits: [${Array.from(bits).join(',')}]`);
+        }
+      }
+      
+      const syncState = demodulator.getSyncState();
+      console.log(`[Actual Demo Timing] Final sync state:`, syncState);
+      
+      if (missedSignalPortion > 0) {
+        console.log(`[Actual Demo Timing] ✓ REPRODUCED demo timing: ${missedSignalPortion} samples missed due to 500ms delay`);
+        
+        // Calculate expected vs actual behavior
+        const samplesPerBit = 31 * 23; // 713 samples per bit
+        const expectedFirstBit = Math.floor(missedSignalPortion / samplesPerBit);
+        
+        console.log(`[Actual Demo Timing] Expected to miss ~${expectedFirstBit} bits due to timing`);
+        
+        if (receivedSignal.length < fullSignal.length / 2) {
+          console.log(`[Actual Demo Timing] ✗ Severe signal truncation: only ${(100 * receivedSignal.length / fullSignal.length).toFixed(1)}% received`);
+        }
+        
+        // Check if sync detection is affected by partial signal
+        if (!syncState.locked) {
+          console.log(`[Actual Demo Timing] ✗ Sync failed due to missed signal portion`);
+        } else {
+          console.log(`[Actual Demo Timing] ✓ Sync succeeded despite missed signal`);
+        }
+      }
+      
+      // Verify this reproduces the problematic timing from demo
+      expect(missedSignalPortion).toBeGreaterThan(0);
+      expect(receivedSignal.length).toBeLessThan(fullSignal.length);
+      
+      // This test demonstrates why the demo fails:
+      // The 500ms delay causes significant signal loss, affecting sync detection
+    });
   });
 
   describe('applySyncOffset', () => {

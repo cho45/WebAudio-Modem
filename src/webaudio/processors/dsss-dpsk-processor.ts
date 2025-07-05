@@ -151,8 +151,9 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       
       return true;
     } catch (error) {
-      // Log error but continue processing to maintain AudioWorklet stability
-      console.error(`[DsssDpskProcessor] Error in process(): ${error}`);
+      // Log detailed error but continue processing to maintain AudioWorklet stability
+      console.error(`[DsssDpskProcessor:${this.instanceName}] FATAL Error in process() at call #${this.processCallCount}:`, error);
+      console.error(`[DsssDpskProcessor:${this.instanceName}] Error details: name=${error.name}, message=${error.message}, stack=${error.stack}`);
       return true;
     }
   }
@@ -261,6 +262,8 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       
       // Check if modulation is complete
       if (this.pendingModulation.index >= samples.length) {
+        // Safe logging: only when modulation completes
+        this.log(`✓ Modulation complete: ${samples.length} samples transmitted`);
         this.pendingModulation = null;
         if (this.modulationPromise) {
           this.modulationPromise.resolve();
@@ -502,6 +505,25 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       
       // Generate modulated signal
       const chips = modem.dsssSpread(frame.bits, this.config.sequenceLength, this.config.seed);
+      
+      // Debug: Log the M-sequence used for first frame  
+      // if (sequenceNumber === 0) {
+      //   console.log(`[DsssDpskProcessor] TRANSMIT M-sequence (len=${this.config.sequenceLength}, seed=${this.config.seed}): first 8 chips of frame=[${Array.from(chips.slice(0, 8)).join(',')}]`);
+      //   
+      //   // Log the first few bits of the frame and their corresponding chip expansions
+      //   const firstBits = frame.bits.slice(0, 12); // preamble(4) + syncWord start(8)
+      //   console.log(`[DsssDpskProcessor] TRANSMIT frame bits: preamble+syncStart=[${Array.from(firstBits).join(',')}]`);
+      //   
+      //   // Show first 8 bits worth of chips - including sync word bits
+      //   const chipChunks = [];
+      //   for (let i = 0; i < 8; i++) {
+      //     const startIdx = i * this.config.sequenceLength;
+      //     const endIdx = startIdx + this.config.sequenceLength;
+      //     chipChunks.push(`bit${i}(${firstBits[i]}):[${Array.from(chips.slice(startIdx, Math.min(endIdx, startIdx + 8))).join(',')}...]`);
+      //   }
+      //   console.log(`[DsssDpskProcessor] TRANSMIT chip expansion: ${chipChunks.join(', ')}`);
+      // }
+      
       const phases = modem.dpskModulate(chips);
       const samples = modem.modulateCarrier(
         phases,
