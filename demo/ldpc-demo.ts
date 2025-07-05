@@ -157,7 +157,7 @@ function reconstructImage(messageChunks: (Uint8Array | null)[]): Uint8ClampedArr
 function processChunkInWorker(worker: Worker, jobData: any): Promise<any> {
     return new Promise((resolve, reject) => {
         const messageHandler = (e: MessageEvent) => {
-            if (e.data.chunkIndex === jobData.chunkIndex) {
+            if (e.data.type === 'decode_result' && e.data.chunkIndex === jobData.chunkIndex) {
                 worker.removeEventListener('message', messageHandler);
                 worker.removeEventListener('error', errorHandler);
                 resolve(e.data);
@@ -251,9 +251,28 @@ async function runSimulation() {
     };
 
     try {
+        // Initialize the worker with the H-Matrix
+        statusBox.textContent = 'Initializing worker with H-Matrix...';
+        await new Promise<void>((resolve, reject) => {
+            const initMessageHandler = (e: MessageEvent) => {
+                if (e.data.type === 'init_complete') {
+                    worker.removeEventListener('message', initMessageHandler);
+                    resolve();
+                }
+            };
+            const initErrorHandler = (err: ErrorEvent) => {
+                worker.removeEventListener('message', initMessageHandler);
+                reject(err);
+            };
+            worker.addEventListener('message', initMessageHandler);
+            worker.addEventListener('error', initErrorHandler);
+            worker.postMessage({ type: 'init', hMatrix: hMatrixForWorker });
+        });
+
+        statusBox.textContent = `Decoding ${numChunks} chunks serially...`;
         for (const job of processingQueue) {
             const result = await processChunkInWorker(worker, {
-                hMatrix: hMatrixForWorker,
+                type: 'decode',
                 noisyLlr: job.noisyLlr,
                 maxIterations,
                 chunkIndex: job.chunkIndex

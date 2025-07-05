@@ -219,13 +219,27 @@ export class LDPC {
             this.setBit(unpuncturedCodewordBytes, rank + i, msgBit);
         }
 
+        // パリティ計算最適化: 非ゼロ要素のみ処理 + バイト単位最適化
         for (let row = 0; row < rank; row++) {
             let paritySum = 0;
-            for (let col = 0; col < k; col++) {
-                if (rank + col < n_unpunctured) {
-                    const pElement = this.systematicMatrix.systematicH[row][rank + col];
-                    const msgBit = this.getBit(messageBytes, col);
-                    paritySum ^= (pElement & msgBit);
+            
+            // 最適化1: 非ゼロ要素のみ処理（疎行列特性活用）
+            const systematicRow = this.systematicMatrix.systematicH[row];
+            
+            // 最適化2: バイト単位処理でgetBit呼び出し削減
+            for (let byteIdx = 0; byteIdx < messageBytes.length; byteIdx++) {
+                const msgByte = messageBytes[byteIdx];
+                if (msgByte === 0) continue; // ゼロバイトスキップ
+                
+                for (let bitOffset = 0; bitOffset < 8; bitOffset++) {
+                    const col = byteIdx * 8 + bitOffset;
+                    if (col >= k) break; // メッセージ長超過チェック
+                    
+                    const matrixCol = rank + col;
+                    if (matrixCol < n_unpunctured && systematicRow[matrixCol] === 1) {
+                        const msgBit = (msgByte >> (7 - bitOffset)) & 1;
+                        paritySum ^= msgBit;
+                    }
                 }
             }
             this.setBit(unpuncturedCodewordBytes, row, paritySum);
