@@ -4,7 +4,8 @@
  * Vue3 Composition APIを使用したテキスト・画像送受信デモ
  */
 
-import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+// import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+import { createApp, ref, reactive, toRaw, computed, onMounted, nextTick } from 'vue';
 import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
 import { DEFAULT_FSK_CONFIG } from '../src/modems/fsk.js';
 import { XModemTransport } from '../src/transports/xmodem/xmodem.js';
@@ -107,7 +108,7 @@ const app = createApp({
     
     // Computed properties
     const canSend = computed(() => {
-      if (!systemReady.value || isSending.value) return false;
+      if (isSending.value) return false;
       if (sendDataType.value === 'text') return inputText.value.trim().length > 0;
       if (sendDataType.value === 'image') return selectedImage.value !== null;
       return false;
@@ -324,6 +325,10 @@ const app = createApp({
     
     // マイクロフォンモード切り替え（権限取得も含む）
     const toggleMicrophoneMode = async () => {
+      if (!systemReady.value) {
+        await initializeSystem();
+      }
+
       if (!microphonePermission.value) {
         // マイク権限がない場合は権限を取得
         await requestMicrophonePermission();
@@ -502,8 +507,7 @@ const app = createApp({
     // XModemループバックテスト
     const testXModemLoopback = async () => {
       if (!systemReady.value) {
-        updateStatus(systemStatus, 'System not initialized', 'error');
-        return;
+        await initializeSystem();
       }
       
       try {
