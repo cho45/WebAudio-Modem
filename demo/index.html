@@ -946,6 +946,23 @@
             
             <!-- 1. Quick Setup -->
             <section class="quick-setup">
+                <!-- Modulation Type Selection -->
+                <div class="modulation-selector" style="margin-bottom: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #495057;">📡 Modulation Type</h3>
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                            <input type="radio" v-model="modulationType" value="fsk" @change="onModulationTypeChange" :disabled="systemReady">
+                            <span style="font-weight: 500;">📻 FSK (Frequency Shift Keying)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                            <input type="radio" v-model="modulationType" value="dsss-dpsk" @change="onModulationTypeChange" :disabled="systemReady">
+                            <span style="font-weight: 500;">🛡️ DSSS-DPSK (Spread Spectrum)</span>
+                        </label>
+                        <span v-if="systemReady" style="font-size: 12px; color: #6c757d; font-style: italic;">
+                            (Reset system to change modulation type)
+                        </span>
+                    </div>
+                </div>
                 <div class="setup-header">
                     <div class="setup-left">
                         <button @click="initializeSystem" :disabled="systemReady">

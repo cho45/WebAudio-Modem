@@ -41,6 +41,9 @@ const app = createApp({
     const selectedImage = ref(null);
     const sampleImageSelection = ref('');
     
+    // 変調方式選択
+    const modulationType = ref('dsss-dpsk'); // 'fsk' | 'dsss-dpsk'
+    
     // Reactive設定管理
     const fskConfig = reactive({
       ...DEFAULT_FSK_CONFIG,
@@ -50,8 +53,18 @@ const app = createApp({
       // sampleRateは初期化時に設定
     });
     
+    // DSSS-DPSK設定
+    const dsssDpskConfig = reactive({
+      sequenceLength: 31,
+      seed: 21,
+      samplesPerPhase: 23,
+      carrierFreq: 10000,
+      correlationThreshold: 0.5,
+      peakToNoiseRatio: 4
+    });
+    
     const xmodemConfig = reactive({
-      timeoutMs: 3000,
+      timeoutMs: 5000,
       maxRetries: 3,
       maxPayloadSize: 255
     });
@@ -225,15 +238,23 @@ const app = createApp({
           log('AudioContext resumed');
         }
         
-        // AudioWorkletモジュール追加
-        await WebAudioDataChannel.addModule(audioContext.value, '../src/webaudio/processors/fsk-processor.js');
-        log('FSK processor module loaded');
+        // AudioWorkletモジュール追加（変調方式に応じて）
+        let processorName;
+        if (modulationType.value === 'dsss-dpsk') {
+          await WebAudioDataChannel.addModule(audioContext.value, '../src/webaudio/processors/dsss-dpsk-processor.js');
+          processorName = 'dsss-dpsk-processor';
+          log('DSSS-DPSK processor module loaded');
+        } else {
+          await WebAudioDataChannel.addModule(audioContext.value, '../src/webaudio/processors/fsk-processor.js');
+          processorName = 'fsk-processor';
+          log('FSK processor module loaded');
+        }
         
         // データチャネル作成
-        senderDataChannel.value = new WebAudioDataChannel(audioContext.value, 'fsk-processor', {
+        senderDataChannel.value = new WebAudioDataChannel(audioContext.value, processorName, {
           processorOptions: { name: 'sender' }
         });
-        receiverDataChannel.value = new WebAudioDataChannel(audioContext.value, 'fsk-processor', {
+        receiverDataChannel.value = new WebAudioDataChannel(audioContext.value, processorName, {
           processorOptions: { name: 'receiver' }
         });
         log('AudioWorkletNodes created');
@@ -242,8 +263,19 @@ const app = createApp({
         inputAnalyser = audioContext.value.createAnalyser();
         inputAnalyser.fftSize = 2048;
         
-        // reactive設定にsampleRateを設定
-        fskConfig.sampleRate = audioContext.value.sampleRate;
+        // 設定適用（変調方式に応じて）
+        if (modulationType.value === 'dsss-dpsk') {
+          const rawDsssDpskConfig = toRaw(dsssDpskConfig);
+          await senderDataChannel.value.configure(rawDsssDpskConfig);
+          await receiverDataChannel.value.configure(rawDsssDpskConfig);
+          log('DSSS-DPSK configuration applied');
+        } else {
+          fskConfig.sampleRate = audioContext.value.sampleRate;
+          const rawFskConfig = toRaw(fskConfig);
+          await senderDataChannel.value.configure(rawFskConfig);
+          await receiverDataChannel.value.configure(rawFskConfig);
+          log('FSK configuration applied');
+        }
         
         // XModemトランスポート作成（設定は setupSender/setupReceiver で行う）
         senderTransport.value = new XModemTransport(senderDataChannel.value);
@@ -252,10 +284,10 @@ const app = createApp({
         log('Transports created successfully - configuration will be applied per operation');
         
         systemReady.value = true;
-        updateStatus(systemStatus, 'System initialized ✓ Try loopback test first!', 'success');
+        updateStatus(systemStatus, `${modulationType.value.toUpperCase()} System initialized ✓ Try loopback test first!`, 'success');
         updateStatus(sendStatus, 'Try loopback test first (no microphone needed)', 'info');
         updateStatus(receiveStatus, 'Try loopback test first (no microphone needed)', 'info');
-        log('System initialization complete');
+        log(`${modulationType.value.toUpperCase()} system initialization complete`);
         
         // デバッグ情報の定期更新開始
         startDebugUpdates();
@@ -271,6 +303,17 @@ const app = createApp({
         updateStatus(systemStatus, errorMsg, 'error');
         updateStatus(sendStatus, 'System initialization required', 'error');
         updateStatus(receiveStatus, 'System initialization required', 'error');
+      }
+    };
+    
+    // 変調方式変更ハンドラ
+    const onModulationTypeChange = () => {
+      if (systemReady.value) {
+        log(`Modulation type changed to ${modulationType.value.toUpperCase()}. Please reset and reinitialize the system.`);
+        updateStatus(systemStatus, 'Modulation type changed - reset system to apply', 'info');
+      } else {
+        log(`Selected modulation type: ${modulationType.value.toUpperCase()}`);
+        updateStatus(systemStatus, `Ready to initialize with ${modulationType.value.toUpperCase()}`, 'info');
       }
     };
     
@@ -368,12 +411,17 @@ const app = createApp({
       await senderTransport.value.reset();
       logSend('Sender transport reset to IDLE state');
       
-      // FSK設定をDataChannelに適用
-      await senderDataChannel.value.configure(toRaw(fskConfig));
-      logSend(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
+      // 変調方式設定をDataChannelに適用
+      if (modulationType.value === 'dsss-dpsk') {
+        await senderDataChannel.value.configure(toRaw(dsssDpskConfig));
+        logSend(`DSSS-DPSK configured: seq=${dsssDpskConfig.sequenceLength}, carrier=${dsssDpskConfig.carrierFreq}Hz`);
+      } else {
+        await senderDataChannel.value.configure(toRaw(fskConfig));
+        logSend(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
+      }
       
       // XModem設定をTransportに適用
-      await senderTransport.value.configure({ ...toRaw(xmodemConfig), timeoutMs: xmodemConfig.timeoutMs * xmodemConfig.maxRetries });
+      await senderTransport.value.configure({ ...toRaw(xmodemConfig), name: 'sender', timeoutMs: xmodemConfig.timeoutMs * xmodemConfig.maxRetries });
       logSend(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
     };
     
@@ -384,12 +432,17 @@ const app = createApp({
       logReceive('Receiver transport reset to IDLE state');
       await receiverTransport.value.reset();
       
-      // FSK設定をDataChannelに適用
-      await receiverDataChannel.value.configure(toRaw(fskConfig));
-      logReceive(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
+      // 変調方式設定をDataChannelに適用
+      if (modulationType.value === 'dsss-dpsk') {
+        await receiverDataChannel.value.configure(toRaw(dsssDpskConfig));
+        logReceive(`DSSS-DPSK configured: seq=${dsssDpskConfig.sequenceLength}, carrier=${dsssDpskConfig.carrierFreq}Hz`);
+      } else {
+        await receiverDataChannel.value.configure(toRaw(fskConfig));
+        logReceive(`FSK configured: ${fskConfig.baudRate}bps, ${fskConfig.markFrequency}/${fskConfig.spaceFrequency}Hz`);
+      }
       
       // XModem設定をTransportに適用
-      await receiverTransport.value.configure(toRaw(xmodemConfig));
+      await receiverTransport.value.configure({...toRaw(xmodemConfig), name: 'receiver'});
       logReceive(`XModem configured: timeout=${xmodemConfig.timeoutMs}ms, maxRetries=${xmodemConfig.maxRetries}`);
     };
     
@@ -1208,12 +1261,16 @@ const app = createApp({
       senderDebugInfo,
       receiverDebugInfo,
       
+      // 変調方式
+      modulationType,
+      
       // マイク権限と入力ソース
       microphonePermission,
       inputSource,
       
       // Reactive設定
       fskConfig,
+      dsssDpskConfig,
       xmodemConfig,
       
       // Computed
@@ -1229,6 +1286,7 @@ const app = createApp({
       
       // Methods
       initializeSystem,
+      onModulationTypeChange,
       requestMicrophonePermission,
       toggleInputSource,
       toggleMicrophoneMode,

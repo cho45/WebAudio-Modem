@@ -14,6 +14,7 @@ import { ControlType } from './types';
 import { CRC16 } from '@/utils/crc16';
 
 export interface XModemConfig {
+  name: string; // Name of the transport, can be used for identification
   timeoutMs: number;
   maxRetries: number;
   maxPayloadSize: number;
@@ -43,6 +44,7 @@ export class XModemTransport extends BaseTransport {
   readonly transportName = 'XModem';
 
   private config: XModemConfig = {
+    name: "none",
     timeoutMs: 3000,
     maxRetries: 10,
     maxPayloadSize: 128
@@ -103,19 +105,19 @@ export class XModemTransport extends BaseTransport {
   private initializeSend(data: Uint8Array): void {
     this.stateChanged(State.SENDING_WAIT_NAK, `Starting transmission of ${data.length} bytes`);
     Object.assign(this.send, { sequence: 1, fragmentIndex: 0, retries: 0, fragments: this.createFragments(data) });
-    console.log(`[XModemTransport] Created ${this.send.fragments.length} fragments for ${data.length} bytes`);
+    console.log(`[XModemTransport:${this.config.name}] Created ${this.send.fragments.length} fragments for ${data.length} bytes`);
   }
 
   private async waitForInitialNAK(externalSignal?: AbortSignal): Promise<void> {
     try {
       await this.waitAndSkipForControl(ControlType.NAK, { signal: this.createTimeoutSignal(externalSignal) });
-      console.log(`[XModemTransport] Initial NAK received`);
+      console.log(`[XModemTransport:${this.config.name}] Initial NAK received`);
     } catch (error) {
       // Check if it's an abort error first
       if (error instanceof Error && this.isAbortError(error)) {
         throw new Error('Operation aborted at sendData');
       }
-      console.warn(`[XModemTransport] No initial NAK received (standalone mode): ${error}`);
+      console.warn(`[XModemTransport:${this.config.name}] No initial NAK received (standalone mode): ${error}`);
       // Continue without initial NAK for standalone operation
     }
   }
@@ -124,12 +126,12 @@ export class XModemTransport extends BaseTransport {
     while (this.send.fragmentIndex < this.send.fragments.length) {
       await this.withRetry(
         async () => {
-          console.log(`[XModemTransport] Processing fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
+          console.log(`[XModemTransport:${this.config.name}] Processing fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}`);
 
           const fragment = this.send.fragments[this.send.fragmentIndex];
           const packet = XModemPacket.createData(this.send.sequence, fragment);
           const serialized = XModemPacket.serialize(packet);
-          console.log(`[XModemTransport] Sending fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}, sequence: ${this.send.sequence}`);
+          console.log(`[XModemTransport:${this.config.name}] Sending fragment ${this.send.fragmentIndex + 1}/${this.send.fragments.length}, sequence: ${this.send.sequence}`);
           await this.dataChannel.modulate(serialized);
           this.statistics.packetsSent++;
           
@@ -153,12 +155,12 @@ export class XModemTransport extends BaseTransport {
         this.config.maxRetries,
         (_retryCount) => {
           this.statistics.packetsRetransmitted++;
-          console.warn(`[XModemTransport] Timeout, retrying fragment ${this.send.fragmentIndex + 1}, retries=${_retryCount}`);
+          console.warn(`[XModemTransport:${this.config.name}] Timeout, retrying fragment ${this.send.fragmentIndex + 1}, retries=${_retryCount}`);
         },
         externalSignal
       );
     }
-    console.log(`[XModemTransport] Exited fragment loop: fragmentIndex=${this.send.fragmentIndex}, fragmentsLength=${this.send.fragments.length}`);
+    console.log(`[XModemTransport:${this.config.name}] Exited fragment loop: fragmentIndex=${this.send.fragmentIndex}, fragmentsLength=${this.send.fragments.length}`);
   }
 
   private async sendEOTAndConfirm(externalSignal?: AbortSignal): Promise<void> {
@@ -172,12 +174,12 @@ export class XModemTransport extends BaseTransport {
         
         // Use ACK-specific wait to avoid echo-back of our own EOT
         await this.waitForACK({ signal: this.createTimeoutSignal(externalSignal) });
-        console.log(`[XModemTransport] Final ACK received`);
+        console.log(`[XModemTransport:${this.config.name}] Final ACK received`);
         return; // Success
       },
       this.config.maxRetries,
       (_retryCount) => {
-        console.warn(`[XModemTransport] Final ACK timeout, retrying EOT, retries=${_retryCount}`);
+        console.warn(`[XModemTransport:${this.config.name}] Final ACK timeout, retrying EOT, retries=${_retryCount}`);
       },
       externalSignal
     );
@@ -238,18 +240,18 @@ export class XModemTransport extends BaseTransport {
         const firstByte = await this.waitForByte({ signal: this.createTimeoutSignal(externalSignal) });
         
         if (firstByte === ControlType.EOT) {
-          console.log(`[XModemTransport] EOT Received byte: ${firstByte}`);
+          console.log(`[XModemTransport:${this.config.name}] EOT Received byte: ${firstByte}`);
           await this.sendControl('ACK'); // Send final ACK for EOT
           break fragment;
         } else if (firstByte === ControlType.SOH) {
-          console.log(`[XModemTransport] SOH Received byte: ${firstByte}`);
+          console.log(`[XModemTransport:${this.config.name}] SOH Received byte: ${firstByte}`);
           await this.receiveAndProcessPacket(externalSignal);
         } else {
-          console.log(`[XModemTransport] receiveData/received byte ignored: ${firstByte}`);
+          console.log(`[XModemTransport:${this.config.name}] receiveData/received byte ignored: ${firstByte}`);
           continue; // Ignore any other byte
         }
       } catch (error) {
-        console.log(`[XModemTransport] Error during receiveData: ${error}`);
+        console.log(`[XModemTransport:${this.config.name}] Error during receiveData: ${error}`);
         if (++this.send.retries > this.config.maxRetries) {
           throw new Error(`Receive failed after max retries: ${error}`);
         }
@@ -272,16 +274,16 @@ export class XModemTransport extends BaseTransport {
       this.emit('error', new Event({ error: 'Invalid sequence number', seq, nseq }));
       throw new Error('Invalid sequence number');
     }
-    
-    console.log(`[XModemTransport] Received packet: seq=${seq}, nseq=${nseq}, len=${len}`);
-    
+
+    console.log(`[XModemTransport:${this.config.name}] Received packet: seq=${seq}, nseq=${nseq}, len=${len}`);
+
     if (seq === this.receive.expectedSequence) {
       const payloadWithCRC = await this.waitForBytes(len + 2, { signal: this.createTimeoutSignal(externalSignal) });
       this.statistics.packetsReceived++;
 
       const payload = payloadWithCRC.slice(0, len);
       const crc = (payloadWithCRC[len] << 8) | payloadWithCRC[len + 1];
-      console.log(`[XModemTransport] Received payload with CRC: seq=${seq}, len=${len}, crc=${crc} (== ${CRC16.calculate(payload)})`);
+      console.log(`[XModemTransport:${this.config.name}] Received payload with CRC: seq=${seq}, len=${len}, crc=${crc} (== ${CRC16.calculate(payload)})`);
 
       if (CRC16.calculate(payload) !== crc) {
         this.statistics.packetsDropped++;
@@ -303,14 +305,14 @@ export class XModemTransport extends BaseTransport {
       this.receive.expectedSequence = (this.receive.expectedSequence % 255) + 1;
       this.send.retries = 0; // Reset retries after successful packet
       this.stateChanged(State.RECEIVING_SEND_ACK, `Sending ACK for sequence ${seq}`);
-      console.log(`[XModemTransport] Sending ACK for seq=${seq}`);
+      console.log(`[XModemTransport:${this.config.name}] Sending ACK for seq=${seq}`);
       await this.sendControl('ACK');
       this.stateChanged(State.RECEIVING_WAIT_BLOCK, 'Waiting for next block');
     } else if (this.isPreviousSequence(seq, this.receive.expectedSequence)) {
       // Duplicate packet - read payload to consume it from stream, then ACK and ignore
       await this.waitForBytes(len + 2, { signal: this.createTimeoutSignal(externalSignal) }); // Skip payload+CRC
       this.statistics.packetsDropped++;
-      console.log(`[XModemTransport] Duplicate packet ignored: seq=${seq} (expected=${this.receive.expectedSequence})`);
+      console.log(`[XModemTransport:${this.config.name}] Duplicate packet ignored: seq=${seq} (expected=${this.receive.expectedSequence})`);
       await this.sendControl('ACK');
     } else {
       // Unexpected sequence - cannot recover
@@ -330,7 +332,7 @@ export class XModemTransport extends BaseTransport {
       offset += data.length;
     }
 
-    console.log(`[XModemTransport] Received total data length: ${result.length} bytes`);
+    console.log(`[XModemTransport:${this.config.name}] Received total data length: ${result.length} bytes`);
     return result;
   }
   
@@ -413,10 +415,10 @@ export class XModemTransport extends BaseTransport {
         for (const byte of data) {
           // Only accept control bytes
           if (byte === ControlType.ACK || byte === ControlType.NAK || byte === ControlType.EOT) {
-            console.log(`[XModemTransport] Control byte received: ${byte}`);
+            console.log(`[XModemTransport:${this.config.name}] Control byte received: ${byte}`);
             return byte;
           } else {
-            console.log(`[XModemTransport] Non-control byte ignored: ${byte}`);
+            console.log(`[XModemTransport:${this.config.name}] Non-control byte ignored: ${byte}`);
             // Ignore non-control bytes (like SOH, data bytes from self-transmission)
           }
         }
@@ -430,7 +432,7 @@ export class XModemTransport extends BaseTransport {
           throw new Error('Operation aborted at waitForControlByte');
         }
         // For other errors, continue the loop (but this might lead to infinite retry)
-        console.warn(`[XModemTransport] demodulate() error in waitForControlByte: ${error}`);
+        console.warn(`[XModemTransport:${this.config.name}] demodulate() error in waitForControlByte: ${error}`);
       }
     }
   }
@@ -447,11 +449,11 @@ export class XModemTransport extends BaseTransport {
         const data = await this.dataChannel.demodulate({ signal: options.signal });
         for (const byte of data) {
           if (byte === ControlType.ACK) {
-            console.log(`[XModemTransport] ACK received: ${byte}`);
+            console.log(`[XModemTransport:${this.config.name}] ACK received: ${byte}`);
             return; // Success - ACK received
           } else {
             // Ignore all other bytes including our own EOT echo-back
-            console.log(`[XModemTransport] Non-ACK byte ignored while waiting for ACK: ${byte}`);
+            console.log(`[XModemTransport:${this.config.name}] Non-ACK byte ignored while waiting for ACK: ${byte}`);
           }
         }
       } catch (error) {
@@ -464,7 +466,7 @@ export class XModemTransport extends BaseTransport {
           throw new Error('Operation aborted at waitForACK');
         }
         // For other errors, continue the loop (but this might lead to infinite retry)
-        console.warn(`[XModemTransport] demodulate() error in waitForACK: ${error}`);
+        console.warn(`[XModemTransport:${this.config.name}] demodulate() error in waitForACK: ${error}`);
       }
     }
   }
@@ -559,8 +561,8 @@ export class XModemTransport extends BaseTransport {
     
     // Unified logging format
     const contextStr = context ? ` (${context})` : '';
-    console.log(`[XModemTransport] State: ${State[oldState]} -> ${State[newState]}${contextStr}`);
-    
+    console.log(`[XModemTransport:${this.config.name}] State: ${State[oldState]} -> ${State[newState]}${contextStr}`);
+
     // Emit state change event for debugging and testing
     this.emit('statechange', stateEvent);
   }

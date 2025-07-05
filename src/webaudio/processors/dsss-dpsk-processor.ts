@@ -75,12 +75,18 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
   // Abort handling
   private abortController: MyAbortController | null = null;
   
+  // Debug counters
+  private debugCounter = 0;
+  private processCallCount = 0;
+  private modulationCallCount = 0;
+  private messageCount = 0;
+  
   constructor(options?: AudioWorkletNodeOptions) {
     super();
     
     this.instanceName = options?.processorOptions?.name || 'dsss-dpsk';
-    console.log(`[DsssDpskProcessor:${this.instanceName}] Initialized`);
-    
+    this.log(`Initialized`);
+
     // Default configuration
     this.config = {
       sequenceLength: 31,
@@ -97,6 +103,10 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     
     // Set up message handler
     this.port.onmessage = this.handleMessage.bind(this);
+  }
+
+  private log(message: string): void {
+    console.log(`[DsssDpskProcessor:${this.instanceName}] ${message}`);
   }
   
   private createDemodulator(): DsssDpskDemodulator {
@@ -117,6 +127,12 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     try {
       const input = inputs[0]?.[0];
       const output = outputs[0]?.[0];
+      
+      // Debug: Track process calls
+      this.processCallCount = (this.processCallCount || 0) + 1;
+      if (this.processCallCount === 1 || this.processCallCount % 2000 === 0) {
+        this.log(`process() called ${this.processCallCount} times, pendingModulation: ${!!this.pendingModulation}`);
+      }
       
       // Validate input/output arrays
       if (!inputs || !outputs) {
@@ -150,6 +166,15 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     // Add samples to demodulator
     this.demodulator.addSamples(input);
     
+    // Debug: Log input signal characteristics occasionally (static counter to avoid random)
+    this.debugCounter = (this.debugCounter || 0) + 1;
+    if (this.debugCounter === 1000) { // Every 1000 calls
+      const inputLevel = Math.sqrt(input.reduce((sum, x) => sum + x*x, 0) / input.length);
+      const maxVal = Math.max(...Array.from(input));
+      this.log(`Input RMS: ${inputLevel.toFixed(4)}, max: ${maxVal.toFixed(3)}, samples: ${input.length}`);
+      this.debugCounter = 0;
+    }
+    
     // Process all available bits (optimize for AudioWorklet performance)
     const maxIterations = 20; // Reduced for better real-time performance
     
@@ -159,17 +184,25 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
         break; // No more bits available
       }
       
+      // Debug: Log when bits are available (disabled for stability)
+      // if (bits.length > 0) {
+      //   this.log(`[DsssDpskProcessor] Demodulator provided ${bits.length} bits`);
+      // }
+      
       const frames = this.framer.process(bits);
       
       // Store decoded data efficiently
       if (frames.length > 0) {
+        // this.log(`[DsssDpskProcessor] Framer produced ${frames.length} frames`);
         for (const frame of frames) {
+          // this.log(`[DsssDpskProcessor] Frame data: ${frame.userData.length} bytes`);
           this.decodedDataBuffer.push(frame.userData);
         }
         
         // Resolve demodulation promise if waiting
         if (this.demodulationPromise) {
           const data = this.collectDecodedData();
+          this.log(`Demodulation complete: ${data.length} bytes total`);
           this.demodulationPromise.resolve(data);
           this.demodulationPromise = null;
         }
@@ -185,6 +218,12 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
   private processModulation(output: Float32Array): void {
     // Clear output first for safety
     output.fill(0);
+    
+    // Debug: Log modulation calls occasionally
+    this.modulationCallCount = (this.modulationCallCount || 0) + 1;
+    if (this.modulationCallCount === 1 || this.modulationCallCount % 1000 === 0) {
+      this.log(`processModulation() called ${this.modulationCallCount} times, pendingModulation: ${!!this.pendingModulation}, output length: ${output.length}`);
+    }
     
     if (!this.pendingModulation) {
       return; // No modulation in progress
@@ -210,6 +249,14 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       if (count > 0) {
         output.set(samples.subarray(index, index + count));
         this.pendingModulation.index += count;
+        
+        // Debug: Log modulation progress (minimal)
+        if (index === 0) {
+          this.log(`Started outputting ${samples.length} samples, first values: [${samples.slice(0,5).map(x=>x.toFixed(3)).join(',')}]`);
+        }
+        if (this.pendingModulation.index >= samples.length) {
+          this.log(`Completed outputting all samples`);
+        }
       }
       
       // Check if modulation is complete
@@ -270,17 +317,24 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
    * @param event - Message event containing command and data
    */
   private async handleMessage(event: MessageEvent<WorkletMessage>): Promise<void> {
-    // Validate message structure
-    if (!event.data || typeof event.data !== 'object') {
-      console.error('[DsssDpskProcessor] Invalid message format');
-      return;
-    }
+    try {
+      // Validate message structure
+      if (!event.data || typeof event.data !== 'object') {
+        console.error('[DsssDpskProcessor] Invalid message format');
+        return;
+      }
+      
+      const { id, type, data } = event.data;
+      
+      // Debug: Track message handling
+      this.messageCount = (this.messageCount || 0) + 1;
+      if (this.messageCount <= 10 || this.messageCount % 100 === 0) {
+        this.log(`[DsssDpskProcessor] handleMessage #${this.messageCount}: type=${type}, id=${id}`);
+      }
     
-    const { id, type, data } = event.data;
-    
-    // Validate required fields
-    if (!id || !type) {
-      console.error('[DsssDpskProcessor] Missing required message fields');
+    // Validate required fields (id can be null for no-reply messages)
+    if (!type) {
+      console.error('[DsssDpskProcessor] Missing required message type');
       return;
     }
     
@@ -326,13 +380,23 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
           throw new Error(`Unknown message type: ${type}`);
       }
       
-      this.port.postMessage({ id, type: 'result', data: result });
+      // Send reply only if id is not null (no-reply messages)
+      if (id !== null) {
+        this.port.postMessage({ id, type: 'result', data: result });
+      }
     } catch (error) {
-      this.port.postMessage({
-        id,
-        type: 'error',
-        data: { message: error instanceof Error ? error.message : String(error) }
-      });
+      // Send error reply only if id is not null
+      if (id !== null) {
+        this.port.postMessage({
+          id,
+          type: 'error',
+          data: { message: error instanceof Error ? error.message : String(error) }
+        });
+      }
+    }
+    } catch (outerError) {
+      console.error(`[DsssDpskProcessor] Outer handleMessage error:`, outerError);
+      // Prevent stack overflow by not rethrowing
     }
   }
   
@@ -397,6 +461,9 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
    * @returns Promise that resolves when modulation is complete
    */
   async modulate(data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void> {
+    this.log(`[DsssDpskProcessor] Modulation requested: ${data.length} bytes`);
+    this.log(`[DsssDpskProcessor] Data: [${Array.from(data.slice(0, 16)).join(', ')}${data.length > 16 ? '...' : ''}]`);
+
     if (this.pendingModulation || this.modulationPromise) {
       throw new Error('Modulation already in progress');
     }
@@ -457,20 +524,41 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       writeOffset += frame.length;
     }
     
-    // Set up modulation state
-    this.pendingModulation = { samples: combinedSamples, index: 0 };
+    this.log(`[DsssDpskProcessor] Generated ${frames.length} frames, total ${totalLength} samples`);
     
-    return new Promise((resolve, reject) => {
-      this.modulationPromise = { resolve, reject };
-      
-      options?.signal?.addEventListener('abort', () => {
-        this.pendingModulation = null;
-        if (this.modulationPromise) {
-          this.modulationPromise.reject(new Error('Aborted'));
-          this.modulationPromise = null;
-        }
-      }, { once: true });
-    });
+    try {
+      // Safe min/max calculation for large arrays
+      let minVal = combinedSamples[0];
+      let maxVal = combinedSamples[0];
+      for (let i = 1; i < combinedSamples.length; i++) {
+        if (combinedSamples[i] < minVal) minVal = combinedSamples[i];
+        if (combinedSamples[i] > maxVal) maxVal = combinedSamples[i];
+      }
+      this.log(`[DsssDpskProcessor] Sample range: [${minVal.toFixed(3)}, ${maxVal.toFixed(3)}]`);
+
+      // Set up modulation state
+      this.pendingModulation = { samples: combinedSamples, index: 0 };
+      this.log(`[DsssDpskProcessor] ✓ pendingModulation set: ${!!this.pendingModulation}, samples length: ${this.pendingModulation.samples.length}`);
+
+      const promise = new Promise((resolve, reject) => {
+        this.modulationPromise = { resolve, reject };
+        this.log(`[DsssDpskProcessor] ✓ Promise created, waiting for AudioWorklet processing...`);
+
+        options?.signal?.addEventListener('abort', () => {
+          this.pendingModulation = null;
+          if (this.modulationPromise) {
+            this.modulationPromise.reject(new Error('Aborted'));
+            this.modulationPromise = null;
+          }
+        }, { once: true });
+      });
+
+      this.log(`[DsssDpskProcessor] ✓ Modulation setup complete, returning promise`);
+      return promise;
+    } catch (setupError) {
+      console.error(`[DsssDpskProcessor] Error during modulation setup:`, setupError);
+      throw setupError;
+    }
   }
   
   /**
