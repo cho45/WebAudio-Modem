@@ -146,7 +146,6 @@ export function dsssDespread(
     // } else {
       const sortedMagnitudes = Array.from(chips).map(Math.abs).sort((a, b) => a - b);
       const medianMagnitude = sortedMagnitudes[Math.floor(sortedMagnitudes.length / 2)];
-      console.log(`[DsssDpskDemodulator] dsssDespread: medianMagnitude=${medianMagnitude}`);
       estimatedNoiseVar = Math.pow(medianMagnitude / 0.674, 2);
       estimatedNoiseVar = Math.max(estimatedNoiseVar, 1.0); // Prevent division by zero, adjusted for noisy signals
     // }

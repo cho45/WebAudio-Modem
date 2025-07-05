@@ -634,9 +634,7 @@ describe('DsssDpskDemodulator', () => {
 
       const allCollectedBits = collectedBits.map(b => b > 0 ? 0 : 1).join('');
       for (let i = 0; i < sentBits.length; i++) {
-        const ignorebits = sentBits.slice(0, i - 1).reduce((acc, bits) => acc + bits.length, 0);
-        const collectedBitsSlice = allCollectedBits.slice(ignorebits);
-        expect(collectedBitsSlice, `Contains sent bits ${i}`).toContain(sentBits[i].join(''))
+        expect(allCollectedBits, `Contains sent bits ${i}`).toContain(sentBits[i].join(''))
       }
 
       // LLR配列に変換

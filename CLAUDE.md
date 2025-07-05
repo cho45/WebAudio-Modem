@@ -8,17 +8,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WebAudio-Modem is a modern TypeScript implementation of audio modem functionality using the Web Audio API. The project provides complete FSK (Frequency Shift Keying) modulation and XModem transport protocol implementation for reliable data transmission over audio channels.
+WebAudio-Modem is a modern TypeScript implementation of advanced audio modem functionality using the Web Audio API. The project provides complete FSK (Frequency Shift Keying) and DSSS-DPSK (Direct Sequence Spread Spectrum - Differential Phase Shift Keying) modulation schemes with XModem transport protocol implementation for reliable data transmission over audio channels.
 
 ## Architecture Overview
 
-The codebase implements a complete audio modem stack with three main layers:
+The codebase implements a complete audio modem stack with five main layers:
 
-### Physical Layer: FSK Modem (`src/modems/fsk.ts`)
+### Physical Layer: Modulation Schemes
+#### FSK Modem (`src/modems/fsk.ts`)
 - **FSKCore class**: Core FSK modulation/demodulation engine with I/Q detection
 - **Mathematical precision**: Phase-continuous FSK with proper signal processing
 - **Configurable parameters**: Mark/space frequencies, baud rates, filter characteristics
 - **Signal quality monitoring**: SNR, BER, and other metrics
+
+#### DSSS-DPSK Modem (`src/modems/dsss-dpsk/`)
+- **DSSSCore class**: Advanced spread spectrum modulation with differential phase shift keying
+- **M-sequence spreading**: Support for 15, 31, 63, 127, 255 chip sequences
+- **Matched filter synchronization**: Robust frame detection and timing recovery
+- **State machine processing**: Complete synchronization and demodulation pipeline
+- **Anti-jamming capability**: Inherent interference resistance through spread spectrum
+
+### Forward Error Correction Layer (`src/fec/`)
+- **LDPC codes**: Low-density parity-check codes with sum-product decoding
+- **BCH codes**: Binary BCH codes with algebraic decoding over GF(2^m)
+- **LDPC analyzer**: Parity check matrix analysis and systematic form conversion
+- **Multiple code rates**: Support for 128x64, 256x128, 512x256, 1024x512 matrices
 
 ### Data Link Layer: XModem Transport (`src/transports/xmodem/`)
 - **XModemPacket**: Packet creation, serialization, and parsing with CRC-16-CCITT
@@ -31,16 +45,18 @@ The codebase implements a complete audio modem stack with three main layers:
 - **Interface definitions**: IModulator and ITransport for extensibility
 - **Base classes**: Common functionality for modulators and transports
 
-### Signal Processing (`src/dsp/filters.ts`, `src/utils/`)
+### Signal Processing (`src/dsp/`, `src/utils/`)
 - **Digital filters**: IIR/FIR lowpass, highpass, bandpass implementations
+- **AGC processing**: Automatic gain control for signal normalization
 - **Buffer management**: RingBuffer for real-time audio streaming
+- **M-sequence generation**: Pseudo-random sequence generation for spreading
 - **CRC calculation**: CRC-16-CCITT for error detection
 
 ## Development Commands
 
 ```bash
 # Testing
-npm test                    # Run all tests (287 total: 266 Node.js + 21 browser)
+npm test                    # Run all tests (598 total: 577 Node.js + 21 browser)
 npm run test:node          # Run Node.js tests only
 npm run test:browser       # Run browser-specific tests
 
@@ -57,13 +73,16 @@ npm run preview            # Preview production build
 ### Running Specific Tests
 ```bash
 # Test specific modules
-npm test tests/modems/                          # FSK modem tests
+npm test tests/modems/                          # FSK and DSSS-DPSK modem tests
+npm test tests/fec/                            # Forward error correction tests
 npm test tests/transports/                     # XModem transport tests
 npm test tests/core.node.test.ts              # Core infrastructure tests
 
 # Test specific components
-npm test tests/modems/fsk-modulation.node.test.ts     # FSK modulation only
-npm test tests/transports/xmodem/xmodem.node.test.ts  # XModem protocol only
+npm test tests/modems/fsk-modulation.node.test.ts           # FSK modulation only
+npm test tests/modems/dsss-dpsk-demodulator.node.test.ts    # DSSS-DPSK demodulation
+npm test tests/fec/ldpc.node.test.ts                        # LDPC error correction
+npm test tests/transports/xmodem/xmodem.node.test.ts        # XModem protocol only
 ```
 
 ## Key Implementation Details
@@ -75,6 +94,21 @@ The FSK implementation uses mathematically precise I/Q demodulation:
 - **Bit synchronization**: State machine with Start Frame Delimiter (SFD) detection
 - **Adaptive thresholds**: Dynamic adjustment based on signal characteristics
 
+### DSSS-DPSK Advanced Modulation Architecture
+The DSSS-DPSK implementation provides robust spread spectrum communication:
+- **M-sequence spreading**: Mathematically optimal pseudo-random sequences
+- **Differential encoding**: Phase-shift keying with differential detection
+- **Matched filter correlation**: Optimal signal detection under noise
+- **Multi-state synchronization**: Comprehensive state machine for robust frame detection
+- **Chip-level processing**: Full spread spectrum signal processing pipeline
+
+### Forward Error Correction Implementation
+Production-ready FEC with multiple algorithms:
+- **LDPC codes**: Sum-product algorithm with systematic parity check matrices
+- **BCH codes**: Algebraic decoding over finite fields GF(2^m)
+- **Matrix analysis**: Gaussian elimination for systematic form conversion
+- **Multi-rate support**: Configurable code rates from 1/2 to 7/8
+
 ### XModem Protocol Implementation
 Enhanced XModem with variable-length payloads:
 - **Packet format**: SOH | SEQ | ~SEQ | LEN | PAYLOAD | CRC-16
@@ -84,9 +118,11 @@ Enhanced XModem with variable-length payloads:
 
 ### Current Implementation Status
 - ✅ **FSK Modem**: Complete implementation with comprehensive testing
+- ✅ **DSSS-DPSK Modem**: Full spread spectrum implementation with state machine
+- ✅ **Forward Error Correction**: LDPC and BCH codes with production-ready decoders
 - ✅ **XModem Transport**: Full protocol with error recovery and fragmentation
 - ✅ **Core Infrastructure**: Event system and base classes
-- ✅ **Signal Processing**: Complete DSP toolkit
+- ✅ **Signal Processing**: Complete DSP toolkit with AGC and M-sequence generation
 - ✅ **WebAudio Integration**: AudioWorklet processors and data channel implemented
 
 ## File Structure
@@ -94,22 +130,37 @@ Enhanced XModem with variable-length payloads:
 ```
 src/
 ├── core.ts                          # Core interfaces and base classes
-├── modems/fsk.ts                    # FSK modulation/demodulation engine
+├── modems/
+│   ├── fsk.ts                       # FSK modulation/demodulation engine
+│   └── dsss-dpsk/                   # DSSS-DPSK spread spectrum implementation
+│       ├── dsss-dpsk.ts             # Main DSSS-DPSK modulator
+│       ├── dsss-dpsk-demodulator.ts # Demodulator with state machine
+│       ├── framer.ts                # Frame synchronization
+│       └── index.ts                 # Module exports
+├── fec/                             # Forward Error Correction
+│   ├── ldpc.ts                      # LDPC encoder/decoder
+│   ├── bch.ts                       # BCH encoder/decoder
+│   └── ldpc-analyzer.ts             # LDPC matrix analysis
 ├── transports/xmodem/               # XModem protocol implementation
 │   ├── packet.ts                    # Packet handling (create/parse/verify)
 │   ├── types.ts                     # Type definitions and constants
 │   └── xmodem.ts                    # Transport protocol with ARQ
-├── dsp/filters.ts                   # Digital signal processing filters
-├── utils/crc16.ts                   # CRC-16-CCITT implementation
-└── utils.ts                         # RingBuffer and utilities
+├── dsp/                             # Digital Signal Processing
+│   ├── filters.ts                   # Digital filters (IIR/FIR)
+│   └── agc.ts                       # Automatic gain control
+├── utils/
+│   ├── crc16.ts                     # CRC-16-CCITT implementation
+│   ├── msequence.ts                 # M-sequence generation
+│   └── utils.ts                     # RingBuffer and utilities
 
-tests/                               # 266 Node.js tests + 21 browser tests
+tests/                               # 577 Node.js tests + 21 browser tests
 ├── core.node.test.ts               # Event system tests (21 tests)
-├── modems/                         # FSK modem tests (70 tests)
+├── modems/                         # FSK and DSSS-DPSK modem tests (82 tests)
+├── fec/                            # Forward error correction tests (16 tests)
 ├── transports/xmodem/              # XModem protocol tests (51 tests)
-├── dsp/                            # Signal processing tests (35 tests)
-├── utils/                          # Utility tests (27 tests)
-└── webaudio/                       # WebAudio integration tests (12 browser tests)
+├── dsp/                            # Signal processing tests (38 tests)
+├── utils/                          # Utility tests (30 tests)
+└── webaudio/                       # WebAudio integration tests (21 browser tests)
 ```
 
 ## Technical Standards
@@ -163,6 +214,8 @@ npm run dev                 # Start development server at http://localhost:3000
 
 The demo directory contains working examples of the modem functionality:
 - Interactive FSK modulation/demodulation demo
+- DSSS-DPSK spread spectrum demonstration
+- LDPC error correction visualization
 - Real-time audio processing with WebAudio API
 - XModem file transfer examples
 
@@ -173,6 +226,8 @@ The `docs/` directory contains detailed design documents:
 - `PACKET_PROTOCOL_DESIGN.md` - XModem protocol details
 - `architecture.md` - System architecture overview
 - `README.md` - XModem packet structure reference (Japanese)
+- `DSSS_DPSK_STATE_TRANSITIONS.md` - DSSS-DPSK state machine documentation
+- `src/modems/dsss-dpsk/README.md` - DSSS-DPSK implementation details
 
 ## Development Guidelines
 
@@ -191,6 +246,8 @@ The `docs/` directory contains detailed design documents:
 ### When Modifying Core Components
 - **EventEmitter**: Any changes require updating core.node.test.ts
 - **FSKCore**: Modulation changes need comprehensive signal validation
+- **DSSSCore**: DSSS-DPSK changes require state machine validation
+- **LDPC/BCH**: FEC changes need mathematical correctness verification
 - **XModemTransport**: Protocol changes must maintain backward compatibility
 - **IModulator/ITransport**: Interface changes affect all implementations
 
@@ -200,6 +257,7 @@ The architecture supports future modulation schemes:
 - **PSK implementation**: Follow IModulator interface in `src/modems/psk.ts`
 - **QAM implementation**: Use same pattern as FSK for complex modulation
 - **New protocols**: Implement ITransport for additional transport protocols
+- **Additional FEC**: Extend FEC layer with Reed-Solomon, Turbo codes
 - **AudioWorklet integration**: Ready for Web Audio API real-time processing
 
-The codebase is production-ready for FSK modem applications and provides a solid foundation for extending to other modulation schemes.
+The codebase is production-ready for both FSK and DSSS-DPSK modem applications with comprehensive error correction capabilities, providing a solid foundation for extending to other modulation schemes and transport protocols.

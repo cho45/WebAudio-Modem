@@ -15,7 +15,7 @@ import {
 const CONSTANTS = {
   // LLR thresholds for bit quality detection
   LLR: {
-    WEAK_THRESHOLD: 10,          // Below this absolute value, bit is considered weak
+    WEAK_THRESHOLD: 20,          // Below this absolute value, bit is considered weak
     STRONG_ZERO_THRESHOLD: 50,   // Strong 0-bit threshold for resync trigger
   },
   
@@ -326,8 +326,11 @@ export class DsssDpskDemodulator {
         return null;
       }
       
+      // ノイズ分散を推定
+      const estimatedNoiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
+      
       // DSSS逆拡散
-      const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, 0.1);
+      const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, estimatedNoiseVariance);
       
       if (llrs && llrs.length > 0) {
         // LLRを量子化してInt8に変換
@@ -420,6 +423,7 @@ export class DsssDpskDemodulator {
           this.syncState.bits.resyncCounter > CONSTANTS.SYNC.RESYNC_TRIGGER_COUNT) {
         debugLog(`[DsssDpskDemodulator] Strong 0-bit detected (LLR=${llr}), attempting resync`);
         this._tryResync();
+        this.syncState.bits.resyncCounter = 0; // 再同期後はカウンタをリセット
       }
     }
   }
@@ -455,6 +459,58 @@ export class DsssDpskDemodulator {
       samples[i] = this.sampleBuffer[(this.sampleReadIndex + offset + i) % this.sampleBuffer.length];
     }
     return samples;
+  }
+  
+  /**
+   * Estimate noise variance from chip LLRs
+   */
+  private _estimateNoiseVariance(chipLlrs: Float32Array): number {
+    if (chipLlrs.length === 0) {
+      return 10.0; // Default high noise for empty input
+    }
+    
+    // Calculate signal statistics
+    let sum = 0;
+    let sumSquares = 0;
+    let sumAbs = 0;
+    
+    for (let i = 0; i < chipLlrs.length; i++) {
+      const val = chipLlrs[i];
+      sum += val;
+      sumSquares += val * val;
+      sumAbs += Math.abs(val);
+    }
+    
+    const mean = sum / chipLlrs.length;
+    const variance = (sumSquares / chipLlrs.length) - (mean * mean);
+    const meanAbs = sumAbs / chipLlrs.length;
+    
+    // For strong DPSK signals, we expect chip values near ±1 with low variance
+    // For weak/noise signals, values will be smaller and/or more variable
+    
+    // Base noise estimate on signal strength and consistency
+    let noiseVariance;
+    
+    if (meanAbs > 0.8 && variance < 0.3) {
+      // Strong, consistent signal - low noise
+      noiseVariance = 0.1;
+    } else if (meanAbs > 0.7) {
+      // Good signal - moderate noise  
+      noiseVariance = 1.0 + variance * 2.0;
+    } else if (meanAbs > 0.4) {
+      // Moderate signal - higher noise
+      noiseVariance = 5.0 + variance * 5.0;
+    } else {
+      // Weak signal - very high noise
+      noiseVariance = 10.0 + variance * 20.0;
+    }
+    
+    // Ensure reasonable bounds
+    noiseVariance = Math.max(0.01, Math.min(50.0, noiseVariance));
+    
+    debugLog(`[DsssDpskDemodulator] _estimateNoiseVariance: meanAbs=${meanAbs}, variance=${variance}, estimated=${noiseVariance}`);
+    
+    return noiseVariance;
   }
   
   /**
