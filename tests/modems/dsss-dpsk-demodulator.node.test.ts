@@ -505,33 +505,10 @@ describe('DsssDpskDemodulator', () => {
       const demodulator = new DsssDpskDemodulator(defaultConfig);
       const framer = new DsssDpskFramer();
 
-      // Create a frame with test data
-      const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
-      const frameOptions = {
-        sequenceNumber: 0,
-        frameType: 0,
-        ldpcNType: 0
-      };
-
-      console.log(`[Framer Test] Building frame with data: ${Array.from(testData)}`);
-      const dataFrame = framer.build(testData, frameOptions);
-      console.log(`[Framer Test] Built frame with ${dataFrame.bits.length} bits`);
-
-      // Modulate the frame
-      const chips = modem.dsssSpread(dataFrame.bits, defaultConfig.sequenceLength, defaultConfig.seed);
-      const phases = modem.dpskModulate(chips);
-      const signal = modem.modulateCarrier(
-        phases,
-        defaultConfig.samplesPerPhase,
-        defaultConfig.sampleRate,
-        defaultConfig.carrierFreq
-      );
-
-      console.log(`[Framer Test] Generated signal with ${signal.length} samples`);
-
       // ストリーミング処理: 128サンプルずつ処理（AudioWorklet標準）
       const CHUNK_SIZE = 128;
-      let processedSamples = 0;
+      const FRAME_COUNT = 3;
+      const sentBits: number[][] = [];
       const collectedBits: number[] = [];
 
       // ノイズを先に加える（現実的なシナリオ）
@@ -555,33 +532,81 @@ describe('DsssDpskDemodulator', () => {
         noiseProcessed += CHUNK_SIZE;
       }
 
-      // 信号を128サンプルずつ処理
-      while (processedSamples < signal.length) {
-        const endIdx = Math.min(processedSamples + CHUNK_SIZE, signal.length);
-        const chunk = new Float32Array(CHUNK_SIZE);
-        console.log(`[Framer Test] Processing chunk from ${processedSamples} to ${endIdx}`);
+      for (let i = 0; i < FRAME_COUNT; i++) {
+        // Create a frame with test data
+        const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20, i]); // "Hello"
+        const frameOptions = {
+          sequenceNumber: 0,
+          frameType: 0,
+          ldpcNType: 0
+        };
 
-        // チャンクに信号をコピー（最後のチャンクは0でパディング）
-        const signalPart = signal.slice(processedSamples, endIdx);
-        chunk.set(signalPart, 0);
+        console.log(`[Framer Test] Building frame with data: ${Array.from(testData)}`);
+        const dataFrame = framer.build(testData, frameOptions);
+        console.log(`[Framer Test] Built frame with ${dataFrame.bits.length} bits`);
+        sentBits.push([...dataFrame.bits]);
 
-        // サンプルを追加
-        demodulator.addSamples(chunk);
+        // Modulate the frame
+        const chips = modem.dsssSpread(dataFrame.bits, defaultConfig.sequenceLength, defaultConfig.seed);
+        const phases = modem.dpskModulate(chips);
+        const signal = modem.modulateCarrier(
+          phases,
+          defaultConfig.samplesPerPhase,
+          defaultConfig.sampleRate,
+          defaultConfig.carrierFreq
+        );
 
-        // 利用可能なビットを取得
-        const bits = demodulator.getAvailableBits();
-        if (bits.length > 0) {
-          console.log(`[Framer Test] Got ${bits.length} bits at chunk ${Math.floor(processedSamples / CHUNK_SIZE)}`);
-          for (const bit of bits) {
-            collectedBits.push(bit);
+        console.log(`[Framer Test] Generated signal with ${signal.length} samples`);
+
+        // 信号を128サンプルずつ処理
+        let processedSamples = 0;
+        while (processedSamples < signal.length) {
+          const endIdx = Math.min(processedSamples + CHUNK_SIZE, signal.length);
+          const chunk = new Float32Array(CHUNK_SIZE);
+          // console.log(`[Framer Test] Processing chunk from ${processedSamples} to ${endIdx}`);
+
+          // チャンクに信号をコピー（最後のチャンクは0でパディング）
+          const signalPart = signal.slice(processedSamples, endIdx);
+          chunk.set(signalPart, 0);
+
+          // サンプルを追加
+          demodulator.addSamples(chunk);
+
+          // 利用可能なビットを取得
+          const bits = demodulator.getAvailableBits();
+          if (bits.length > 0) {
+            console.log(`[Framer Test][${i}] Got ${bits.length} bits at chunk ${Math.floor(processedSamples / CHUNK_SIZE)}`);
+            for (const bit of bits) {
+              collectedBits.push(bit);
+            }
           }
+
+          processedSamples = endIdx;
         }
 
-        processedSamples = endIdx;
+        const gapChunks = 200;
+        for (let i = 0; i < gapChunks; i++) {
+          const extraChunk = new Float32Array(CHUNK_SIZE);
+          // 低ノイズまたは無音
+          for (let j = 0; j < CHUNK_SIZE; j++) {
+            extraChunk[j] = (Math.random() - 0.5) * 0.01;
+          }
+
+          demodulator.addSamples(extraChunk);
+          const bits = demodulator.getAvailableBits();
+
+          console.log(`[Framer Test] Sync state after chunk: ${JSON.stringify(demodulator.getSyncState())}`);
+          if (bits.length > 0) {
+            console.log(`[Framer Test] Got ${bits.length} more bits from gap chunk ${i}`);
+            for (const bit of bits) {
+              collectedBits.push(bit);
+            }
+          }
+        }
       }
 
       // 信号の後に追加のチャンクを処理（バッファ内の残りビットを取得）
-      const extraChunks = 10; // 10チャンク分の追加処理
+      const extraChunks = 100; // 10チャンク分の追加処理
       for (let i = 0; i < extraChunks; i++) {
         const extraChunk = new Float32Array(CHUNK_SIZE);
         // 低ノイズまたは無音
@@ -598,19 +623,25 @@ describe('DsssDpskDemodulator', () => {
             collectedBits.push(bit);
           }
         }
-
-        // 十分なビットが集まったら終了
-        if (collectedBits.length >= dataFrame.bits.length) {
-          console.log(`[Framer Test] Collected enough bits, stopping at chunk ${i}`);
-          break;
-        }
       }
 
-      console.log(`[Framer Test] Total collected bits: ${collectedBits.length}, expected: ${dataFrame.bits.length}`);
+      const totalSentBits = sentBits.reduce((acc, bits) => acc + bits.length, 0);
+
+      console.log(`[Framer Test] Total collected bits: ${collectedBits.length}, expected: ${totalSentBits}`);
       console.log(`[Framer Test] Collected bits: ${collectedBits.slice(0, 20).join(', ')}...`);
+
+      expect(collectedBits.length).toBeGreaterThanOrEqual(totalSentBits);
+
+      const allCollectedBits = collectedBits.map(b => b > 0 ? 0 : 1).join('');
+      for (let i = 0; i < sentBits.length; i++) {
+        const ignorebits = sentBits.slice(0, i - 1).reduce((acc, bits) => acc + bits.length, 0);
+        const collectedBitsSlice = allCollectedBits.slice(ignorebits);
+        expect(collectedBitsSlice, `Contains sent bits ${i}`).toContain(sentBits[i].join(''))
+      }
 
       // LLR配列に変換
       const llrBits = new Int8Array(collectedBits);
+      console.log(`llrBits length: ${llrBits.map(b => b > 0 ? 0 : 1).join('')}`);
 
       // Framerに渡す
       const decodedFrames = framer.process(llrBits);
@@ -621,13 +652,16 @@ describe('DsssDpskDemodulator', () => {
       console.log(`[Framer Test] Framer state: ${framerState.state}, buffer: ${framerState.bufferLength}`);
 
       // Should decode at least one frame
-      expect(decodedFrames.length).toBeGreaterThan(0);
+      expect(decodedFrames.length).toBe(FRAME_COUNT);
 
-      // Verify decoded data
-      const decodedData = decodedFrames[0].userData;
-      // FECによってパディングが含まれる可能性があるので、実際のデータ部分のみを比較
-      const actualData = decodedData.slice(0, testData.length);
-      expect(actualData).toEqual(testData);
+      for (let i = 0; i < FRAME_COUNT; i++) {
+        const expectedData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20, i]);
+        // Verify decoded data
+        const decodedData = decodedFrames[i].userData;
+        // FECによってパディングが含まれる可能性があるので、実際のデータ部分のみを比較
+        const actualData = decodedData.slice(0, expectedData.length);
+        expect(actualData).toEqual(expectedData);
+      }
     });
   });
 

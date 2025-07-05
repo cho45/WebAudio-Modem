@@ -21,8 +21,8 @@ const CONSTANTS = {
   
   // Sync management
   SYNC: {
-    CONSECUTIVE_WEAK_LIMIT: 10,  // Max weak bits before losing sync
-    RESYNC_TRIGGER_COUNT: 10,    // Strong bits needed before resync attempt
+    CONSECUTIVE_WEAK_LIMIT: 3,  // Max weak bits before losing sync
+    RESYNC_TRIGGER_COUNT: 8,    // Strong bits needed before resync attempt
     RESYNC_RANGE_CHIPS: 0.5,     // Search range in chips for resync
     RESYNC_THRESHOLD_SCALE: 0.8, // Scale factor for resync thresholds
   },
@@ -225,6 +225,7 @@ export class DsssDpskDemodulator {
   }
   
   private _trySync(): boolean {
+    console.log(`[DsssDpskDemodulator] Attempting sync...`);
     // 同期検索に必要なサンプル数がバッファにあるか確認
     const minSamplesNeeded = Math.floor(this.samplesPerBit * 1.5);
     const availableCount = this._getAvailableSampleCount();

@@ -209,7 +209,6 @@ export function dpskDemodulate(
     softChips[i - 1] = Math.cos(phaseDiff);
   }
   
-  console.log(`[DsssDpskDemodulator] dpskDemodulate: softChips (first 10) = ${softChips.slice(0, 10).join(', ')}`); // ここにログを追加
   return softChips;
 }
 
@@ -448,7 +447,7 @@ function decimatedMatchedFilter(
 } {
 
   // Debug: Log input parameters
-  console.log(`[MatchedFilter DEBUG] Input: received=${receivedSamples.length}, reference=${referenceSamples.length}, maxOffset=${maxSampleOffset}, decimation=${decimationFactor}`);
+  // console.log(`[MatchedFilter DEBUG] Input: received=${receivedSamples.length}, reference=${referenceSamples.length}, maxOffset=${maxSampleOffset}, decimation=${decimationFactor}`);
 
   // Step 1: Decimate input signals for speed
   const decimatedReceived = decimateSignal(receivedSamples, decimationFactor);
@@ -458,8 +457,8 @@ function decimatedMatchedFilter(
   const refLength = decimatedReference.length;
   const searchLength = Math.min(decimatedMaxOffset, decimatedReceived.length - refLength);
   
-  console.log(`[MatchedFilter DEBUG] Decimated: received=${decimatedReceived.length}, reference=${decimatedReference.length}, maxOffset=${decimatedMaxOffset}`);
-  console.log(`[MatchedFilter DEBUG] Search: refLength=${refLength}, searchLength=${searchLength}`);
+  // console.log(`[MatchedFilter DEBUG] Decimated: received=${decimatedReceived.length}, reference=${decimatedReference.length}, maxOffset=${decimatedMaxOffset}`);
+  // console.log(`[MatchedFilter DEBUG] Search: refLength=${refLength}, searchLength=${searchLength}`);
   
   if (searchLength <= 0) {
     console.log(`[MatchedFilter DEBUG] SearchLength <= 0, returning empty result`);
@@ -620,7 +619,7 @@ export function findSyncOffset(
   const minSamplesNeeded = referenceSamples.length;
   
   console.log(`[FindSync DEBUG] Input: received=${receivedSamples.length}, reference=${referenceSamples.length}, maxChipOffset=${maxChipOffset}`);
-  console.log(`[FindSync DEBUG] Calculated: maxSampleOffset=${maxSampleOffset}, minSamplesNeeded=${minSamplesNeeded}`);
+  // console.log(`[FindSync DEBUG] Calculated: maxSampleOffset=${maxSampleOffset}, minSamplesNeeded=${minSamplesNeeded}`);
   
   if (receivedSamples.length < minSamplesNeeded) {
     console.log(`[FindSync DEBUG] Insufficient samples: ${receivedSamples.length} < ${minSamplesNeeded}`);

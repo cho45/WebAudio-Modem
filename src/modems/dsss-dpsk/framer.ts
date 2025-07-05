@@ -310,12 +310,17 @@ export class DsssDpskFramer {
     while (true) {
       iterations++;
       if (iterations > maxIterations) {
-        console.warn(`[DsssDpskFramer] Processing hit iteration limit (${maxIterations}), breaking`);
+        console.warn(`[DsssDpskFramer] Processing hit iteration limit (${maxIterations}), breaking. State: ${FramerState[this.state]}, Buffer length: ${this.softBitBuffer.length}`);
         break;
       }
       
       const initialBufferLength = this.softBitBuffer.length;
       const processResult = this._processCurrentState(decodedFrames);
+      
+      // Debug: log processing progress (commented out for normal operation)
+      // if (iterations % 100 === 0) {
+      //   console.log(`[DsssDpskFramer] Iteration ${iterations}: State=${FramerState[this.state]}, Buffer=${this.softBitBuffer.length}, Frames=${decodedFrames.length}`);
+      // }
 
       if (processResult === 'exit') {
         break;
