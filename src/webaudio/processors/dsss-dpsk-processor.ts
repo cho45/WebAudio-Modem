@@ -21,7 +21,10 @@ import { MyAbortController } from './myabort';
 interface WorkletMessage {
   id: string;
   type: 'configure' | 'modulate' | 'demodulate' | 'reset' | 'abort';
-  data?: any;
+  data?: {
+    config?: Partial<DsssDpskConfig>;
+    bytes?: number[];
+  };
 }
 
 interface DsssDpskConfig {
@@ -33,6 +36,24 @@ interface DsssDpskConfig {
   peakToNoiseRatio?: number;
 }
 
+/**
+ * DSSS-DPSK AudioWorklet Processor
+ * 
+ * AudioWorklet processor for DSSS-DPSK modulation and demodulation.
+ * Handles real-time audio processing for Direct Sequence Spread Spectrum
+ * with Differential Phase Shift Keying modulation.
+ * 
+ * Responsibilities:
+ * - Modulation: Convert byte streams to DSSS-DPSK modulated audio
+ * - Demodulation: Convert audio to synchronized bit streams for upper layers
+ * - Frame processing: Integration with DsssDpskFramer for complete data recovery
+ * 
+ * External interface (maintained for compatibility):
+ * - handleMessage: Process commands from main thread
+ * - abortController: Support for operation cancellation
+ * - IDataChannel: Standard modulation/demodulation interface
+ * - IAudioProcessor: AudioWorklet process interface
+ */
 class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor, IDataChannel {
   private readonly instanceName: string;
   private config: Required<DsssDpskConfig>;
@@ -85,28 +106,52 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     });
   }
   
+  /**
+   * AudioWorklet process callback - handles real-time audio processing
+   * Processes demodulation from input samples and modulation to output samples
+   * @param inputs - Input audio channels (for demodulation)
+   * @param outputs - Output audio channels (for modulation)
+   * @returns true to continue processing
+   */
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    const input = inputs[0]?.[0];
-    const output = outputs[0]?.[0];
-    
-    if (input) {
-      this.processDemodulation(input);
+    try {
+      const input = inputs[0]?.[0];
+      const output = outputs[0]?.[0];
+      
+      // Validate input/output arrays
+      if (!inputs || !outputs) {
+        return true; // Continue processing even with invalid arrays
+      }
+      
+      // Process demodulation if input is available
+      if (input && input.length > 0) {
+        this.processDemodulation(input);
+      }
+      
+      // Process modulation if output is available
+      if (output && output.length > 0) {
+        this.processModulation(output);
+      }
+      
+      return true;
+    } catch (error) {
+      // Log error but continue processing to maintain AudioWorklet stability
+      console.error(`[DsssDpskProcessor] Error in process(): ${error}`);
+      return true;
     }
-    
-    if (output) {
-      this.processModulation(output);
-    }
-    
-    return true;
   }
   
+  /**
+   * Process input samples for demodulation
+   * Feeds samples to demodulator and processes resulting bits through framer
+   * @param input - Audio samples to demodulate
+   */
   private processDemodulation(input: Float32Array): void {
     // Add samples to demodulator
     this.demodulator.addSamples(input);
     
-    // Process all available bits (demodulator returns max 50 bits per call)
-    let totalBitsProcessed = 0;
-    const maxIterations = 100; // 防御的プログラミング
+    // Process all available bits (optimize for AudioWorklet performance)
+    const maxIterations = 20; // Reduced for better real-time performance
     
     for (let i = 0; i < maxIterations; i++) {
       const bits = this.demodulator.getAvailableBits();
@@ -114,62 +159,101 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
         break; // No more bits available
       }
       
-      totalBitsProcessed += bits.length;
-      
-      // Debug sync state and bit processing (only log significant events)
-      if (i === 0 || bits.length > 10 || !this.demodulator.getSyncState().locked) {
-        const syncState = this.demodulator.getSyncState();
-        console.log(`[DsssDpskProcessor] Iteration ${i}: bits=${bits.length}, sync=${syncState.locked}, correlation=${syncState.correlation.toFixed(3)}`);
-      }
-      
       const frames = this.framer.process(bits);
       
-      // Store decoded data
-      for (const frame of frames) {
-        this.decodedDataBuffer.push(frame.userData);
+      // Store decoded data efficiently
+      if (frames.length > 0) {
+        for (const frame of frames) {
+          this.decodedDataBuffer.push(frame.userData);
+        }
         
         // Resolve demodulation promise if waiting
-        if (this.demodulationPromise && this.decodedDataBuffer.length > 0) {
+        if (this.demodulationPromise) {
           const data = this.collectDecodedData();
           this.demodulationPromise.resolve(data);
           this.demodulationPromise = null;
         }
       }
     }
-    
-    // Log total bits processed if any
-    if (totalBitsProcessed > 0) {
-      console.log(`[DsssDpskProcessor] Total bits processed: ${totalBitsProcessed}`);
-    }
   }
   
+  /**
+   * Process modulation output to audio samples
+   * Copies modulated samples from pending buffer to output
+   * @param output - Output audio buffer to fill with modulated samples
+   */
   private processModulation(output: Float32Array): void {
+    // Clear output first for safety
     output.fill(0);
     
-    if (!this.pendingModulation) return;
+    if (!this.pendingModulation) {
+      return; // No modulation in progress
+    }
     
-    const { samples, index } = this.pendingModulation;
-    const remaining = samples.length - index;
-    const count = Math.min(remaining, output.length);
-    
-    // Copy samples to output
-    output.set(samples.subarray(index, index + count));
-    this.pendingModulation.index += count;
-    
-    // Check if modulation is complete
-    if (this.pendingModulation.index >= samples.length) {
+    try {
+      const { samples, index } = this.pendingModulation;
+      
+      // Validate modulation state
+      if (!samples || index < 0 || index >= samples.length) {
+        this.pendingModulation = null;
+        if (this.modulationPromise) {
+          this.modulationPromise.reject(new Error('Invalid modulation state'));
+          this.modulationPromise = null;
+        }
+        return;
+      }
+      
+      const remaining = samples.length - index;
+      const count = Math.min(remaining, output.length);
+      
+      // Copy samples to output efficiently
+      if (count > 0) {
+        output.set(samples.subarray(index, index + count));
+        this.pendingModulation.index += count;
+      }
+      
+      // Check if modulation is complete
+      if (this.pendingModulation.index >= samples.length) {
+        this.pendingModulation = null;
+        if (this.modulationPromise) {
+          this.modulationPromise.resolve();
+          this.modulationPromise = null;
+        }
+      }
+    } catch (error) {
+      // Handle modulation error gracefully
       this.pendingModulation = null;
       if (this.modulationPromise) {
-        this.modulationPromise.resolve();
+        this.modulationPromise.reject(error instanceof Error ? error : new Error(String(error)));
         this.modulationPromise = null;
       }
     }
   }
   
+  /**
+   * Collect and combine all decoded data from buffer
+   * @returns Combined byte array from all decoded frames
+   */
   private collectDecodedData(): Uint8Array {
-    const totalLength = this.decodedDataBuffer.reduce((sum, data) => sum + data.length, 0);
-    const result = new Uint8Array(totalLength);
+    // Optimize for common case of single buffer
+    if (this.decodedDataBuffer.length === 0) {
+      return new Uint8Array(0);
+    }
     
+    if (this.decodedDataBuffer.length === 1) {
+      const result = this.decodedDataBuffer[0];
+      this.decodedDataBuffer = [];
+      return result;
+    }
+    
+    // Multiple buffers: calculate total length efficiently
+    let totalLength = 0;
+    for (const data of this.decodedDataBuffer) {
+      totalLength += data.length;
+    }
+    
+    // Combine buffers efficiently
+    const result = new Uint8Array(totalLength);
     let offset = 0;
     for (const data of this.decodedDataBuffer) {
       result.set(data, offset);
@@ -180,14 +264,34 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     return result;
   }
   
+  /**
+   * Handle messages from main thread
+   * Processes configuration, modulation, demodulation, reset, and abort commands
+   * @param event - Message event containing command and data
+   */
   private async handleMessage(event: MessageEvent<WorkletMessage>): Promise<void> {
+    // Validate message structure
+    if (!event.data || typeof event.data !== 'object') {
+      console.error('[DsssDpskProcessor] Invalid message format');
+      return;
+    }
+    
     const { id, type, data } = event.data;
     
+    // Validate required fields
+    if (!id || !type) {
+      console.error('[DsssDpskProcessor] Missing required message fields');
+      return;
+    }
+    
     try {
-      let result: any;
+      let result: { success: boolean } | { bytes: number[] };
       
       switch (type) {
         case 'configure':
+          if (!data || typeof data.config !== 'object') {
+            throw new Error('Invalid configuration data');
+          }
           this.configure(data.config);
           result = { success: true };
           break;
@@ -203,6 +307,9 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
           break;
           
         case 'modulate':
+          if (!data || !Array.isArray(data.bytes)) {
+            throw new Error('Invalid modulation data: bytes array required');
+          }
           this.resetAbortController();
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController!.signal });
           result = { success: true };
@@ -229,12 +336,20 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     }
   }
   
+  /**
+   * Configure processor parameters
+   * @param config - Partial configuration object to merge with current config
+   */
   private configure(config: Partial<DsssDpskConfig>): void {
     this.config = { ...this.config, ...config };
     this.demodulator = this.createDemodulator();
     this.framer.reset();
   }
   
+  /**
+   * Reset processor state
+   * Clears all buffers, promises, and component state
+   */
   async reset(): Promise<void> {
     // Clear all state
     this.pendingModulation = null;
@@ -255,6 +370,10 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     }
   }
   
+  /**
+   * Abort current operations
+   * Cancels any active modulation or demodulation operations
+   */
   private abort(): void {
     if (this.abortController) {
       this.abortController.abort();
@@ -262,13 +381,22 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     }
   }
   
+  /**
+   * Reset abort controller
+   * Creates a new abort controller for subsequent operations
+   */
   private resetAbortController(): void {
     this.abort();
     this.abortController = new MyAbortController();
   }
   
-  // IDataChannel implementation
-  async modulate(data: Uint8Array, options?: { signal?: any }): Promise<void> {
+  /**
+   * Modulate data bytes into audio signal
+   * @param data - Byte array to modulate
+   * @param options - Optional configuration including abort signal
+   * @returns Promise that resolves when modulation is complete
+   */
+  async modulate(data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void> {
     if (this.pendingModulation || this.modulationPromise) {
       throw new Error('Modulation already in progress');
     }
@@ -345,7 +473,12 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     });
   }
   
-  async demodulate(options?: { signal?: any }): Promise<Uint8Array> {
+  /**
+   * Demodulate audio signal to recover data bytes
+   * @param options - Optional configuration including abort signal
+   * @returns Promise that resolves with recovered byte array
+   */
+  async demodulate(options?: { signal?: AbortSignal }): Promise<Uint8Array> {
     if (this.demodulationPromise) {
       throw new Error('Demodulation already in progress');
     }

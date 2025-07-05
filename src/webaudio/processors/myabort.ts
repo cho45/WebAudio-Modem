@@ -7,23 +7,27 @@
 
 export class MyAbortSignal {
   private _aborted = false;
-  private listeners: (() => void)[] = [];
+  private _reason: any = undefined;
+  private listeners: ((event: Event) => void)[] = [];
   onabort: (() => void) | null = null;
 
   get aborted() { return this._aborted; }
+  get reason() { return this._reason; }
 
-  addEventListener(type: 'abort', listener: () => void) {
+  addEventListener(type: 'abort', listener: (event: Event) => void, options?: boolean | AddEventListenerOptions) {
     if (type === 'abort') this.listeners.push(listener);
   }
 
-  removeEventListener(type: 'abort', listener: () => void) {
+  removeEventListener(type: 'abort', listener: (event: Event) => void, options?: boolean | EventListenerOptions) {
     if (type === 'abort') this.listeners = this.listeners.filter(l => l !== listener);
   }
 
-  dispatchEvent() {
+  dispatchEvent(event?: Event): boolean {
     this.onabort?.();
-    this.listeners.forEach(l => l());
+    const abortEvent = event || new Event('abort');
+    this.listeners.forEach(l => l(abortEvent));
     this.listeners = [];
+    return true;
   }
 
   throwIfAborted() {
@@ -34,9 +38,10 @@ export class MyAbortSignal {
 export class MyAbortController {
   signal = new MyAbortSignal();
 
-  abort() {
+  abort(reason?: any) {
     if (!this.signal.aborted) {
       (this.signal as any)._aborted = true;
+      (this.signal as any)._reason = reason;
       this.signal.dispatchEvent();
     }
   }
