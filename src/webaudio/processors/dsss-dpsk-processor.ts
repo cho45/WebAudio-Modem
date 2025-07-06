@@ -107,6 +107,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
   private createDemodulator(): DsssDpskDemodulator {
     return new DsssDpskDemodulator({
       ...this.config,
+      instanceName: this.instanceName,
       sampleRate
     });
   }

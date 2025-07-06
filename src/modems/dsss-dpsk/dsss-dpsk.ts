@@ -517,6 +517,7 @@ function detectSynchronizationPeak(
   thresholds: {
     correlationThreshold: number;    // Minimum correlation for detection (externally specified)
     peakToNoiseRatio: number;       // Minimum peak-to-noise ratio (externally specified)
+    externalNoiseFloor?: number;    // Optional: use external noise floor estimation
   }
 ): {
   bestSampleOffset: number;
@@ -557,10 +558,16 @@ function detectSynchronizationPeak(
   const bestSampleOffset = sampleOffsets[peakIndex];
   const peakCorrelation = correlations[peakIndex];
 
-  // Simple noise floor estimation from median
-  const sortedCorrelations = Array.from(correlations).map(Math.abs).sort((a, b) => a - b);
-  const medianCorrelation = sortedCorrelations[Math.floor(sortedCorrelations.length / 2)];
-  const noiseFloor = Math.max(medianCorrelation, 1e-6); // Prevent division by zero
+  // Use external noise floor if provided, otherwise estimate from correlations
+  let noiseFloor;
+  if (thresholds.externalNoiseFloor !== undefined) {
+    noiseFloor = Math.max(thresholds.externalNoiseFloor, 1e-6);
+  } else {
+    // Fallback to median-based estimation
+    const sortedCorrelations = Array.from(correlations).map(Math.abs).sort((a, b) => a - b);
+    const medianCorrelation = sortedCorrelations[Math.floor(sortedCorrelations.length / 2)];
+    noiseFloor = Math.max(medianCorrelation, 1e-6);
+  }
   
   const peakToNoiseRatio = peakValue / noiseFloor;
   
@@ -570,8 +577,13 @@ function detectSynchronizationPeak(
   const isFound = meetsCorrelationThreshold && meetsNoiseRatioThreshold;
   
   if (noiseFloor > 0.001) {
-    // DEBUG: Log critical values to understand why 0.5 works but 0.4 doesn't
+    // DEBUG: Log critical values to understand why peakToNoiseRatio differs between initial sync and resync
     console.log(`[SYNC DEBUG] ${isFound ? 'FOUND' : 'NOT FOUND'} peakValue=${peakValue.toFixed(4)} >= threshold=${correlationThreshold}, ratio=${peakToNoiseRatio.toFixed(2)} >= ${peakToNoiseRatioThreshold}`);
+    console.log(`[SYNC DEBUG] correlations.length=${correlations.length}, noiseFloor=${noiseFloor.toFixed(4)} (median), peakValue=${peakValue.toFixed(4)}`);
+    if (correlations.length <= 15) {
+      console.log(`[SYNC DEBUG] All correlations: [${Array.from(correlations).map(x => x.toFixed(3)).join(',')}]`);
+      console.log(`[SYNC DEBUG] Sample offsets: [${sampleOffsets.join(',')}]`);
+    }
   }
   
 
@@ -608,6 +620,7 @@ export function findSyncOffset(
   detectionThresholds: {
     correlationThreshold: number;
     peakToNoiseRatio: number;
+    externalNoiseFloor?: number; // Optional: use external noise floor estimation
   }
 ): {
   bestSampleOffset: number;

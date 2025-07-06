@@ -477,10 +477,24 @@ describe('DsssDpskDemodulator', () => {
 
       // Add shifted signal and process
       demodulator.addSamples(shiftedSignal);
+      
+      // For stream processing, add several additional frames to ensure adequate samples
+      for (let i = 0; i < 3; i++) {
+        const additionalSignal = modem.modulateCarrier(
+          modem.dpskModulate(modem.dsssSpread(frameData, defaultConfig.sequenceLength, defaultConfig.seed)),
+          defaultConfig.samplesPerPhase,
+          defaultConfig.sampleRate,
+          defaultConfig.carrierFreq
+        );
+        demodulator.addSamples(additionalSignal);
+      }
+      
+      // Process all available bits
       const bitsAfterShift = demodulator.getAvailableBits();
+      const syncState = demodulator.getSyncState();
 
       // Expect sync to be maintained 
-      expect(demodulator.getSyncState().locked).toBe(true);
+      expect(syncState.locked).toBe(true);
       expect(bitsAfterShift.length).toBeGreaterThan(0); // Should still be producing bits
       
       // Note: The final sample offset will be much larger than initialOffset + shiftSamples

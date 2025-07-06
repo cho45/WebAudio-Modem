@@ -25,7 +25,7 @@ const CONSTANTS = {
   // LLR thresholds for bit quality detection
   LLR: {
     WEAK_THRESHOLD: 20,          // Below this absolute value, bit is considered weak
-    STRONG_ZERO_THRESHOLD: 50,   // Strong 0-bit threshold for resync trigger
+    STRONG_ZERO_THRESHOLD: 70,   // Strong 0-bit threshold for resync trigger (頻度調整)
     QUANTIZATION_MIN: -127,      // LLR量子化の最小値
     QUANTIZATION_MAX: 127,       // LLR量子化の最大値
   },
@@ -35,7 +35,7 @@ const CONSTANTS = {
     CONSECUTIVE_WEAK_LIMIT: 3,   // Max weak bits before losing sync
     RESYNC_TRIGGER_COUNT: 8,     // Strong bits needed before resync attempt
     RESYNC_RANGE_CHIPS: 0.5,     // Search range in chips for resync
-    RESYNC_THRESHOLD_SCALE: 0.8, // Scale factor for resync thresholds
+    RESYNC_THRESHOLD_SCALE: 1.0, // Scale factor for resync thresholds (正常信号での微調整のため閾値緩和)
     SEARCH_WINDOW_BITS: 3,       // 同期検索ウィンドウサイズ（ビット単位）
   },
   
@@ -68,15 +68,11 @@ const CONSTANTS = {
     GOOD_SIGNAL_VARIANCE_SCALE: 2.0,  // 良好な信号の分散スケール
     MODERATE_SIGNAL_VARIANCE_SCALE: 5.0, // 中程度の信号の分散スケール
     WEAK_SIGNAL_VARIANCE_SCALE: 20.0, // 弱い信号の分散スケール
+    LLR_TO_CORRELATION_SCALE: 0.01,   // LLRノイズ推定値を相関値スケールに変換する係数 (理論値: ~0.03/3.0)
   }
 } as const;
 
-// Debug logger helper
-const debugLog = (...args: any[]) => {
-  if (CONSTANTS.DEBUG) {
-    console.log(...args);
-  }
-};
+// Debug logger helper - will be replaced by instance method
 
 /**
  * Streaming DSSS-DPSK Demodulator
@@ -92,6 +88,9 @@ export class DsssDpskDemodulator {
     correlationThreshold: number;
     peakToNoiseRatio: number;
   };
+  
+  // Instance identification for logging
+  private readonly instanceName: string;
   
   private readonly reference: Int8Array;
   private readonly samplesPerBit: number;
@@ -128,7 +127,9 @@ export class DsssDpskDemodulator {
     carrierFreq?: number;
     correlationThreshold?: number;
     peakToNoiseRatio?: number;
+    instanceName?: string;
   } = {}) {
+    this.instanceName = config.instanceName || 'unknown';
     this.config = {
       sequenceLength: config.sequenceLength ?? 31,
       seed: config.seed ?? 21,
@@ -149,6 +150,15 @@ export class DsssDpskDemodulator {
     
     // ビットバッファ
     this.bitBuffer = new Int8Array(CONSTANTS.BUFFER.BIT_BUFFER_SIZE);
+  }
+  
+  /**
+   * Instance-specific logging with identification
+   */
+  private log(message: string): void {
+    if (CONSTANTS.DEBUG) {
+      console.log(`[DsssDpskDemodulator:${this.instanceName}] ${message}`);
+    }
   }
   
   /**
@@ -270,6 +280,16 @@ export class DsssDpskDemodulator {
     // Max chip offset for search should be based on the search window size
     const maxChipOffset = Math.floor(searchSamples.length / this.config.samplesPerPhase);
 
+    // Use cached noise variance if available (for consistent detection across sync/resync)
+    let externalNoiseFloor: number | undefined;
+    if (this.cachedNoiseVariance < CONSTANTS.NOISE_ESTIMATION.DEFAULT_HIGH_NOISE) {
+      // Valid noise estimate available, convert to correlation scale
+      externalNoiseFloor = this.cachedNoiseVariance * CONSTANTS.NOISE_ESTIMATION.LLR_TO_CORRELATION_SCALE;
+      this.log(`[DsssDpskDemodulator] Using cached noise variance for initial sync: ${this.cachedNoiseVariance} -> ${externalNoiseFloor}`);
+    } else {
+      this.log(`[DsssDpskDemodulator] No valid noise estimate for initial sync, using internal estimation`);
+    }
+
     const result = findSyncOffset(
       searchSamples,
       this.reference,
@@ -281,7 +301,8 @@ export class DsssDpskDemodulator {
       maxChipOffset,
       {
         correlationThreshold: this.config.correlationThreshold,
-        peakToNoiseRatio: this.config.peakToNoiseRatio
+        peakToNoiseRatio: this.config.peakToNoiseRatio,
+        externalNoiseFloor
       }
     );
 
@@ -291,18 +312,18 @@ export class DsssDpskDemodulator {
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
-      debugLog(`[DsssDpskDemodulator] SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
+      this.log(`[DsssDpskDemodulator] SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
       
       // 同期ワード検証を実行
       const validationResult = this._validateSyncAtOffset(syncOffset);
       if (validationResult === 'SUCCESS') {
         // 同期ワード検証成功 → 同期確立
-        debugLog(`[DsssDpskDemodulator] SYNC VALIDATION: SUCCESS`);
+        this.log(`[DsssDpskDemodulator] SYNC VALIDATION: SUCCESS`);
         this._confirmSyncAtOffset(syncOffset);
         return true;
       } else {
         // 検証失敗 → 次の候補を探索
-        debugLog(`[DsssDpskDemodulator] SYNC VALIDATION: FAILED`);
+        this.log(`[DsssDpskDemodulator] SYNC VALIDATION: FAILED`);
         // この候補位置を消費して次を探索
         this._consumeSamples(result.bestSampleOffset + 1);
         return false;
@@ -368,11 +389,11 @@ export class DsssDpskDemodulator {
         const llr = Math.max(CONSTANTS.LLR.QUANTIZATION_MIN, Math.min(CONSTANTS.LLR.QUANTIZATION_MAX, Math.round(llrs[0])));
         return llr;
       } else {
-        debugLog(`[DsssDpskDemodulator] Despread failed`);
+        this.log(`[DsssDpskDemodulator] Despread failed`);
         return null;
       }
     } catch (error) {
-      debugLog(`[DsssDpskDemodulator] Error in _demodulateAndDespreadZeroCopy: ${error}`);
+      this.log(`[DsssDpskDemodulator] Error in _demodulateAndDespreadZeroCopy: ${error}`);
       return null;
     }
   }
@@ -397,7 +418,7 @@ export class DsssDpskDemodulator {
       return padded;
     }
     
-    debugLog(`[DsssDpskDemodulator] Chip length mismatch: ${actualLength} vs ${expectedLength}`);
+    this.log(`[DsssDpskDemodulator] Chip length mismatch: ${actualLength} vs ${expectedLength}`);
     return null;
   }
   
@@ -415,7 +436,7 @@ export class DsssDpskDemodulator {
    * Lose sync due to demodulation error
    */
   private _loseSyncDueToError(consumeBitSamples: boolean = false): void {
-    debugLog(`[DsssDpskDemodulator] Losing sync due to error`);
+    this.log(`[DsssDpskDemodulator] Losing sync due to error`);
     this.isLocked = false;
     this.correlation = 0;
     
@@ -430,18 +451,18 @@ export class DsssDpskDemodulator {
    */
   private _updateSyncQuality(llr: number): void {
     // 弱いビットの検出
-    debugLog(`[DsssDpskDemodulator] _updateSyncQuality: LLR=${llr}, weakThreshold=${CONSTANTS.LLR.WEAK_THRESHOLD}, consecutive=${this.consecutiveWeakCount}`);
+   //  this.log(`[DsssDpskDemodulator] _updateSyncQuality: LLR=${llr}, weakThreshold=${CONSTANTS.LLR.WEAK_THRESHOLD}, consecutive=${this.consecutiveWeakCount}`);
     
     if (Math.abs(llr) < CONSTANTS.LLR.WEAK_THRESHOLD) {
       this.consecutiveWeakCount++;
-      debugLog(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
+      this.log(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
       
       // 上位層から要求されているビット数がある場合は同期を維持
       if (this.targetCount > 0 && this.processedCount < this.targetCount) {
-        debugLog(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
+        this.log(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
       } else if (this.consecutiveWeakCount >= CONSTANTS.SYNC.CONSECUTIVE_WEAK_LIMIT) {
         // 要求がない場合、または要求ビット数に達した後に弱いビットが連続したら同期を失う
-        debugLog(`[DsssDpskDemodulator] Too many weak bits, losing sync`);
+        this.log(`[DsssDpskDemodulator] Too many weak bits, losing sync`);
         this._loseSyncDueToError();
         this.resyncCounter = 0;
       }
@@ -452,7 +473,7 @@ export class DsssDpskDemodulator {
       // 0 ビット周辺での再同期を試みる
       if (llr > CONSTANTS.LLR.STRONG_ZERO_THRESHOLD && 
           this.resyncCounter > CONSTANTS.SYNC.RESYNC_TRIGGER_COUNT) {
-        debugLog(`[DsssDpskDemodulator] Strong 0-bit detected (LLR=${llr}), attempting resync`);
+        this.log(`[DsssDpskDemodulator] Strong 0-bit detected (LLR=${llr}), attempting resync`);
         this._tryResync();
         this.resyncCounter = 0; // 再同期後はカウンタをリセット
       }
@@ -517,7 +538,7 @@ export class DsssDpskDemodulator {
    * @param offset Offset from current read position (default: 0)
    */
   private _peekSamples(count: number, offset: number = 0): Float32Array {
-    const startIndex = (this.sampleReadIndex + offset) % this.sampleBuffer.length;
+    const startIndex = ((this.sampleReadIndex + offset) % this.sampleBuffer.length + this.sampleBuffer.length) % this.sampleBuffer.length;
     
     if (startIndex + count <= this.sampleBuffer.length) {
       // データが連続している場合 - ゼロコピー
@@ -602,7 +623,7 @@ export class DsssDpskDemodulator {
     const stats = this._calculateSignalStats(chipLlrs);
     const noiseVariance = this._calculateNoiseFromStats(stats);
     
-    debugLog(`[DsssDpskDemodulator] _estimateNoiseVariance: meanAbs=${stats.meanAbs}, variance=${stats.variance}, estimated=${noiseVariance}`);
+    this.log(`[DsssDpskDemodulator] _estimateNoiseVariance: meanAbs=${stats.meanAbs}, variance=${stats.variance}, estimated=${noiseVariance}`);
     
     return noiseVariance;
   }
@@ -648,28 +669,46 @@ export class DsssDpskDemodulator {
   
   /**
    * Try to resynchronize around the current bit position
+   * 
+   * RESYNC機能の目的: うまくいっている(LLRが高い)信号を使って前もってずれを補正する予防的調整
+   * 問題が起きる前に先手を打って微調整を行うことで、継続的な同期品質を維持
+   * 
+   * 重要: 既に正しく同期している強い信号では、resyncによって挙動が変わってはならない
    */
   private _tryResync(): void {
-    debugLog(`[DsssDpskDemodulator] Attempting resync around current position`);
+    this.log(`[DsssDpskDemodulator] Attempting resync around current position (current correlation: ${this.correlation.toFixed(4)})`);
     
-    // Search range: ±0.5 chips around the previous bit
-    const searchRangeSamples = Math.floor(this.config.samplesPerPhase * CONSTANTS.SYNC.RESYNC_RANGE_CHIPS);
-    const searchWindowSize = this.samplesPerBit + searchRangeSamples * 2;
+    // Search range: ±0.5 chips around the current bit position
+    const totalSearchRangeSamples = this.config.samplesPerPhase; // ±0.5 chip = 1 chip total
+    const searchWindowSize = this.samplesPerBit + totalSearchRangeSamples;
+    
+    this.log(`[DsssDpskDemodulator] Resync params: totalSearchRange=${totalSearchRangeSamples} samples, windowSize=${searchWindowSize}, samplesPerBit=${this.samplesPerBit}`);
     
     // Check if we have enough samples
-    if (this._getAvailableSampleCount() < searchWindowSize) {
-      debugLog(`[DsssDpskDemodulator] Not enough samples for resync`);
+    const availableSamples = this._getAvailableSampleCount();
+    if (availableSamples < searchWindowSize) {
+      this.log(`[DsssDpskDemodulator] Not enough samples for resync: ${availableSamples} < ${searchWindowSize}`);
       return;
     }
     
-    // Get samples centered around the previous bit
-    // We go back one bit and then back half the search range
-    const offsetFromCurrent = -this.samplesPerBit - searchRangeSamples;
-    const searchOffset = (this.sampleBuffer.length + offsetFromCurrent) % this.sampleBuffer.length;
-    const searchSamples = this._peekSamples(searchWindowSize, searchOffset);
+    // Get samples centered around the current bit position
+    // Start from 0.5 chip before current position to center the search
+    const offsetFromCurrent = -Math.floor(this.config.samplesPerPhase / 2);
+    this.log(`[DsssDpskDemodulator] Search offset from current: ${offsetFromCurrent} (readIndex=${this.sampleReadIndex})`);
     
-    // Search in limited range (approximately 1 chip)
-    const maxChipOffset = Math.ceil(searchRangeSamples * 2 / this.config.samplesPerPhase);
+    const searchSamples = this._peekSamples(searchWindowSize, offsetFromCurrent);
+    
+    // Search in limited range (±0.5 chip = 1 chip total)
+    const maxChipOffset = Math.ceil(totalSearchRangeSamples / this.config.samplesPerPhase);
+    
+    // Convert LLR-based noise variance to correlation value scale
+    // LLR noise variance (~3.0) needs to be scaled down to correlation noise floor (~0.03)
+    // Theoretical scaling factor: typical correlation noise (~0.03) / typical LLR noise (~3.0) ≈ 0.01
+    const externalNoiseFloor = this.cachedNoiseVariance * CONSTANTS.NOISE_ESTIMATION.LLR_TO_CORRELATION_SCALE;
+    this.log(`[DsssDpskDemodulator] Converting LLR noise variance ${this.cachedNoiseVariance} to correlation scale: ${externalNoiseFloor}`);
+    
+    this.log(`[DsssDpskDemodulator] Starting findSyncOffset: maxChipOffset=${maxChipOffset}, searchSamples.length=${searchSamples.length}`);
+    this.log(`[DsssDpskDemodulator] Resync thresholds: correlation=${this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE}, peakToNoise=${this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE}, externalNoiseFloor=${externalNoiseFloor}`);
     
     const result = findSyncOffset(
       searchSamples,
@@ -682,24 +721,46 @@ export class DsssDpskDemodulator {
       maxChipOffset,
       {
         correlationThreshold: this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
-        peakToNoiseRatio: this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE
+        peakToNoiseRatio: this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
+        externalNoiseFloor
       }
     );
+    
+    this.log(`[DsssDpskDemodulator] findSyncOffset result: isFound=${result.isFound}, bestSampleOffset=${result.bestSampleOffset}, correlation=${result.peakCorrelation}, peakRatio=${result.peakRatio}`);
     
     if (result.isFound) {
       // Adjust read position based on found sync
       const adjustmentFromSearchStart = result.bestSampleOffset;
-      const totalAdjustment = offsetFromCurrent + adjustmentFromSearchStart;
+      let totalAdjustment = offsetFromCurrent + adjustmentFromSearchStart;
+      
+      // For forward resync (positive adjustment), limit adjustment to prevent bit boundary crossing
+      if (totalAdjustment > 0) {
+        const currentAvailable = this._getAvailableSampleCount();
+        const remainderSamples = currentAvailable % this.samplesPerBit;
+        
+        // If we're exactly on bit boundary (remainder = 0), no forward adjustment allowed
+        // Otherwise, we can adjust up to the remainder amount
+        const maxSafeAdjustment = remainderSamples;
+        
+        if (totalAdjustment > maxSafeAdjustment) {
+          totalAdjustment = maxSafeAdjustment;
+        }
+      }
+      // Backward resync (negative adjustment) is always safe - no limit needed
+      
       const newReadIndex = (this.sampleReadIndex + totalAdjustment + this.sampleBuffer.length) % this.sampleBuffer.length;
+      
+      this.log(`[DsssDpskDemodulator] Position adjustment: offsetFromCurrent=${offsetFromCurrent} + searchResult=${adjustmentFromSearchStart} = totalAdjustment=${totalAdjustment}`);
+      this.log(`[DsssDpskDemodulator] ReadIndex change: ${this.sampleReadIndex} → ${newReadIndex}`);
       
       this._setSampleReadIndex(newReadIndex);
       this.sampleOffset = newReadIndex;
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0;
       
-      debugLog(`[DsssDpskDemodulator] Resync successful! Adjustment: ${totalAdjustment} samples, correlation: ${result.peakCorrelation}`);
+      this.log(`[DsssDpskDemodulator] Resync successful! Adjustment: ${totalAdjustment} samples, correlation: ${result.peakCorrelation}`);
     } else {
-      debugLog(`[DsssDpskDemodulator] Resync failed`);
+      this.log(`[DsssDpskDemodulator] Resync failed: correlation=${result.peakCorrelation} (threshold=${this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE}), peakRatio=${result.peakRatio} (threshold=${this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE})`);
     }
   }
 
@@ -708,7 +769,7 @@ export class DsssDpskDemodulator {
    * 指定位置で実際に復調して同期ワードの存在を確認
    */
   private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
-    debugLog(`[DsssDpskDemodulator] Validating sync at offset ${syncOffset}, required samples: ${this.samplesPerValidation}`);
+    this.log(`[DsssDpskDemodulator] Validating sync at offset ${syncOffset}, required samples: ${this.samplesPerValidation}`);
     
     // 指定位置から非破壊的に復調試行
     const offsetFromReadIndex = syncOffset - this.sampleReadIndex;
@@ -718,7 +779,7 @@ export class DsssDpskDemodulator {
       const demodulatedBits = this._demodulateTestSamples(testSamples, CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
       return this._validateSyncWord(demodulatedBits, syncOffset);
     } catch (error) {
-      debugLog(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
+      this.log(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
       return 'FAILED';
     }
   }
@@ -786,9 +847,9 @@ export class DsssDpskDemodulator {
     const receivedSyncWord = demodulatedBits.slice(syncWordStart, syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS);
     const expectedSyncWord = CONSTANTS.FRAME.SYNC_WORD;
     
-    debugLog(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
-    debugLog(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${receivedSyncWord.join(',')}]`);
-    debugLog(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
+    this.log(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
+    this.log(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${receivedSyncWord.join(',')}]`);
+    this.log(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
     
     // 同期ワードの一致度を計算
     const matches = receivedSyncWord.reduce((count, bit, i) => 
@@ -796,15 +857,15 @@ export class DsssDpskDemodulator {
     
     const matchRatio = matches / expectedSyncWord.length;
     
-    debugLog(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
+    this.log(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
     
     const isValid = matchRatio >= CONSTANTS.FRAME.SYNC_WORD_THRESHOLD;
     
     if (isValid) {
-      debugLog(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
+      this.log(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
       return 'SUCCESS';
     } else {
-      debugLog(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
+      this.log(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
       return 'FAILED';
     }
   }
@@ -821,7 +882,7 @@ export class DsssDpskDemodulator {
     this.isLocked = true;
     this.sampleOffset = this.sampleReadIndex;
     
-    debugLog(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
+    this.log(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
   }
 
 }
