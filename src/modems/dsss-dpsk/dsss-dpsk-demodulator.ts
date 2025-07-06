@@ -36,7 +36,6 @@ const CONSTANTS = {
     RESYNC_TRIGGER_COUNT: 8,     // Strong bits needed before resync attempt
     RESYNC_RANGE_CHIPS: 0.5,     // Search range in chips for resync
     RESYNC_THRESHOLD_SCALE: 0.8, // Scale factor for resync thresholds
-    MIN_SEARCH_WINDOW_BITS: 1.5, // 同期検索に必要な最小ウィンドウサイズ（ビット単位）
     SEARCH_WINDOW_BITS: 3,       // 同期検索ウィンドウサイズ（ビット単位）
   },
   
@@ -96,6 +95,7 @@ export class DsssDpskDemodulator {
   
   private readonly reference: Int8Array;
   private readonly samplesPerBit: number;
+  private readonly samplesPerValidation: number;
   private sampleBuffer: Float32Array;
   private sampleWriteIndex: number = 0;
   private sampleReadIndex: number = 0;
@@ -141,6 +141,7 @@ export class DsssDpskDemodulator {
     
     this.reference = generateSyncReference(this.config.sequenceLength, this.config.seed);
     this.samplesPerBit = this.config.sequenceLength * this.config.samplesPerPhase;
+    this.samplesPerValidation = this.samplesPerBit * CONSTANTS.FRAME.SYNC_VALIDATION_BITS;
     
     // バッファサイズは十分なサイズを確保（同期検索＋複数ビット分）
     const bufferSize = Math.floor(this.samplesPerBit * CONSTANTS.BUFFER.SAMPLE_BUFFER_BITS);
@@ -176,8 +177,7 @@ export class DsssDpskDemodulator {
     // 同期が取れていない場合、同期を試みる
     if (!this.isLocked) {
       // フレーム構造検証に必要なサンプルが揃ってから同期開始
-      const requiredSamples = this.samplesPerBit * CONSTANTS.FRAME.SYNC_VALIDATION_BITS;
-      if (this._getAvailableSampleCount() >= requiredSamples) {
+      if (this._getAvailableSampleCount() >= this.samplesPerValidation) {
         this._trySync();
       }
     }
@@ -260,13 +260,8 @@ export class DsssDpskDemodulator {
   }
   
   private _trySync(): boolean {
-    // 同期検索に必要なサンプル数がバッファにあるか確認
-    const minSamplesNeeded = Math.floor(this.samplesPerBit * CONSTANTS.SYNC.MIN_SEARCH_WINDOW_BITS);
+    // 呼び出し側で十分なサンプル数は確認済み
     const availableCount = this._getAvailableSampleCount();
-
-    if (availableCount < minSamplesNeeded) {
-      return false;
-    }
 
     // Create a linear view of the circular buffer for sync search
     const searchWindowSize = Math.min(availableCount, this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS);
@@ -320,11 +315,7 @@ export class DsssDpskDemodulator {
   }
   
   private _processBit(): void {
-    const availableCount = this._getAvailableSampleCount();
-    
-    if (availableCount < this.samplesPerBit) {
-      return;
-    }
+    // 呼び出し側で十分なサンプル数は確認済み
     
     // デモジュレーションとデスプレッドをゼロコピーで実行
     const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, 0);
@@ -526,22 +517,22 @@ export class DsssDpskDemodulator {
    * @param offset Offset from current read position (default: 0)
    */
   private _peekSamples(count: number, offset: number = 0): Float32Array {
-    const samples = new Float32Array(count);
     const startIndex = (this.sampleReadIndex + offset) % this.sampleBuffer.length;
     
     if (startIndex + count <= this.sampleBuffer.length) {
-      // データが連続している場合 - 高速コピー
-      samples.set(this.sampleBuffer.subarray(startIndex, startIndex + count));
+      // データが連続している場合 - ゼロコピー
+      return this.sampleBuffer.subarray(startIndex, startIndex + count);
     } else {
-      // データが分割されている場合 - 2つの部分に分けてコピー
+      // データが分割されている場合 - やむなくコピー
+      const samples = new Float32Array(count);
       const firstPartSize = this.sampleBuffer.length - startIndex;
       const secondPartSize = count - firstPartSize;
       
       samples.set(this.sampleBuffer.subarray(startIndex, this.sampleBuffer.length), 0);
       samples.set(this.sampleBuffer.subarray(0, secondPartSize), firstPartSize);
+      
+      return samples;
     }
-    
-    return samples;
   }
   
   /**
@@ -717,17 +708,14 @@ export class DsssDpskDemodulator {
    * 指定位置で実際に復調して同期ワードの存在を確認
    */
   private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
-    const bitsToCheck = CONSTANTS.FRAME.SYNC_VALIDATION_BITS;
-    const requiredSamples = this.samplesPerBit * bitsToCheck;
-    
-    debugLog(`[DsssDpskDemodulator] Validating sync at offset ${syncOffset}, required samples: ${requiredSamples}`);
+    debugLog(`[DsssDpskDemodulator] Validating sync at offset ${syncOffset}, required samples: ${this.samplesPerValidation}`);
     
     // 指定位置から非破壊的に復調試行
     const offsetFromReadIndex = syncOffset - this.sampleReadIndex;
-    const testSamples = this._peekSamples(requiredSamples, offsetFromReadIndex);
+    const testSamples = this._peekSamples(this.samplesPerValidation, offsetFromReadIndex);
     
     try {
-      const demodulatedBits = this._demodulateTestSamples(testSamples, bitsToCheck);
+      const demodulatedBits = this._demodulateTestSamples(testSamples, CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
       return this._validateSyncWord(demodulatedBits, syncOffset);
     } catch (error) {
       debugLog(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
@@ -791,10 +779,7 @@ export class DsssDpskDemodulator {
    * 復調されたビットから同期ワードを検証
    */
   private _validateSyncWord(demodulatedBits: number[], syncOffset: number): 'SUCCESS' | 'FAILED' {
-    if (demodulatedBits.length < CONSTANTS.FRAME.SYNC_VALIDATION_BITS) {
-      debugLog(`[DsssDpskDemodulator] Candidate validation: insufficient bits demodulated (${demodulatedBits.length}, need at least ${CONSTANTS.FRAME.SYNC_VALIDATION_BITS} for sync word)`);
-      return 'FAILED';
-    }
+    // demodulatedBitsの長さは_demodulateTestSamples()で保証済み
     
     // 同期ワード検証：プリアンブル後の同期ワードが期待する値か
     const syncWordStart = CONSTANTS.FRAME.PREAMBLE_BITS;
