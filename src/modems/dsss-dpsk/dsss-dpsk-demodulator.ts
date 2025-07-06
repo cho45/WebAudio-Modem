@@ -33,7 +33,7 @@ const CONSTANTS = {
   // Sync management
   SYNC: {
     CONSECUTIVE_WEAK_LIMIT: 3,   // Max weak bits before losing sync
-    RESYNC_TRIGGER_COUNT: 8,     // Strong bits needed before resync attempt
+    RESYNC_TRIGGER_COUNT: 32,    // Strong bits needed before resync attempt (理論根拠: 水晶発振器ドリフト~10ppm@44.1kHz→0.44Hz/秒、32ビット=0.52秒観測で十分なドリフト検出精度)
     RESYNC_RANGE_CHIPS: 0.5,     // Search range in chips for resync
     RESYNC_THRESHOLD_SCALE: 1.0, // Scale factor for resync thresholds (正常信号での微調整のため閾値緩和)
     SEARCH_WINDOW_BITS: 3,       // 同期検索ウィンドウサイズ（ビット単位）
