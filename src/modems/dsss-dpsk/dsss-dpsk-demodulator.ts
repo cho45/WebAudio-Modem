@@ -102,25 +102,18 @@ export class DsssDpskDemodulator {
   private bitBuffer: Int8Array; // LLR values
   private bitBufferIndex: number = 0;
   
-  // 同期状態管理：責任ごとに明確に分離
-  private syncState = {
-    // 同期状態：タイミング同期の管理
-    synchronization: {
-      isLocked: false,        // 同期ロック状態
-      sampleOffset: 0,        // 確定済みサンプルオフセット
-      correlation: 0,         // 最新の相関値
-    },
-    // ビット品質管理：信号品質の追跡
-    quality: {
-      consecutiveWeakCount: 0, // 連続弱ビット数
-      resyncCounter: 0,       // 再同期トリガーカウンタ
-    },
-    // ビット処理管理：上位層とのインターフェース
-    processing: {
-      processedCount: 0,      // 復調済みビット数（経時的カウンタ）
-      targetCount: 0,         // 上位層からの要求ビット数
-    }
-  };
+  // 同期状態
+  private isLocked: boolean = false;
+  private sampleOffset: number = 0;
+  private correlation: number = 0;
+  
+  // 品質管理
+  private consecutiveWeakCount: number = 0;
+  private resyncCounter: number = 0;
+  
+  // 処理管理
+  private processedCount: number = 0;
+  private targetCount: number = 0;
   
   constructor(config: {
     sequenceLength?: number;
@@ -172,11 +165,11 @@ export class DsssDpskDemodulator {
   getAvailableBits(targetBits?: number): Int8Array {
     // 上位層からの要求ビット数を記録
     if (targetBits !== undefined && targetBits > 0) {
-      this.syncState.processing.targetCount = targetBits;
+      this.targetCount = targetBits;
     }
     
     // 同期が取れていない場合、同期を試みる
-    if (!this.syncState.synchronization.isLocked) {
+    if (!this.isLocked) {
       // フレーム構造検証に必要なサンプルが揃ってから同期開始
       const requiredSamples = this.samplesPerBit * CONSTANTS.FRAME.SYNC_VALIDATION_BITS;
       if (this._getAvailableSampleCount() >= requiredSamples) {
@@ -185,7 +178,7 @@ export class DsssDpskDemodulator {
     }
     
     // 同期が取れている場合、ビットを処理
-    if (this.syncState.synchronization.isLocked) {
+    if (this.isLocked) {
       // 最大処理ビット数を制限（パフォーマンスのため）
       let processedCount = 0;
       
@@ -196,7 +189,7 @@ export class DsssDpskDemodulator {
         processedCount++;
         
         // 同期を失った場合は中断
-        if (!this.syncState.synchronization.isLocked) {
+        if (!this.isLocked) {
           break;
         }
       }
@@ -210,11 +203,11 @@ export class DsssDpskDemodulator {
     this.bitBufferIndex = 0;
     
     // 処理済みビット数を更新
-    this.syncState.processing.processedCount += result.length;
+    this.processedCount += result.length;
     
     // 要求されたビット数に達したらtargetBitsのみリセット（processedBitsは維持）
-    if (this.syncState.processing.targetCount > 0 && this.syncState.processing.processedCount >= this.syncState.processing.targetCount) {
-      this.syncState.processing.targetCount = 0;
+    if (this.targetCount > 0 && this.processedCount >= this.targetCount) {
+      this.targetCount = 0;
       // processedBits は維持して、その後の弱いビット検出で使用
     }
     
@@ -223,12 +216,11 @@ export class DsssDpskDemodulator {
   
   /**
    * Get current sync state
-   * 後方互換性を維持した外部インターフェース
    */
   getSyncState(): { locked: boolean; correlation: number } {
     return {
-      locked: this.syncState.synchronization.isLocked,
-      correlation: this.syncState.synchronization.correlation
+      locked: this.isLocked,
+      correlation: this.correlation
     };
   }
   
@@ -240,21 +232,13 @@ export class DsssDpskDemodulator {
     this.sampleWriteIndex = 0;
     this.sampleReadIndex = 0;
     this.bitBufferIndex = 0;
-    this.syncState = {
-      synchronization: {
-        isLocked: false,
-        sampleOffset: 0,
-        correlation: 0,
-      },
-      quality: {
-        consecutiveWeakCount: 0,
-        resyncCounter: 0,
-      },
-      processing: {
-        processedCount: 0,
-        targetCount: 0,
-      }
-    };
+    this.isLocked = false;
+    this.sampleOffset = 0;
+    this.correlation = 0;
+    this.consecutiveWeakCount = 0;
+    this.resyncCounter = 0;
+    this.processedCount = 0;
+    this.targetCount = 0;
   }
 
   /**
@@ -304,8 +288,8 @@ export class DsssDpskDemodulator {
     if (result.isFound) {
       // 同期位置を確定（12ビット分のサンプルが揃っていることが保証済み）
       const syncOffset = this.sampleReadIndex + result.bestSampleOffset;
-      this.syncState.synchronization.correlation = result.peakCorrelation;
-      this.syncState.quality.resyncCounter = 0; // Reset resync counter on successful sync
+      this.correlation = result.peakCorrelation;
+      this.resyncCounter = 0; // Reset resync counter on successful sync
       
       debugLog(`[DsssDpskDemodulator] SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
       
@@ -430,7 +414,7 @@ export class DsssDpskDemodulator {
   private _storeLLR(llr: number): void {
     if (this.bitBufferIndex < this.bitBuffer.length) {
       this.bitBuffer[this.bitBufferIndex++] = llr;
-      this.syncState.processing.processedCount++;
+      this.processedCount++;
     }
   }
   
@@ -439,8 +423,8 @@ export class DsssDpskDemodulator {
    */
   private _loseSyncDueToError(consumeBitSamples: boolean = false): void {
     debugLog(`[DsssDpskDemodulator] Losing sync due to error`);
-    this.syncState.synchronization.isLocked = false;
-    this.syncState.synchronization.correlation = 0;
+    this.isLocked = false;
+    this.correlation = 0;
     
     if (consumeBitSamples) {
       // Move past the bad data by consuming one bit worth of samples
@@ -453,31 +437,31 @@ export class DsssDpskDemodulator {
    */
   private _updateSyncQuality(llr: number): void {
     // 弱いビットの検出
-    debugLog(`[DsssDpskDemodulator] _updateSyncQuality: LLR=${llr}, weakThreshold=${CONSTANTS.LLR.WEAK_THRESHOLD}, consecutive=${this.syncState.quality.consecutiveWeakCount}`);
+    debugLog(`[DsssDpskDemodulator] _updateSyncQuality: LLR=${llr}, weakThreshold=${CONSTANTS.LLR.WEAK_THRESHOLD}, consecutive=${this.consecutiveWeakCount}`);
     
     if (Math.abs(llr) < CONSTANTS.LLR.WEAK_THRESHOLD) {
-      this.syncState.quality.consecutiveWeakCount++;
-      debugLog(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.syncState.quality.consecutiveWeakCount}`);
+      this.consecutiveWeakCount++;
+      debugLog(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
       
       // 上位層から要求されているビット数がある場合は同期を維持
-      if (this.syncState.processing.targetCount > 0 && this.syncState.processing.processedCount < this.syncState.processing.targetCount) {
-        debugLog(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.syncState.processing.processedCount}/${this.syncState.processing.targetCount}`);
-      } else if (this.syncState.quality.consecutiveWeakCount >= CONSTANTS.SYNC.CONSECUTIVE_WEAK_LIMIT) {
+      if (this.targetCount > 0 && this.processedCount < this.targetCount) {
+        debugLog(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
+      } else if (this.consecutiveWeakCount >= CONSTANTS.SYNC.CONSECUTIVE_WEAK_LIMIT) {
         // 要求がない場合、または要求ビット数に達した後に弱いビットが連続したら同期を失う
         debugLog(`[DsssDpskDemodulator] Too many weak bits, losing sync`);
         this._loseSyncDueToError();
-        this.syncState.quality.resyncCounter = 0;
+        this.resyncCounter = 0;
       }
     } else {
-      this.syncState.quality.consecutiveWeakCount = 0; // 強いビットでリセット
-      this.syncState.quality.resyncCounter++; // 強いビットで再同期カウンタを増やす
+      this.consecutiveWeakCount = 0; // 強いビットでリセット
+      this.resyncCounter++; // 強いビットで再同期カウンタを増やす
 
       // 0 ビット周辺での再同期を試みる
       if (llr > CONSTANTS.LLR.STRONG_ZERO_THRESHOLD && 
-          this.syncState.quality.resyncCounter > CONSTANTS.SYNC.RESYNC_TRIGGER_COUNT) {
+          this.resyncCounter > CONSTANTS.SYNC.RESYNC_TRIGGER_COUNT) {
         debugLog(`[DsssDpskDemodulator] Strong 0-bit detected (LLR=${llr}), attempting resync`);
         this._tryResync();
-        this.syncState.quality.resyncCounter = 0; // 再同期後はカウンタをリセット
+        this.resyncCounter = 0; // 再同期後はカウンタをリセット
       }
     }
   }
@@ -626,9 +610,9 @@ export class DsssDpskDemodulator {
       const newReadIndex = (this.sampleReadIndex + totalAdjustment + this.sampleBuffer.length) % this.sampleBuffer.length;
       
       this._setSampleReadIndex(newReadIndex);
-      this.syncState.synchronization.sampleOffset = newReadIndex;
-      this.syncState.synchronization.correlation = result.peakCorrelation;
-      this.syncState.quality.resyncCounter = 0;
+      this.sampleOffset = newReadIndex;
+      this.correlation = result.peakCorrelation;
+      this.resyncCounter = 0;
       
       debugLog(`[DsssDpskDemodulator] Resync successful! Adjustment: ${totalAdjustment} samples, correlation: ${result.peakCorrelation}`);
     } else {
@@ -641,7 +625,6 @@ export class DsssDpskDemodulator {
    * 指定位置で実際に復調して同期ワードの存在を確認
    */
   private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
-    // フレーム構造検証に必要なビット数
     const bitsToCheck = CONSTANTS.FRAME.SYNC_VALIDATION_BITS;
     const requiredSamples = this.samplesPerBit * bitsToCheck;
     
@@ -652,79 +635,98 @@ export class DsssDpskDemodulator {
     const testSamples = this._peekSamples(requiredSamples, offsetFromReadIndex);
     
     try {
-      // 復調して12ビット取得
-      const demodulatedBits: number[] = [];
-      
-      for (let bit = 0; bit < bitsToCheck; bit++) {
-        const bitStart = bit * this.samplesPerBit;
-        const bitEnd = bitStart + this.samplesPerBit;
-        const bitSamples = testSamples.slice(bitStart, bitEnd);
-        
-        // キャリア復調 → DPSK復調 → 逆拡散
-        const phases = demodulateCarrier(
-          bitSamples,
-          this.config.samplesPerPhase,
-          this.config.sampleRate,
-          this.config.carrierFreq
-        );
-        
-        const chipLlrs = dpskDemodulate(phases);
-        if (chipLlrs.length === 0) continue;
-        
-        // パディング調整
-        const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
-        if (!adjustedChipLlrs) continue;
-        
-        // ノイズ分散推定
-        const noiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
-        
-        // DSSS逆拡散
-        const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, noiseVariance);
-        if (!llrs || llrs.length === 0) continue;
-        
-        // LLRから硬判定ビット
-        const hardBit = llrs[0] >= 0 ? 0 : 1;
-        demodulatedBits.push(hardBit);
-      }
-      
-      if (demodulatedBits.length < CONSTANTS.FRAME.SYNC_VALIDATION_BITS) {
-        debugLog(`[DsssDpskDemodulator] Candidate validation: insufficient bits demodulated (${demodulatedBits.length}, need at least ${CONSTANTS.FRAME.SYNC_VALIDATION_BITS} for sync word)`);
-        return 'FAILED';
-      }
-      
-      // 同期ワード検証：プリアンブル後の同期ワードが期待する値か
-      const syncWordStart = CONSTANTS.FRAME.PREAMBLE_BITS;
-      const receivedSyncWord = demodulatedBits.slice(syncWordStart, syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS);
-      const expectedSyncWord = CONSTANTS.FRAME.SYNC_WORD;
-      
-      debugLog(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
-      debugLog(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart+8}]: [${receivedSyncWord.join(',')}]`);
-      debugLog(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
-      
-      // 同期ワードの一致度を計算
-      let matches = 0;
-      for (let i = 0; i < Math.min(receivedSyncWord.length, expectedSyncWord.length); i++) {
-        if (receivedSyncWord[i] === expectedSyncWord[i]) {
-          matches++;
-        }
-      }
-      
-      const matchRatio = matches / expectedSyncWord.length;
-      
-      debugLog(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
-      
-      const isValid = matchRatio >= CONSTANTS.FRAME.SYNC_WORD_THRESHOLD;
-      
-      if (isValid) {
-        debugLog(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
-        return 'SUCCESS';
-      } else {
-        debugLog(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
-        return 'FAILED';
-      }
-      
+      const demodulatedBits = this._demodulateTestSamples(testSamples, bitsToCheck);
+      return this._validateSyncWord(demodulatedBits, syncOffset);
     } catch (error) {
       debugLog(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
+      return 'FAILED';
+    }
+  }
+
+  /**
+   * テストサンプルから指定ビット数を復調
+   */
+  private _demodulateTestSamples(testSamples: Float32Array, bitsToCheck: number): number[] {
+    const demodulatedBits: number[] = [];
+    
+    for (let bit = 0; bit < bitsToCheck; bit++) {
+      const bitStart = bit * this.samplesPerBit;
+      const bitEnd = bitStart + this.samplesPerBit;
+      const bitSamples = testSamples.slice(bitStart, bitEnd);
+      
+      const hardBit = this._demodulateAndConvertToBit(bitSamples);
+      if (hardBit !== null) {
+        demodulatedBits.push(hardBit);
+      }
+    }
+    
+    return demodulatedBits;
+  }
+
+  /**
+   * 単一ビットサンプルを復調して硬判定ビットに変換
+   */
+  private _demodulateAndConvertToBit(bitSamples: Float32Array): number | null {
+    try {
+      // キャリア復調 → DPSK復調 → 逆拡散
+      const phases = demodulateCarrier(
+        bitSamples,
+        this.config.samplesPerPhase,
+        this.config.sampleRate,
+        this.config.carrierFreq
+      );
+      
+      const chipLlrs = dpskDemodulate(phases);
+      if (chipLlrs.length === 0) return null;
+      
+      const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
+      if (!adjustedChipLlrs) return null;
+      
+      const noiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
+      const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, noiseVariance);
+      
+      if (!llrs || llrs.length === 0) return null;
+      
+      // LLRから硬判定ビット
+      return llrs[0] >= 0 ? 0 : 1;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 復調されたビットから同期ワードを検証
+   */
+  private _validateSyncWord(demodulatedBits: number[], syncOffset: number): 'SUCCESS' | 'FAILED' {
+    if (demodulatedBits.length < CONSTANTS.FRAME.SYNC_VALIDATION_BITS) {
+      debugLog(`[DsssDpskDemodulator] Candidate validation: insufficient bits demodulated (${demodulatedBits.length}, need at least ${CONSTANTS.FRAME.SYNC_VALIDATION_BITS} for sync word)`);
+      return 'FAILED';
+    }
+    
+    // 同期ワード検証：プリアンブル後の同期ワードが期待する値か
+    const syncWordStart = CONSTANTS.FRAME.PREAMBLE_BITS;
+    const receivedSyncWord = demodulatedBits.slice(syncWordStart, syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS);
+    const expectedSyncWord = CONSTANTS.FRAME.SYNC_WORD;
+    
+    debugLog(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
+    debugLog(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${receivedSyncWord.join(',')}]`);
+    debugLog(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
+    
+    // 同期ワードの一致度を計算
+    const matches = receivedSyncWord.reduce((count, bit, i) => 
+      bit === expectedSyncWord[i] ? count + 1 : count, 0);
+    
+    const matchRatio = matches / expectedSyncWord.length;
+    
+    debugLog(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
+    
+    const isValid = matchRatio >= CONSTANTS.FRAME.SYNC_WORD_THRESHOLD;
+    
+    if (isValid) {
+      debugLog(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
+      return 'SUCCESS';
+    } else {
+      debugLog(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
       return 'FAILED';
     }
   }
@@ -738,10 +740,10 @@ export class DsssDpskDemodulator {
     this._consumeSamples(consumeCount);
     
     // 同期確立
-    this.syncState.synchronization.isLocked = true;
-    this.syncState.synchronization.sampleOffset = this.sampleReadIndex;
+    this.isLocked = true;
+    this.sampleOffset = this.sampleReadIndex;
     
-    debugLog(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.syncState.synchronization.sampleOffset}, correlation=${this.syncState.synchronization.correlation.toFixed(4)}`);
+    debugLog(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
   }
 
 }
