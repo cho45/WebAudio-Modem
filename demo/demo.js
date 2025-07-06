@@ -57,8 +57,8 @@ const app = createApp({
     const dsssDpskConfig = reactive({
       sequenceLength: 15,
       seed: 21,
-      samplesPerPhase: 26,
-      carrierFreq: 8000,
+      samplesPerPhase: 23,
+      carrierFreq: 10000,
       correlationThreshold: 0.5,
       peakToNoiseRatio: 4
     });

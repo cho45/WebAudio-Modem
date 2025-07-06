@@ -544,7 +544,10 @@ function detectSynchronizationPeak(
   let peakIndex = -1;
   
   for (let i = 0; i < correlations.length; i++) {
-    const v = Math.abs(correlations[i]);
+    // 負の相関は無視すべき
+    // BPSKでは0と1の間で相関が変化するため、負の値はノイズと見なす
+    // const v = Math.abs(correlations[i]);
+    const v = correlations[i];
     if (v > peakValue) {
       peakValue = v;
       peakIndex = i;
@@ -564,8 +567,13 @@ function detectSynchronizationPeak(
   // Simple two-criteria detection
   const meetsCorrelationThreshold = peakValue >= correlationThreshold;
   const meetsNoiseRatioThreshold = peakToNoiseRatio >= peakToNoiseRatioThreshold;
-  
   const isFound = meetsCorrelationThreshold && meetsNoiseRatioThreshold;
+  
+  if (noiseFloor > 0.001) {
+    // DEBUG: Log critical values to understand why 0.5 works but 0.4 doesn't
+    console.log(`[SYNC DEBUG] ${isFound ? 'FOUND' : 'NOT FOUND'} peakValue=${peakValue.toFixed(4)} >= threshold=${correlationThreshold}, ratio=${peakToNoiseRatio.toFixed(2)} >= ${peakToNoiseRatioThreshold}`);
+  }
+  
 
   return {
     bestSampleOffset,

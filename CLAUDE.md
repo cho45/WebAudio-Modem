@@ -68,6 +68,10 @@ npm run lint:fix           # Fix ESLint issues automatically
 npm run dev                # Start Vite development server
 npm run build              # Build for production
 npm run preview            # Preview production build
+
+## Important Development Rules
+
+**NEVER automatically execute `npm run dev`** - The user runs their own development server. Do not start additional servers without explicit request.
 ```
 
 ### Running Specific Tests

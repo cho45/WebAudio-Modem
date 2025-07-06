@@ -35,12 +35,12 @@ const CONSTANTS = {
   
   // Buffer sizes
   BUFFER: {
-    SAMPLE_BUFFER_BITS: 16,      // Sample buffer size in bits
+    SAMPLE_BUFFER_BITS: 32,      // Sample buffer size in bits (for sync validation + processing)
     BIT_BUFFER_SIZE: 1024,       // Output bit buffer size
   },
   
   // Debug
-  DEBUG: false,
+  DEBUG: true,
   
   // Noise estimation thresholds
   NOISE_ESTIMATION: {
@@ -94,7 +94,7 @@ export class DsssDpskDemodulator {
     // 同期状態：タイミング同期の管理
     synchronization: {
       isLocked: false,        // 同期ロック状態
-      sampleOffset: 0,        // 現在のサンプルオフセット
+      sampleOffset: 0,        // 確定済みサンプルオフセット
       correlation: 0,         // 最新の相関値
     },
     // ビット品質管理：信号品質の追跡
@@ -170,8 +170,9 @@ export class DsssDpskDemodulator {
     
     // 同期が取れていない場合、同期を試みる
     if (!this.syncState.synchronization.isLocked) {
-      // Only try to sync if enough samples are available for at least one bit
-      if (this._getAvailableSampleCount() >= this.samplesPerBit) {
+      // 12ビット分のサンプルが揃ってから同期開始
+      const requiredSamples = this.samplesPerBit * 12; // preamble(4bit) + sync word(8bit)
+      if (this._getAvailableSampleCount() >= requiredSamples) {
         this._trySync();
       }
     }
@@ -248,6 +249,19 @@ export class DsssDpskDemodulator {
       }
     };
   }
+
+  /**
+   * Clear internal buffers while preserving sync state
+   * Used for testing and specific operational scenarios
+   */
+  clearBuffers(): void {
+    this.sampleBuffer.fill(0);
+    this.sampleWriteIndex = 0;
+    this.sampleReadIndex = 0;
+    this.bitBuffer.fill(0);
+    this.bitBufferIndex = 0;
+    // Preserve sync state - only clear buffers
+  }
   
   private _trySync(): boolean {
     // 同期検索に必要なサンプル数がバッファにあるか確認
@@ -281,16 +295,27 @@ export class DsssDpskDemodulator {
     );
 
     if (result.isFound) {
-      this.syncState.synchronization.isLocked = true;
-      // result.bestSampleOffset is relative to the `searchSamples` array, which starts at `this.sampleReadIndex`.
-      // So, we consume `result.bestSampleOffset` samples to align the buffer.
-      
-      this._consumeSamples(result.bestSampleOffset);
-      this.syncState.synchronization.sampleOffset = this.sampleReadIndex; // Update to the new absolute read index
+      // 同期位置を確定（12ビット分のサンプルが揃っていることが保証済み）
+      const syncOffset = this.sampleReadIndex + result.bestSampleOffset;
       this.syncState.synchronization.correlation = result.peakCorrelation;
       this.syncState.quality.resyncCounter = 0; // Reset resync counter on successful sync
       
-      return true;
+      debugLog(`[DsssDpskDemodulator] SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
+      
+      // 同期ワード検証を実行
+      const validationResult = this._validateSyncAtOffset(syncOffset);
+      if (validationResult === 'SUCCESS') {
+        // 同期ワード検証成功 → 同期確立
+        debugLog(`[DsssDpskDemodulator] SYNC VALIDATION: SUCCESS`);
+        this._confirmSyncAtOffset(syncOffset);
+        return true;
+      } else {
+        // 検証失敗 → 次の候補を探索
+        debugLog(`[DsssDpskDemodulator] SYNC VALIDATION: FAILED`);
+        // この候補位置を消費して次を探索
+        this._consumeSamples(result.bestSampleOffset + 1);
+        return false;
+      }
     } else {
       // If sync not found, consume a small portion to advance and try again
       this._consumeSamples(Math.floor(this.samplesPerBit / 2));
@@ -474,15 +499,13 @@ export class DsssDpskDemodulator {
   private _consumeSamples(count: number): void {
     const availableCount = this._getAvailableSampleCount();
     const consumeCount = Math.min(count, availableCount);
-    const oldReadIndex = this.sampleReadIndex;
     this.sampleReadIndex = (this.sampleReadIndex + consumeCount) % this.sampleBuffer.length;
-    // debugLog(`[DsssDpskDemodulator] _consumeSamples: Requested=${count}, Available=${availableCount}, Consumed=${consumeCount}. Old read: ${oldReadIndex}, New read: ${this.sampleReadIndex}`);
+    // debugLog(`[DsssDpskDemodulator] _consumeSamples: Requested=${count}, Available=${availableCount}, Consumed=${consumeCount}. New read: ${this.sampleReadIndex}`);
   }
 
   private _setSampleReadIndex(newIndex: number): void {
-    const oldReadIndex = this.sampleReadIndex;
     this.sampleReadIndex = newIndex % this.sampleBuffer.length;
-    // debugLog(`[DsssDpskDemodulator] _setSampleReadIndex: Old read: ${oldReadIndex}, New read: ${this.sampleReadIndex}`);
+    // debugLog(`[DsssDpskDemodulator] _setSampleReadIndex: New read: ${this.sampleReadIndex}`);
   }
   
   /**
@@ -618,5 +641,128 @@ export class DsssDpskDemodulator {
     } else {
       debugLog(`[DsssDpskDemodulator] Resync failed`);
     }
+  }
+
+  /**
+   * 指定オフセットで同期ワード検証
+   * 指定位置で実際に復調して同期ワードの存在を確認
+   */
+  private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
+    // プリアンブル(4bit) + 同期ワード(8bit) = 12bit分のサンプルが必要
+    const bitsToCheck = 12;
+    const requiredSamples = this.samplesPerBit * bitsToCheck;
+    
+    debugLog(`[DsssDpskDemodulator] Validating sync at offset ${syncOffset}, required samples: ${requiredSamples}`);
+    
+    // 指定位置から非破壊的に復調試行
+    const testSamples = this._peekSamplesAt(requiredSamples, syncOffset);
+    
+    try {
+      // 復調して12ビット取得
+      const demodulatedBits: number[] = [];
+      
+      for (let bit = 0; bit < bitsToCheck; bit++) {
+        const bitStart = bit * this.samplesPerBit;
+        const bitEnd = bitStart + this.samplesPerBit;
+        const bitSamples = testSamples.slice(bitStart, bitEnd);
+        
+        // キャリア復調 → DPSK復調 → 逆拡散
+        const phases = demodulateCarrier(
+          bitSamples,
+          this.config.samplesPerPhase,
+          this.config.sampleRate,
+          this.config.carrierFreq
+        );
+        
+        const chipLlrs = dpskDemodulate(phases);
+        if (chipLlrs.length === 0) continue;
+        
+        // パディング調整
+        const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
+        if (!adjustedChipLlrs) continue;
+        
+        // ノイズ分散推定
+        const noiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
+        
+        // DSSS逆拡散
+        const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, noiseVariance);
+        if (!llrs || llrs.length === 0) continue;
+        
+        // LLRから硬判定ビット
+        const hardBit = llrs[0] >= 0 ? 0 : 1;
+        demodulatedBits.push(hardBit);
+      }
+      
+      if (demodulatedBits.length < 12) {
+        debugLog(`[DsssDpskDemodulator] Candidate validation: insufficient bits demodulated (${demodulatedBits.length}, need at least 12 for sync word)`);
+        return 'FAILED';
+      }
+      
+      // 同期ワード検証：プリアンブル4ビット後の8ビットが期待する同期ワードか
+      const syncWordStart = 4; // プリアンブル4ビット分をスキップ
+      const receivedSyncWord = demodulatedBits.slice(syncWordStart, syncWordStart + 8);
+      const expectedSyncWord = [1, 0, 1, 1, 0, 1, 0, 0]; // 定義された同期ワード (0xB4)
+      
+      debugLog(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
+      debugLog(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart+8}]: [${receivedSyncWord.join(',')}]`);
+      debugLog(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
+      
+      // 同期ワードの一致度を計算
+      let matches = 0;
+      for (let i = 0; i < Math.min(receivedSyncWord.length, expectedSyncWord.length); i++) {
+        if (receivedSyncWord[i] === expectedSyncWord[i]) {
+          matches++;
+        }
+      }
+      
+      const matchRatio = matches / expectedSyncWord.length;
+      const syncWordThreshold = 0.75; // 75%一致で有効
+      
+      debugLog(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
+      
+      const isValid = matchRatio >= syncWordThreshold;
+      
+      if (isValid) {
+        debugLog(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
+        return 'SUCCESS';
+      } else {
+        debugLog(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
+        return 'FAILED';
+      }
+      
+    } catch (error) {
+      debugLog(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
+      return 'FAILED';
+    }
+  }
+
+  /**
+   * 指定位置で同期確立
+   */
+  private _confirmSyncAtOffset(syncOffset: number): void {
+    // 同期位置までサンプル消費
+    const consumeCount = syncOffset - this.sampleReadIndex;
+    this._consumeSamples(consumeCount);
+    
+    // 同期確立
+    this.syncState.synchronization.isLocked = true;
+    this.syncState.synchronization.sampleOffset = this.sampleReadIndex;
+    
+    debugLog(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.syncState.synchronization.sampleOffset}, correlation=${this.syncState.synchronization.correlation.toFixed(4)}`);
+  }
+
+  /**
+   * 指定位置からサンプルを非破壊的に取得
+   */
+  private _peekSamplesAt(count: number, absoluteOffset: number): Float32Array {
+    const samples = new Float32Array(count);
+    const bufferSize = this.sampleBuffer.length;
+    
+    for (let i = 0; i < count; i++) {
+      const bufferIndex = (absoluteOffset + i) % bufferSize;
+      samples[i] = this.sampleBuffer[bufferIndex];
+    }
+    
+    return samples;
   }
 }

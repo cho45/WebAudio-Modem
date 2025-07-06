@@ -334,11 +334,10 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
           }
           this.resetAbortController();
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController!.signal });
-          // Clear receive buffer and reset demodulator after modulation to avoid self-reception
           this.decodedDataBuffer = [];
           this.demodulator.reset();
-          this.framer.reset();
-          this.log('Cleared receive buffer and reset demodulator/framer after modulation to prevent echo-back');
+          this.framer.reset(); // Safe to reset framer as it doesn't affect sync
+          this.log('Cleared receive buffers after modulation (sync state preserved for fast recovery)');
           result = { success: true };
           break;
           
