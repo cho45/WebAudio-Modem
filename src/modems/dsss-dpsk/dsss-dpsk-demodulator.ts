@@ -305,18 +305,18 @@ export class DsssDpskDemodulator {
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
-      this.log(`[DsssDpskDemodulator] SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
+      this.log(`SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
       
       // 同期ワード検証を実行
       const validationResult = this._validateSyncAtOffset(syncOffset);
       if (validationResult === 'SUCCESS') {
         // 同期ワード検証成功 → 同期確立
-        this.log(`[DsssDpskDemodulator] SYNC VALIDATION: SUCCESS`);
+        this.log(`SYNC VALIDATION: SUCCESS`);
         this._confirmSyncAtOffset(syncOffset);
         return true;
       } else {
         // 検証失敗 → 次の候補を探索
-        this.log(`[DsssDpskDemodulator] SYNC VALIDATION: FAILED`);
+        this.log(`SYNC VALIDATION: FAILED`);
         // この候補位置を消費して次を探索
         this._consumeSamples(result.bestSampleOffset + 1);
         return false;
@@ -336,11 +336,13 @@ export class DsssDpskDemodulator {
     
     if (llr === null) {
       // デモジュレーション失敗、同期を失う
+      this.log(`Demodulation failed, losing sync`);
       this._loseSyncDueToError(true); // consumeBitSamples = true
       return;
     }
     
     // LLRをバッファに格納
+    // this.log(`New Bit LLR: ${llr}`);
     this._storeLLR(llr);
     
     // 弱いビットの処理と同期状態の更新
@@ -382,11 +384,11 @@ export class DsssDpskDemodulator {
         const llr = Math.max(CONSTANTS.LLR.QUANTIZATION_MIN, Math.min(CONSTANTS.LLR.QUANTIZATION_MAX, Math.round(llrs[0])));
         return llr;
       } else {
-        this.log(`[DsssDpskDemodulator] Despread failed`);
+        this.log(`Despread failed`);
         return null;
       }
     } catch (error) {
-      this.log(`[DsssDpskDemodulator] Error in _demodulateAndDespreadZeroCopy: ${error}`);
+      this.log(`Error in _demodulateAndDespreadZeroCopy: ${error}`);
       return null;
     }
   }
@@ -411,7 +413,7 @@ export class DsssDpskDemodulator {
       return padded;
     }
     
-    this.log(`[DsssDpskDemodulator] Chip length mismatch: ${actualLength} vs ${expectedLength}`);
+    this.log(`Chip length mismatch: ${actualLength} vs ${expectedLength}`);
     return null;
   }
   
@@ -429,7 +431,7 @@ export class DsssDpskDemodulator {
    * Lose sync due to demodulation error
    */
   private _loseSyncDueToError(consumeBitSamples: boolean = false): void {
-    this.log(`[DsssDpskDemodulator] Losing sync due to error`);
+    this.log(`Losing sync due to error`);
     this.isLocked = false;
     this.correlation = 0;
     
@@ -444,18 +446,17 @@ export class DsssDpskDemodulator {
    */
   private _updateSyncQuality(llr: number): void {
     // 弱いビットの検出
-   //  this.log(`[DsssDpskDemodulator] _updateSyncQuality: LLR=${llr}, weakThreshold=${CONSTANTS.LLR.WEAK_THRESHOLD}, consecutive=${this.consecutiveWeakCount}`);
     
     if (Math.abs(llr) < CONSTANTS.LLR.WEAK_THRESHOLD) {
       this.consecutiveWeakCount++;
-      this.log(`[DsssDpskDemodulator] Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
+      this.log(`Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
       
       // 上位層から要求されているビット数がある場合は同期を維持
       if (this.targetCount > 0 && this.processedCount < this.targetCount) {
-        this.log(`[DsssDpskDemodulator] Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
+        this.log(`Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
       } else if (this.consecutiveWeakCount >= CONSTANTS.SYNC.CONSECUTIVE_WEAK_LIMIT) {
         // 要求がない場合、または要求ビット数に達した後に弱いビットが連続したら同期を失う
-        this.log(`[DsssDpskDemodulator] Too many weak bits, losing sync`);
+        this.log(`Too many weak bits, losing sync`);
         this._loseSyncDueToError();
         this.resyncCounter = 0;
       }
@@ -617,7 +618,7 @@ export class DsssDpskDemodulator {
     
     // Only log noise estimation in debug mode when there are issues
     if (CONSTANTS.DEBUG && noiseVariance > 10) {
-      this.log(`[DsssDpskDemodulator] _estimateNoiseVariance: estimated=${noiseVariance.toFixed(2)} (high noise detected)`);
+      this.log(`_estimateNoiseVariance: estimated=${noiseVariance.toFixed(2)} (high noise detected)`);
     }
     
     return noiseVariance;
@@ -738,10 +739,10 @@ export class DsssDpskDemodulator {
       this.resyncCounter = 0;
       
       // Always log resync success for monitoring
-      this.log(`[DsssDpskDemodulator] Resync successful! Adjustment: ${totalAdjustment} samples, correlation: ${result.peakCorrelation.toFixed(4)}`);
+      this.log(`Resync successful! Adjustment: ${totalAdjustment} samples, correlation: ${result.peakCorrelation.toFixed(4)}`);
     } else {
       // Always log resync failures for monitoring
-      this.log(`[DsssDpskDemodulator] Resync failed: correlation=${result.peakCorrelation.toFixed(4)} < threshold=${(this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE).toFixed(4)}`);
+      this.log(`Resync failed: correlation=${result.peakCorrelation.toFixed(4)} < threshold=${(this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE).toFixed(4)}`);
     
     }
   }
@@ -762,7 +763,7 @@ export class DsssDpskDemodulator {
       }
       return this._validateSyncWordLLR(softBits, syncOffset);
     } catch (error) {
-      this.log(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
+      this.log(`Sync validation failed: ${error}`);
       return 'FAILED';
     }
   }
@@ -811,11 +812,11 @@ export class DsssDpskDemodulator {
     
     // Debug logging
     if (CONSTANTS.DEBUG && softBits.length <= 20) {
-      this.log(`[DsssDpskDemodulator] LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
+      this.log(`LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
     }
-    this.log(`[DsssDpskDemodulator] LLR sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${Array.from(receivedSyncWordLLR).join(',')}]`);
-    this.log(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
-    this.log(`[DsssDpskDemodulator] LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
+    this.log(`LLR sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${Array.from(receivedSyncWordLLR).join(',')}]`);
+    this.log(`Expected sync word: [${expectedSyncWord.join(',')}]`);
+    this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
     // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
     const llrThreshold = 0.5; // LLR相関の閾値
@@ -825,13 +826,13 @@ export class DsssDpskDemodulator {
     const hardValid = hardMatchRatio >= minHardThreshold;
     const isValid = llrValid && hardValid;
     
-    this.log(`[DsssDpskDemodulator] LLR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}) → ${isValid ? 'PASSED' : 'FAILED'}`);
+    this.log(`LR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}) → ${isValid ? 'PASSED' : 'FAILED'}`);
     
     if (isValid) {
-      this.log(`[DsssDpskDemodulator] LLR sync validation: PASSED (sync word detected with high confidence)`);
+      this.log(`LLR sync validation: PASSED (sync word detected with high confidence)`);
       return 'SUCCESS';
     } else {
-      this.log(`[DsssDpskDemodulator] LLR sync validation: FAILED (insufficient LLR correlation or hard match)`);
+      this.log(`LLR sync validation: FAILED (insufficient LLR correlation or hard match)`);
       return 'FAILED';
     }
   }
@@ -848,7 +849,7 @@ export class DsssDpskDemodulator {
     this.isLocked = true;
     this.sampleOffset = this.sampleReadIndex;
     
-    this.log(`[DsssDpskDemodulator] SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
+    this.log(`SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
   }
 
 }

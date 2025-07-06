@@ -33,8 +33,8 @@ const FRAME_TYPE_SHIFT = 3;         // フレームタイプのシフト量
 const LDPC_N_TYPE_SHIFT = 1;        // LDPC Nタイプのシフト量
 
 // 相関閾値（LLRスケール基準）
-const PREAMBLE_CORRELATION_THRESHOLD_RATIO = 0.8; // 80% of theoretical max
-const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.6; // 実際の相関値508に基づいて調整
+const PREAMBLE_CORRELATION_THRESHOLD_RATIO = 0.5;
+const SYNC_WORD_CORRELATION_THRESHOLD_RATIO = 0.5;
 
 // ビット操作最適化ユーティリティ
 const BIT_MANIPULATION = {
@@ -328,7 +328,7 @@ export class DsssDpskFramer {
       
       const initialBufferLength = this.softBitBuffer.length;
       const processResult = this._processCurrentState(decodedFrames);
-      
+     
       // Debug: log processing progress (commented out for normal operation)
       // if (iterations % 100 === 0) {
       //   console.log(`[DsssDpskFramer] Iteration ${iterations}: State=${FramerState[this.state]}, Buffer=${this.softBitBuffer.length}, Frames=${decodedFrames.length}`);
@@ -394,6 +394,7 @@ export class DsssDpskFramer {
       return 'continue';
     } else {
       // If preamble not found, consume only 1 bit to slide the window
+      console.log(`[DsssDpskFramer] Preamble not found, sliding window`);
       this._consumeBufferBits(1);
       return 'continue';
     }

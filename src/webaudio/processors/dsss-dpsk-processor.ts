@@ -168,12 +168,11 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
         break; // No more bits available
       }
       
-      // Debug: Log when bits are available (disabled for stability)
-      // if (bits.length > 0) {
-      //   this.log(`[DsssDpskProcessor] Demodulator provided ${bits.length} bits`);
-      // }
-      
       const frames = this.framer.process(bits);
+      if (bits.length > 0) {
+        this.log(`Demodulator provided ${bits.map(llr=> llr > 0 ? 0 : 1).join('')} ${bits} / ${this.framer.getState().state}`);
+      }
+      
       
       // Store decoded data efficiently
       if (frames.length > 0) {
