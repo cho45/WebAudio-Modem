@@ -115,6 +115,11 @@ export class DsssDpskDemodulator {
   private processedCount: number = 0;
   private targetCount: number = 0;
   
+  // パフォーマンス最適化用
+  private cachedNoiseVariance: number = 1.0;
+  private noiseUpdateCounter: number = 0;
+  private readonly NOISE_UPDATE_INTERVAL = 10;
+  
   constructor(config: {
     sequenceLength?: number;
     seed?: number;
@@ -321,11 +326,8 @@ export class DsssDpskDemodulator {
       return;
     }
     
-    // 1ビット分のサンプルを取得
-    const bitSamples = this._peekSamples(this.samplesPerBit);
-    
-    // デモジュレーションとデスプレッドを実行
-    const llr = this._demodulateAndDespread(bitSamples);
+    // デモジュレーションとデスプレッドをゼロコピーで実行
+    const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, 0);
     
     if (llr === null) {
       // デモジュレーション失敗、同期を失う
@@ -344,17 +346,16 @@ export class DsssDpskDemodulator {
   }
   
   /**
-   * Demodulate and despread bit samples
+   * Demodulate and despread bit samples with zero-copy optimization
+   * Directly processes samples from circular buffer without memory allocation
    */
-  private _demodulateAndDespread(bitSamples: Float32Array): number | null {
+  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number): number | null {
     try {
-      // キャリア復調
-      const phases = demodulateCarrier(
-        bitSamples,
-        this.config.samplesPerPhase,
-        this.config.sampleRate,
-        this.config.carrierFreq
-      );
+      const numPhases = Math.floor(sampleCount / this.config.samplesPerPhase);
+      const phases = new Float32Array(numPhases);
+      
+      // キャリア復調（ゼロコピー）
+      this._demodulateCarrierZeroCopy(sampleCount, offset, phases);
       
       // DPSK復調
       const chipLlrs = dpskDemodulate(phases);
@@ -365,8 +366,8 @@ export class DsssDpskDemodulator {
         return null;
       }
       
-      // ノイズ分散を推定
-      const estimatedNoiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
+      // ノイズ分散をキャッシュで取得（高速化）
+      const estimatedNoiseVariance = this._getNoiseVariance(adjustedChipLlrs);
       
       // DSSS逆拡散
       const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, estimatedNoiseVariance);
@@ -380,10 +381,11 @@ export class DsssDpskDemodulator {
         return null;
       }
     } catch (error) {
-      debugLog(`[DsssDpskDemodulator] Error in _demodulateAndDespread: ${error}`);
+      debugLog(`[DsssDpskDemodulator] Error in _demodulateAndDespreadZeroCopy: ${error}`);
       return null;
     }
   }
+  
   
   /**
    * Adjust chip padding for DPSK output
@@ -484,6 +486,40 @@ export class DsssDpskDemodulator {
   }
   
   /**
+   * Process samples from circular buffer without copying (zero-copy)
+   * @param count Number of samples to process
+   * @param offset Offset from current read position (default: 0)
+   * @param processor Callback function to process each sample
+   */
+  private _processSamplesZeroCopy(
+    count: number, 
+    offset: number, 
+    processor: (sample: number, index: number) => void
+  ): void {
+    const startIndex = (this.sampleReadIndex + offset) % this.sampleBuffer.length;
+    
+    if (startIndex + count <= this.sampleBuffer.length) {
+      // 連続領域 - 高速処理
+      for (let i = 0; i < count; i++) {
+        processor(this.sampleBuffer[startIndex + i], i);
+      }
+    } else {
+      // 分割領域 - 2つのセグメントを順次処理
+      const firstPartSize = this.sampleBuffer.length - startIndex;
+      
+      // 第1セグメント
+      for (let i = 0; i < firstPartSize; i++) {
+        processor(this.sampleBuffer[startIndex + i], i);
+      }
+      
+      // 第2セグメント
+      for (let i = 0; i < count - firstPartSize; i++) {
+        processor(this.sampleBuffer[i], firstPartSize + i);
+      }
+    }
+  }
+  
+  /**
    * Extract samples from circular buffer without consuming them
    * Optimized for large sample counts by minimizing modulo operations
    * @param count Number of samples to extract
@@ -506,6 +542,62 @@ export class DsssDpskDemodulator {
     }
     
     return samples;
+  }
+  
+  /**
+   * Demodulate carrier with zero-copy sample access (inlined version)
+   * @param sampleCount Number of samples to process
+   * @param offset Offset from current read position
+   * @param outputPhases Output phase array
+   * @param startSample Starting sample number for phase continuity
+   */
+  private _demodulateCarrierZeroCopy(
+    sampleCount: number,
+    offset: number,
+    outputPhases: Float32Array,
+    startSample: number = 0
+  ): void {
+    const omega = 2 * Math.PI * this.config.carrierFreq / this.config.sampleRate;
+    const numPhases = Math.floor(sampleCount / this.config.samplesPerPhase);
+    
+    // 各位相シンボルを個別に処理
+    for (let phaseIdx = 0; phaseIdx < numPhases; phaseIdx++) {
+      const symbolStart = phaseIdx * this.config.samplesPerPhase;
+      let iSum = 0; // In-phase
+      let qSum = 0; // Quadrature
+      
+      // I/Q成分をシンボル期間で積分（ゼロコピー）
+      this._processSamplesZeroCopy(
+        this.config.samplesPerPhase,
+        offset + symbolStart,
+        (sample, index) => {
+          const sampleIndex = startSample + symbolStart + index;
+          const carrierPhase = omega * sampleIndex;
+          
+          iSum += sample * Math.sin(carrierPhase);
+          qSum += sample * Math.cos(carrierPhase);
+        }
+      );
+      
+      // シンボル期間で平均化
+      const iAvg = iSum / this.config.samplesPerPhase;
+      const qAvg = qSum / this.config.samplesPerPhase;
+      
+      // atan2(Q, I)で位相抽出
+      outputPhases[phaseIdx] = Math.atan2(qAvg, iAvg);
+    }
+  }
+  
+  /**
+   * Get noise variance with caching for performance
+   */
+  private _getNoiseVariance(chipLlrs: Float32Array): number {
+    // キャッシュ更新频度制御（N回に1回のみ更新）
+    if (this.noiseUpdateCounter % this.NOISE_UPDATE_INTERVAL === 0) {
+      this.cachedNoiseVariance = this._estimateNoiseVariance(chipLlrs);
+    }
+    this.noiseUpdateCounter++;
+    return this.cachedNoiseVariance;
   }
   
   /**
@@ -664,7 +756,8 @@ export class DsssDpskDemodulator {
   }
 
   /**
-   * 単一ビットサンプルを復調して硬判定ビットに変換
+   * 単一ビットサンプルを復調して硬判定ビットに変換（Float32Array版）
+   * 同期検証時など、既にサンプルが抽出されている場合に使用
    */
   private _demodulateAndConvertToBit(bitSamples: Float32Array): number | null {
     try {
@@ -682,7 +775,7 @@ export class DsssDpskDemodulator {
       const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
       if (!adjustedChipLlrs) return null;
       
-      const noiseVariance = this._estimateNoiseVariance(adjustedChipLlrs);
+      const noiseVariance = this._getNoiseVariance(adjustedChipLlrs);
       const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, noiseVariance);
       
       if (!llrs || llrs.length === 0) return null;
