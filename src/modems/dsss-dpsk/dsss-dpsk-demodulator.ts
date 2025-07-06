@@ -4,7 +4,6 @@
  */
 
 import {
-  demodulateCarrier,
   dpskDemodulate,
   dsssDespread,
   findSyncOffset,
@@ -19,7 +18,6 @@ const CONSTANTS = {
     SYNC_WORD_BITS: 8,           // 同期ワードのビット数
     SYNC_VALIDATION_BITS: 12,    // 同期検証に必要なビット数 (preamble + sync word)
     SYNC_WORD: [1, 0, 1, 1, 0, 1, 0, 0], // 期待する同期ワード (0xB4)
-    SYNC_WORD_THRESHOLD: 0.75,   // 同期ワード一致率の閾値
   },
   
   // LLR thresholds for bit quality detection
@@ -71,8 +69,6 @@ const CONSTANTS = {
     LLR_TO_CORRELATION_SCALE: 0.01,   // LLRノイズ推定値を相関値スケールに変換する係数 (理論値: ~0.03/3.0)
   }
 } as const;
-
-// Debug logger helper - will be replaced by instance method
 
 /**
  * Streaming DSSS-DPSK Demodulator
@@ -755,106 +751,87 @@ export class DsssDpskDemodulator {
    * 指定位置で実際に復調して同期ワードの存在を確認
    */
   private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
-    // Validating sync at offset (reduced logging)
-    
-    // 指定位置から非破壊的に復調試行
     const offsetFromReadIndex = syncOffset - this.sampleReadIndex;
-    const testSamples = this._peekSamples(this.samplesPerValidation, offsetFromReadIndex);
     
     try {
-      const demodulatedBits = this._demodulateTestSamples(testSamples, CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
-      return this._validateSyncWord(demodulatedBits, syncOffset);
+      const softBits = new Int8Array(CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
+      for (let bit = 0; bit < CONSTANTS.FRAME.SYNC_VALIDATION_BITS; bit++) {
+        const bitOffset = offsetFromReadIndex + bit * this.samplesPerBit;
+        const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset);
+        softBits[bit] = llr !== null ? llr : 0;
+      }
+      return this._validateSyncWordLLR(softBits, syncOffset);
     } catch (error) {
       this.log(`[DsssDpskDemodulator] Sync validation failed: ${error}`);
       return 'FAILED';
     }
   }
 
-  /**
-   * テストサンプルから指定ビット数を復調
-   */
-  private _demodulateTestSamples(testSamples: Float32Array, bitsToCheck: number): number[] {
-    const demodulatedBits: number[] = [];
-    
-    for (let bit = 0; bit < bitsToCheck; bit++) {
-      const bitStart = bit * this.samplesPerBit;
-      const bitEnd = bitStart + this.samplesPerBit;
-      const bitSamples = testSamples.slice(bitStart, bitEnd);
-      
-      const hardBit = this._demodulateAndConvertToBit(bitSamples);
-      if (hardBit !== null) {
-        demodulatedBits.push(hardBit);
-      }
-    }
-    
-    return demodulatedBits;
-  }
+
+
+
 
   /**
-   * 単一ビットサンプルを復調して硬判定ビットに変換（Float32Array版）
-   * 同期検証時など、既にサンプルが抽出されている場合に使用
+   * LLRベースの同期ワード検証（情報量を最大活用）
    */
-  private _demodulateAndConvertToBit(bitSamples: Float32Array): number | null {
-    try {
-      // キャリア復調 → DPSK復調 → 逆拡散
-      const phases = demodulateCarrier(
-        bitSamples,
-        this.config.samplesPerPhase,
-        this.config.sampleRate,
-        this.config.carrierFreq
-      );
-      
-      const chipLlrs = dpskDemodulate(phases);
-      if (chipLlrs.length === 0) return null;
-      
-      const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
-      if (!adjustedChipLlrs) return null;
-      
-      const noiseVariance = this._getNoiseVariance(adjustedChipLlrs);
-      const llrs = dsssDespread(adjustedChipLlrs, this.config.sequenceLength, this.config.seed, noiseVariance);
-      
-      if (!llrs || llrs.length === 0) return null;
-      
-      // LLRから硬判定ビット
-      return llrs[0] >= 0 ? 0 : 1;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 復調されたビットから同期ワードを検証
-   */
-  private _validateSyncWord(demodulatedBits: number[], syncOffset: number): 'SUCCESS' | 'FAILED' {
-    // demodulatedBitsの長さは_demodulateTestSamples()で保証済み
-    
-    // 同期ワード検証：プリアンブル後の同期ワードが期待する値か
+  private _validateSyncWordLLR(softBits: Int8Array, _syncOffset: number): 'SUCCESS' | 'FAILED' {
+    // 同期ワード部分のLLR値を抽出
     const syncWordStart = CONSTANTS.FRAME.PREAMBLE_BITS;
-    const receivedSyncWord = demodulatedBits.slice(syncWordStart, syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS);
+    const receivedSyncWordLLR = softBits.slice(syncWordStart, syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS);
     const expectedSyncWord = CONSTANTS.FRAME.SYNC_WORD;
     
-    // Only log demodulated bits in debug mode
-    if (CONSTANTS.DEBUG && demodulatedBits.length <= 20) {
-      this.log(`[DsssDpskDemodulator] Demodulated bits (${demodulatedBits.length}): [${demodulatedBits.join(',')}]`);
+    // LLRベースの相関計算
+    let llrCorrelation = 0;
+    let totalConfidence = 0;
+    
+    for (let i = 0; i < CONSTANTS.FRAME.SYNC_WORD_BITS; i++) {
+      const llr = receivedSyncWordLLR[i];
+      const expectedBit = expectedSyncWord[i];
+      const confidence = Math.abs(llr) / 127.0; // 信頼度（0-1）
+      
+      // 期待するビット値に応じてLLRの貢献度を計算
+      // expectedBit=1なら負のLLRが期待される（LLR<0 → bit=1）
+      // expectedBit=0なら正のLLRが期待される（LLR>0 → bit=0）
+      const contribution = (expectedBit === 1) ? 
+        (-llr * confidence) : // bit=1期待時：負のLLRが良い
+        (llr * confidence);   // bit=0期待時：正のLLRが良い
+      
+      llrCorrelation += contribution;
+      totalConfidence += confidence;
     }
-    this.log(`[DsssDpskDemodulator] Received sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${receivedSyncWord.join(',')}]`);
-    this.log(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
     
-    // 同期ワードの一致度を計算
-    const matches = receivedSyncWord.reduce((count, bit, i) => 
+    // 正規化されたLLR相関スコア
+    const normalizedLLRScore = totalConfidence > 0 ? llrCorrelation / totalConfidence : 0;
+    
+    // Hard decision fallback for comparison
+    const hardBits = Array.from(receivedSyncWordLLR).map(llr => llr >= 0 ? 0 : 1);
+    const hardMatches = hardBits.reduce((count: number, bit, i) => 
       bit === expectedSyncWord[i] ? count + 1 : count, 0);
+    const hardMatchRatio = hardMatches / expectedSyncWord.length;
     
-    const matchRatio = matches / expectedSyncWord.length;
+    // Debug logging
+    if (CONSTANTS.DEBUG && softBits.length <= 20) {
+      this.log(`[DsssDpskDemodulator] LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
+    }
+    this.log(`[DsssDpskDemodulator] LLR sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${Array.from(receivedSyncWordLLR).join(',')}]`);
+    this.log(`[DsssDpskDemodulator] Expected sync word: [${expectedSyncWord.join(',')}]`);
+    this.log(`[DsssDpskDemodulator] LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
-    this.log(`[DsssDpskDemodulator] Sync validation: sync word match ${matches}/${expectedSyncWord.length} (${(matchRatio*100).toFixed(1)}%) at offset ${syncOffset}`);
+    // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
+    const llrThreshold = 0.5; // LLR相関の閾値
+    const minHardThreshold = 0.625; // 5/8 = 62.5% (少し緩める)
     
-    const isValid = matchRatio >= CONSTANTS.FRAME.SYNC_WORD_THRESHOLD;
+    const llrValid = normalizedLLRScore >= llrThreshold;
+    const hardValid = hardMatchRatio >= minHardThreshold;
+    const isValid = llrValid && hardValid;
+    
+    this.log(`[DsssDpskDemodulator] LLR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}) → ${isValid ? 'PASSED' : 'FAILED'}`);
     
     if (isValid) {
-      this.log(`[DsssDpskDemodulator] Sync validation: PASSED (sync word detected)`);
+      this.log(`[DsssDpskDemodulator] LLR sync validation: PASSED (sync word detected with high confidence)`);
       return 'SUCCESS';
     } else {
-      this.log(`[DsssDpskDemodulator] Sync validation: FAILED (sync word not found)`);
+      this.log(`[DsssDpskDemodulator] LLR sync validation: FAILED (insufficient LLR correlation or hard match)`);
       return 'FAILED';
     }
   }
