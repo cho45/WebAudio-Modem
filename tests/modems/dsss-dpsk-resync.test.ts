@@ -50,10 +50,8 @@ describe('DsssDpskDemodulator Resync', () => {
     const originalLog = console.log;
     console.log = (...args) => {
       const message = args.join(' ');
-      if (message.includes('Attempting resync')) {
-        resyncAttempted = true;
-      }
       if (message.includes('Resync successful')) {
+        resyncAttempted = true; // Resync was attempted and succeeded
         resyncSucceeded = true;
       }
       originalLog(...args);

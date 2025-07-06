@@ -576,7 +576,9 @@ function detectSynchronizationPeak(
   const meetsNoiseRatioThreshold = peakToNoiseRatio >= peakToNoiseRatioThreshold;
   const isFound = meetsCorrelationThreshold && meetsNoiseRatioThreshold;
   
-  if (noiseFloor > 0.001) {
+  // Only output detailed SYNC DEBUG logs when explicitly debugging sync issues
+  const debugSyncDetails = false; // Set to true for detailed sync debugging
+  if (debugSyncDetails && noiseFloor > 0.001) {
     // DEBUG: Log critical values to understand why peakToNoiseRatio differs between initial sync and resync
     console.log(`[SYNC DEBUG] ${isFound ? 'FOUND' : 'NOT FOUND'} peakValue=${peakValue.toFixed(4)} >= threshold=${correlationThreshold}, ratio=${peakToNoiseRatio.toFixed(2)} >= ${peakToNoiseRatioThreshold}`);
     console.log(`[SYNC DEBUG] correlations.length=${correlations.length}, noiseFloor=${noiseFloor.toFixed(4)} (median), peakValue=${peakValue.toFixed(4)}`);
