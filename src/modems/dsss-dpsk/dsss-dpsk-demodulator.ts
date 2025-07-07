@@ -9,6 +9,7 @@ import {
   findSyncOffset,
   generateSyncReference
 } from './dsss-dpsk';
+import { DsssDpskFramer, type DecodedFrame, BIT_MANIPULATION } from './framer';
 
 // Constants for demodulator operation
 const CONSTANTS = {
@@ -39,7 +40,7 @@ const CONSTANTS = {
   
   // Processing limits
   LIMITS: {
-    MAX_BITS_PER_CALL: 50,       // Max bits to process per getAvailableBits call
+    MAX_BITS_PER_CALL: 50,       // Max bits to process per _getAvailableBits call
     MAX_ITERATIONS: 1000,        // Safety limit for loops
   },
   
@@ -50,7 +51,7 @@ const CONSTANTS = {
   },
   
   // Debug
-  DEBUG: true,
+  DEBUG: true, // 一時的にフレーム処理デバッグ用
   
   // Noise estimation thresholds
   NOISE_ESTIMATION: {
@@ -115,6 +116,10 @@ export class DsssDpskDemodulator {
   private noiseUpdateCounter: number = 0;
   private readonly NOISE_UPDATE_INTERVAL = 10;
   
+  
+  // フレーム処理
+  private currentFramer: DsssDpskFramer | null = null;
+  
   constructor(config: {
     sequenceLength?: number;
     seed?: number;
@@ -174,55 +179,103 @@ export class DsssDpskDemodulator {
    * Get available demodulated bits (as LLR values)
    * @param targetBits Optional number of bits requested by upper layer
    */
-  getAvailableBits(targetBits?: number): Int8Array {
-    // 上位層からの要求ビット数を記録
-    if (targetBits !== undefined && targetBits > 0) {
-      this.targetCount = targetBits;
-    }
+  /**
+   * フレーム処理統合管理（状態機械）
+   * 同期処理・フレーマー管理・品質判定を統合
+   */
+  public getAvailableFrames(): DecodedFrame[] {
+    const result: DecodedFrame[] = [];
     
-    // 同期が取れていない場合、同期を試みる
-    if (!this.isLocked) {
-      // フレーム構造検証に必要なサンプルが揃ってから同期開始
-      if (this._getAvailableSampleCount() >= this.samplesPerValidation) {
-        this._trySync();
-      }
-    }
     
-    // 同期が取れている場合、ビットを処理
-    if (this.isLocked) {
-      // 最大処理ビット数を制限（パフォーマンスのため）
-      let processedCount = 0;
-      
-      let iterationCount = 0;
-      while (this._getAvailableSampleCount() >= this.samplesPerBit && processedCount < CONSTANTS.LIMITS.MAX_BITS_PER_CALL && iterationCount < CONSTANTS.LIMITS.MAX_ITERATIONS) {
-        iterationCount++;
-        this._processBit();
-        processedCount++;
-        
-        // 同期を失った場合は中断
+    // 状態1: フレーマーなし → 新しいフレーム開始処理
+    if (!this.currentFramer) {
+      // 同期処理（新しいフレーム開始時のみ）
+      if (!this.isLocked) {
+        const availableCount = this._getAvailableSampleCount();
+        // 最大可能な移動分を考慮した要求量でチェック（保守的だが延期を最小化）
+        const maxMoveDistance = this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS;
+        const minRequiredSamples = this.samplesPerValidation + maxMoveDistance;
+        if (availableCount >= minRequiredSamples) {
+          this._trySync();
+        }
         if (!this.isLocked) {
-          break;
+          return []; // 同期未確立なら終了
+        }
+      }
+      
+      // 同期確立済み → 新しいフレーマー作成
+      this.currentFramer = new DsssDpskFramer();
+    }
+    
+    // 状態2: フレーマー存在 → フレーム構築継続（isLocked無関係）
+    const framerState = this.currentFramer.getState();
+    
+    if (framerState.state === 'WAITING_HEADER') {
+      const headerBits = this._getAvailableBits(8);
+      if (headerBits.length >= 8) {
+        const headerByte = BIT_MANIPULATION.reconstructByte(headerBits);
+        this.log(`Header: 0x${headerByte.toString(16)}`);
+        if (!this.currentFramer.initialize(headerByte)) {
+          // ヘッダエラー → フレーマー破棄・同期失敗
+          this.log(`Header failed, losing sync`);
+          this.currentFramer = null;
+          this._loseSyncDueToError(false);
+          return [];
         }
       }
     }
     
-    if (this.bitBufferIndex === 0) {
-      return new Int8Array(0);
-    }
-    
-    const result = this.bitBuffer.slice(0, this.bitBufferIndex);
-    this.bitBufferIndex = 0;
-    
-    // 処理済みビット数を更新
-    this.processedCount += result.length;
-    
-    // 要求されたビット数に達したらtargetBitsのみリセット（processedBitsは維持）
-    if (this.targetCount > 0 && this.processedCount >= this.targetCount) {
-      this.targetCount = 0;
-      // processedBits は維持して、その後の弱いビット検出で使用
+    if (this.currentFramer?.getState().state === 'WAITING_DATA') {
+      const needed = this.currentFramer.remainingBits;
+      const dataBits = this._getAvailableBits(needed);
+      if (dataBits.length >= needed) {
+        this.currentFramer.addDataBits(dataBits);
+        const frame = this.currentFramer.finalize();
+        if (frame) {
+          this.log(`Frame received!`);
+          result.push(frame);
+        }
+        
+        this.currentFramer = null; // フレーム完成・インスタンス破棄
+      }
     }
     
     return result;
+  }
+
+
+  private _getAvailableBits(targetBits: number): Int8Array {
+    if (targetBits <= 0) {
+      throw new Error('targetBits must be positive');
+    }
+    
+    // 指定ビット数が揃うまで処理（フレーム構築継続のため）
+    let iterationCount = 0;
+    
+    while (this.bitBufferIndex < targetBits && 
+           this._getAvailableSampleCount() >= this.samplesPerBit && 
+           iterationCount < CONSTANTS.LIMITS.MAX_ITERATIONS) {
+      iterationCount++;
+      this._processBit();
+      // フレーム構築中はロック失敗でも継続（弱いLLR値として処理）
+    }
+    
+    // 要求された分があれば返す
+    if (this.bitBufferIndex >= targetBits) {
+      const result = this.bitBuffer.slice(0, targetBits);
+      
+      // バッファを詰める
+      for (let i = targetBits; i < this.bitBufferIndex; i++) {
+        this.bitBuffer[i - targetBits] = this.bitBuffer[i];
+      }
+      this.bitBufferIndex -= targetBits;
+      this.processedCount += targetBits;
+      
+      return result;
+    }
+    
+    // 要求されたビット数が揃わない場合は空を返す
+    return new Int8Array(0);
   }
   
   /**
@@ -250,6 +303,10 @@ export class DsssDpskDemodulator {
     this.resyncCounter = 0;
     this.processedCount = 0;
     this.targetCount = 0;
+    
+    
+    // フレーマーインスタンス破棄
+    this.currentFramer = null;
   }
 
   /**
@@ -300,30 +357,59 @@ export class DsssDpskDemodulator {
     );
 
     if (result.isFound) {
-      // 同期位置を確定（12ビット分のサンプルが揃っていることが保証済み）
+      // 同期位置を確定
       const syncOffset = this.sampleReadIndex + result.bestSampleOffset;
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
-      this.log(`SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
+      this.log(`SYNC FOUND: offset=${syncOffset}, correlation=${result.peakCorrelation.toFixed(4)}, bestSampleOffset=${result.bestSampleOffset}`);
+      this.log(`Current sampleReadIndex=${this.sampleReadIndex}, total available=${this._getAvailableSampleCount()}`);
+      
+      // 同期確認に必要な正確なサンプル数をチェック
+      const consumeCount = syncOffset - this.sampleReadIndex;
+      const syncValidationSamples = CONSTANTS.FRAME.SYNC_VALIDATION_BITS * this.samplesPerBit;
+      const totalRequiredSamples = consumeCount + syncValidationSamples;
+      const availableCount = this._getAvailableSampleCount();
+      
+      if (availableCount < totalRequiredSamples) {
+        // 理論的にここは到達しないはず（最適化された事前チェックにより）
+        this.log(`INTERNAL ERROR: Insufficient samples despite optimized pre-checks! need=${totalRequiredSamples}, available=${availableCount}`);
+        return false;
+      }
       
       // 同期ワード検証を実行
       const validationResult = this._validateSyncAtOffset(syncOffset);
       if (validationResult === 'SUCCESS') {
         // 同期ワード検証成功 → 同期確立
         this.log(`SYNC VALIDATION: SUCCESS`);
-        this._confirmSyncAtOffset(syncOffset);
-        return true;
+        const confirmed = this._confirmSyncAtOffset(syncOffset);
+        if (confirmed) {
+          return true;
+        } else {
+          // 理論的にはここは到達しないはず（事前チェック済み）
+          this.log(`INTERNAL ERROR: sync confirmation failed after pre-check - this should be impossible!`);
+          return false;
+        }
       } else {
         // 検証失敗 → 次の候補を探索
         this.log(`SYNC VALIDATION: FAILED`);
-        // この候補位置を消費して次を探索
-        this._consumeSamples(result.bestSampleOffset + 1);
+        // この候補位置を消費して次を探索（事前チェック）
+        const consumeCount = result.bestSampleOffset + 1;
+        if (this._getAvailableSampleCount() >= consumeCount) {
+          this._consumeSamples(consumeCount);
+        } else {
+          this.log(`Cannot consume ${consumeCount} samples for next search - insufficient data`);
+        }
         return false;
       }
     } else {
       // If sync not found, consume a small portion to advance and try again
-      this._consumeSamples(Math.floor(this.samplesPerBit / 2));
+      const consumeCount = Math.floor(this.samplesPerBit / 2);
+      if (this._getAvailableSampleCount() >= consumeCount) {
+        this._consumeSamples(consumeCount);
+      } else {
+        this.log(`Cannot consume ${consumeCount} samples for advancement - insufficient data`);
+      }
       return false;
     }
   }
@@ -331,32 +417,29 @@ export class DsssDpskDemodulator {
   private _processBit(): void {
     // 呼び出し側で十分なサンプル数は確認済み
     
-    // デモジュレーションとデスプレッドをゼロコピーで実行
+    // デモジュレーションとデスプレッドをゼロコピーで実行（常に有効なLLR値を返す）
     const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, 0);
-    
-    if (llr === null) {
-      // デモジュレーション失敗、同期を失う
-      this.log(`Demodulation failed, losing sync`);
-      this._loseSyncDueToError(true); // consumeBitSamples = true
-      return;
-    }
     
     // LLRをバッファに格納
     // this.log(`New Bit LLR: ${llr}`);
     this._storeLLR(llr);
     
-    // 弱いビットの処理と同期状態の更新
+    // 品質評価（同期失敗判定は上位層で実行）
     this._updateSyncQuality(llr);
     
-    // 1ビット分のサンプルを消費
-    this._consumeSamples(this.samplesPerBit);
+    // 1ビット分のサンプルを消費（事前チェック）
+    if (this._getAvailableSampleCount() >= this.samplesPerBit) {
+      this._consumeSamples(this.samplesPerBit);
+    } else {
+      this.log(`Cannot consume ${this.samplesPerBit} samples in _processBit - insufficient data`);
+    }
   }
   
   /**
    * Demodulate and despread bit samples with zero-copy optimization
    * Directly processes samples from circular buffer without memory allocation
    */
-  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number): number | null {
+  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number): number {
     try {
       const numPhases = Math.floor(sampleCount / this.config.samplesPerPhase);
       const phases = new Float32Array(numPhases);
@@ -367,11 +450,8 @@ export class DsssDpskDemodulator {
       // DPSK復調
       const chipLlrs = dpskDemodulate(phases);
       
-      // パディング調整
+      // パディング調整（常に有効な値を返す）
       const adjustedChipLlrs = this._adjustChipPadding(chipLlrs);
-      if (!adjustedChipLlrs) {
-        return null;
-      }
       
       // ノイズ分散をキャッシュで取得（高速化）
       const estimatedNoiseVariance = this._getNoiseVariance(adjustedChipLlrs);
@@ -384,12 +464,14 @@ export class DsssDpskDemodulator {
         const llr = Math.max(CONSTANTS.LLR.QUANTIZATION_MIN, Math.min(CONSTANTS.LLR.QUANTIZATION_MAX, Math.round(llrs[0])));
         return llr;
       } else {
-        this.log(`Despread failed`);
-        return null;
+        // DSSS逆拡散が失敗した場合でも、弱い信号として0を返す（ノイズ）
+        this.log(`Despread failed, returning neutral LLR`);
+        return 0;
       }
     } catch (error) {
-      this.log(`Error in _demodulateAndDespreadZeroCopy: ${error}`);
-      return null;
+      // 例外が発生した場合でも、ノイズとして0を返す
+      this.log(`Error in _demodulateAndDespreadZeroCopy: ${error}, returning neutral LLR`);
+      return 0;
     }
   }
   
@@ -397,7 +479,7 @@ export class DsssDpskDemodulator {
   /**
    * Adjust chip padding for DPSK output
    */
-  private _adjustChipPadding(chipLlrs: Float32Array): Float32Array | null {
+  private _adjustChipPadding(chipLlrs: Float32Array): Float32Array {
     const expectedLength = this.reference.length;
     const actualLength = chipLlrs.length;
     
@@ -409,12 +491,32 @@ export class DsssDpskDemodulator {
       // DPSK demodulation produces one less chip - pad with last value
       const padded = new Float32Array(expectedLength);
       padded.set(chipLlrs, 0);
-      padded[expectedLength - 1] = chipLlrs[actualLength - 1];
+      padded.set([chipLlrs[actualLength - 1]], expectedLength - 1);
       return padded;
     }
     
-    this.log(`Chip length mismatch: ${actualLength} vs ${expectedLength}`);
-    return null;
+    // 長さが大幅に異なる場合でも、適切に調整して返す
+    const adjusted = new Float32Array(expectedLength);
+    if (actualLength > expectedLength) {
+      // 長すぎる場合：最初の部分を使用
+      adjusted.set(chipLlrs.subarray(0, expectedLength), 0);
+    } else if (actualLength > 0) {
+      // 短すぎる場合：可能な限りコピーし、残りは最後の値で埋める
+      adjusted.set(chipLlrs, 0);
+      const lastValue = chipLlrs[actualLength - 1];
+      for (let i = actualLength; i < expectedLength; i++) {
+        adjusted[i] = lastValue;
+      }
+    } else {
+      // 空の場合：ゼロで埋める（ノイズとして扱う）
+      adjusted.fill(0);
+    }
+    
+    if (actualLength !== expectedLength) {
+      this.log(`Chip length adjusted: ${actualLength} → ${expectedLength}`);
+    }
+    
+    return adjusted;
   }
   
   /**
@@ -435,9 +537,16 @@ export class DsssDpskDemodulator {
     this.isLocked = false;
     this.correlation = 0;
     
+    // フレーマーインスタンス破棄
+    this.currentFramer = null;
+    
     if (consumeBitSamples) {
-      // Move past the bad data by consuming one bit worth of samples
-      this._consumeSamples(this.samplesPerBit);
+      // Move past the bad data by consuming one bit worth of samples（事前チェック）
+      if (this._getAvailableSampleCount() >= this.samplesPerBit) {
+        this._consumeSamples(this.samplesPerBit);
+      } else {
+        this.log(`Cannot consume ${this.samplesPerBit} samples in _loseSyncDueToError - insufficient data`);
+      }
     }
   }
   
@@ -445,26 +554,16 @@ export class DsssDpskDemodulator {
    * Update sync quality based on LLR value
    */
   private _updateSyncQuality(llr: number): void {
-    // 弱いビットの検出
+    // 品質指標の更新（同期失敗判定は上位層に移行）
     
     if (Math.abs(llr) < CONSTANTS.LLR.WEAK_THRESHOLD) {
       this.consecutiveWeakCount++;
-      this.log(`Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
-      
-      // 上位層から要求されているビット数がある場合は同期を維持
-      if (this.targetCount > 0 && this.processedCount < this.targetCount) {
-        this.log(`Keeping sync for requested bits: ${this.processedCount}/${this.targetCount}`);
-      } else if (this.consecutiveWeakCount >= CONSTANTS.SYNC.CONSECUTIVE_WEAK_LIMIT) {
-        // 要求がない場合、または要求ビット数に達した後に弱いビットが連続したら同期を失う
-        this.log(`Too many weak bits, losing sync`);
-        this._loseSyncDueToError();
-        this.resyncCounter = 0;
-      }
+      // this.log(`Weak bit detected: LLR=${llr}, consecutive=${this.consecutiveWeakCount}`);
     } else {
       this.consecutiveWeakCount = 0; // 強いビットでリセット
       this.resyncCounter++; // 強いビットで再同期カウンタを増やす
 
-      // 0 ビット周辺での再同期を試みる
+      // 物理層内での再同期最適化（0ビット周辺での位置調整）
       if (llr > CONSTANTS.LLR.STRONG_ZERO_THRESHOLD && 
           this.resyncCounter > CONSTANTS.SYNC.RESYNC_TRIGGER_COUNT) {
         this._tryResync();
@@ -482,8 +581,10 @@ export class DsssDpskDemodulator {
   
   private _consumeSamples(count: number): void {
     const availableCount = this._getAvailableSampleCount();
-    const consumeCount = Math.min(count, availableCount);
-    this.sampleReadIndex = (this.sampleReadIndex + consumeCount) % this.sampleBuffer.length;
+    if (availableCount < count) {
+      throw new Error(`INTERNAL ERROR: Insufficient samples for consumption - need ${count}, available ${availableCount}`);
+    }
+    this.sampleReadIndex = (this.sampleReadIndex + count) % this.sampleBuffer.length;
   }
 
   private _setSampleReadIndex(newIndex: number): void {
@@ -759,7 +860,7 @@ export class DsssDpskDemodulator {
       for (let bit = 0; bit < CONSTANTS.FRAME.SYNC_VALIDATION_BITS; bit++) {
         const bitOffset = offsetFromReadIndex + bit * this.samplesPerBit;
         const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset);
-        softBits[bit] = llr !== null ? llr : 0;
+        softBits[bit] = llr; // 常に有効なLLR値が返される
       }
       return this._validateSyncWordLLR(softBits, syncOffset);
     } catch (error) {
@@ -810,12 +911,18 @@ export class DsssDpskDemodulator {
       bit === expectedSyncWord[i] ? count + 1 : count, 0);
     const hardMatchRatio = hardMatches / expectedSyncWord.length;
     
-    // Debug logging
-    if (CONSTANTS.DEBUG && softBits.length <= 20) {
-      this.log(`LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
-    }
-    this.log(`LLR sync word [${syncWordStart}:${syncWordStart + CONSTANTS.FRAME.SYNC_WORD_BITS}]: [${Array.from(receivedSyncWordLLR).join(',')}]`);
-    this.log(`Expected sync word: [${expectedSyncWord.join(',')}]`);
+    // Debug logging - 詳細分析
+    this.log(`=== 同期検証詳細分析 ===`);
+    this.log(`LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
+    
+    // プリアンブル部分の確認
+    const preambleLLR = softBits.slice(0, CONSTANTS.FRAME.PREAMBLE_BITS);
+    const preambleHard = Array.from(preambleLLR).map(llr => llr >= 0 ? 0 : 1);
+    this.log(`プリアンブル[0-3] LLR: [${Array.from(preambleLLR).join(',')}] → Hard: [${preambleHard.join(',')}] (期待: [0,0,0,0])`);
+    
+    // 同期ワード部分の確認
+    this.log(`同期ワード[4-11] LLR: [${Array.from(receivedSyncWordLLR).join(',')}] → Hard: [${hardBits.join(',')}]`);
+    this.log(`期待される同期ワード: [${expectedSyncWord.join(',')}]`);
     this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
     // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
@@ -840,16 +947,36 @@ export class DsssDpskDemodulator {
   /**
    * 指定位置で同期確立
    */
-  private _confirmSyncAtOffset(syncOffset: number): void {
+  private _confirmSyncAtOffset(syncOffset: number): boolean {
     // 同期位置までサンプル消費
     const consumeCount = syncOffset - this.sampleReadIndex;
-    this._consumeSamples(consumeCount);
     
-    // 同期確立
+    // プリアンブル+同期ワード（12ビット）をスキップしてヘッダ位置に移動
+    const syncValidationSamples = CONSTANTS.FRAME.SYNC_VALIDATION_BITS * this.samplesPerBit;
+    const totalRequiredSamples = consumeCount + syncValidationSamples;
+    
+    // 必要なサンプル数が利用可能かチェック
+    const availableCount = this._getAvailableSampleCount();
+    if (availableCount < totalRequiredSamples) {
+      this.log(`Insufficient samples for sync confirmation: need ${totalRequiredSamples}, available ${availableCount} - deferring`);
+      return false; // 同期確認延期
+    }
+    
+    // 安全に消費実行
+    this._consumeSamples(consumeCount);
+    this._consumeSamples(syncValidationSamples);
+    
+    // 同期検証で蓄積されたbitBufferを完全にクリア（ヘッダから新規開始）
+    this.bitBufferIndex = 0;
+    this.bitBuffer.fill(0);
+    
+    // 同期確立（ヘッダ開始位置を記録）
     this.isLocked = true;
     this.sampleOffset = this.sampleReadIndex;
     
-    this.log(`SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}`);
+    this.log(`SYNC CONFIRMED: offset=${this.sampleOffset}, correlation=${this.correlation.toFixed(4)}, skipped ${CONSTANTS.FRAME.SYNC_VALIDATION_BITS} bits`);
+    this.log(`Buffer state after sync: writeIndex=${this.sampleWriteIndex}, readIndex=${this.sampleReadIndex}, available=${this._getAvailableSampleCount()}`);
+    return true;
   }
 
 }

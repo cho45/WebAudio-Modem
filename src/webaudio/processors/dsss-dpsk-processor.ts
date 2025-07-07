@@ -60,7 +60,6 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
   
   // Core components
   private demodulator: DsssDpskDemodulator;
-  private framer: DsssDpskFramer;
   
   // Modulation state
   private pendingModulation: { samples: Float32Array; index: number } | null = null;
@@ -93,7 +92,6 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     };
     
     // Initialize components
-    this.framer = new DsssDpskFramer();
     this.demodulator = this.createDemodulator();
     
     // Set up message handler
@@ -143,7 +141,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       return true;
     } catch (error) {
       // Log detailed error but continue processing to maintain AudioWorklet stability
-      console.error(`[DsssDpskProcessor:${this.instanceName}] FATAL Error in process() at call #${this.processCallCount}:`, error);
+      console.error(`[DsssDpskProcessor:${this.instanceName}] FATAL Error in process():`, error);
       console.error(`[DsssDpskProcessor:${this.instanceName}] Error details: name=${(error as Error).name}, message=${(error as Error).message}, stack=${(error as Error).stack}`);
       return true;
     }
@@ -158,37 +156,23 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     // Add samples to demodulator
     this.demodulator.addSamples(input);
     
+    // Process frames using new unified API
+    const frames = this.demodulator.getAvailableFrames();
     
-    // Process all available bits (optimize for AudioWorklet performance)
-    const maxIterations = 20; // Reduced for better real-time performance
-    
-    for (let i = 0; i < maxIterations; i++) {
-      const bits = this.demodulator.getAvailableBits();
-      if (bits.length === 0) {
-        break; // No more bits available
+    // Store decoded data efficiently
+    if (frames.length > 0) {
+      this.log(`Demodulator produced ${frames.length} frames`);
+      for (const frame of frames) {
+        this.log(`Frame data: ${frame.userData.length} bytes, status: ${frame.status}`);
+        this.decodedDataBuffer.push(frame.userData);
       }
       
-      const frames = this.framer.process(bits);
-      if (bits.length > 0) {
-        this.log(`Demodulator provided ${bits.map(llr=> llr > 0 ? 0 : 1).join('')} ${bits} / ${this.framer.getState().state}`);
-      }
-      
-      
-      // Store decoded data efficiently
-      if (frames.length > 0) {
-        // this.log(`[DsssDpskProcessor] Framer produced ${frames.length} frames`);
-        for (const frame of frames) {
-          // this.log(`[DsssDpskProcessor] Frame data: ${frame.userData.length} bytes`);
-          this.decodedDataBuffer.push(frame.userData);
-        }
-        
-        // Resolve demodulation promise if waiting
-        if (this.demodulationPromise) {
-          const data = this.collectDecodedData();
-          this.log(`Demodulation complete: ${data.length} bytes total`);
-          this.demodulationPromise.resolve(data);
-          this.demodulationPromise = null;
-        }
+      // Resolve demodulation promise if waiting
+      if (this.demodulationPromise) {
+        const data = this.collectDecodedData();
+        this.log(`Demodulation complete: ${data.length} bytes total`);
+        this.demodulationPromise.resolve(data);
+        this.demodulationPromise = null;
       }
     }
   }
@@ -336,8 +320,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
           await this.modulate(new Uint8Array(data.bytes), { signal: this.abortController!.signal });
           this.decodedDataBuffer = [];
           this.demodulator.reset();
-          this.framer.reset(); // Safe to reset framer as it doesn't affect sync
-          this.log('Cleared receive buffers after modulation (sync state preserved for fast recovery)');
+          this.log('Cleared receive buffers after modulation');
           result = { success: true };
           break;
           
@@ -379,7 +362,6 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
   private configure(config: Partial<DsssDpskConfig>): void {
     this.config = { ...this.config, ...config };
     this.demodulator = this.createDemodulator();
-    this.framer.reset();
   }
   
   /**
@@ -393,7 +375,6 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     
     // Reset components
     this.demodulator.reset();
-    this.framer.reset();
     
     // Reject pending promises
     if (this.modulationPromise) {
@@ -465,7 +446,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
       const chunk = data.slice(offset, offset + chunkSize);
       
       // Build frame
-      const frame = this.framer.build(chunk, {
+      const frame = DsssDpskFramer.build(chunk, {
         sequenceNumber: sequenceNumber,
         frameType: 0,
         ldpcNType: ldpcNType
