@@ -569,20 +569,11 @@ export class DsssDpskDemodulator {
     
     // デバッグ: ノイズ分散の確認
     if (CONSTANTS.DEBUG && this.bitBufferIndex < 10) {
-      this.log(`[LLR Debug] NoiseVariance: ${estimatedNoiseVariance.toFixed(3)} (theoretical from corr=${this.correlation.toFixed(4)}, floor=${this.cachedNoiseFloor.toFixed(6)})`);
+      // this.log(`[LLR Debug] NoiseVariance: ${estimatedNoiseVariance.toFixed(3)} (theoretical from corr=${this.correlation.toFixed(4)}, floor=${this.cachedNoiseFloor.toFixed(6)})`);
     }
     
     // DSSS逆拡散
     const llrs = dsssDespread(chipLlrs, this.config.sequenceLength, this.config.seed, estimatedNoiseVariance);
-    
-    // デバッグ: 逆拡散結果の確認
-    if (CONSTANTS.DEBUG && this.bitBufferIndex < 10) {
-      if (llrs && llrs.length > 0) {
-        this.log(`[LLR Debug] DespreadLLRs[${llrs.length}]: ${llrs[0].toFixed(2)}`);
-      } else {
-        this.log(`[LLR Debug] DespreadLLRs: null or empty`);
-      }
-    }
     
     if (llrs && llrs.length > 0) {
       // LLRを量子化してInt8に変換
@@ -680,7 +671,7 @@ export class DsssDpskDemodulator {
   }
   
   private _consumeSamples(count: number): void {
-    this.log(`[Sample Consumption] Consuming ${count} samples from circular buffer`);
+    // this.log(`[Sample Consumption] Consuming ${count} samples from circular buffer`);
     const availableCount = this._getAvailableSampleCount();
     if (availableCount < count) {
       throw new Error(`INTERNAL ERROR: Insufficient samples for consumption - need ${count}, available ${availableCount}`);
@@ -884,14 +875,14 @@ export class DsssDpskDemodulator {
     const offsetFromReadIndex = syncOffset - this.sampleReadIndex;
     
     // デバッグ：同期検出位置の詳細ログ
-    this.log(`[Sync Position Debug] syncOffset=${syncOffset}, readIndex=${this.sampleReadIndex}, offsetFromReadIndex=${offsetFromReadIndex}`);
-    this.log(`[Sync Position Debug] samplesPerBit=${this.samplesPerBit}, validationBits=${CONSTANTS.FRAME.SYNC_VALIDATION_BITS}`);
+    // this.log(`[Sync Position Debug] syncOffset=${syncOffset}, readIndex=${this.sampleReadIndex}, offsetFromReadIndex=${offsetFromReadIndex}`);
+    // this.log(`[Sync Position Debug] samplesPerBit=${this.samplesPerBit}, validationBits=${CONSTANTS.FRAME.SYNC_VALIDATION_BITS}`);
     
     try {
       const softBits = new Int8Array(CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
       for (let bit = 0; bit < CONSTANTS.FRAME.SYNC_VALIDATION_BITS; bit++) {
         const bitOffset = offsetFromReadIndex + bit * this.samplesPerBit;
-        this.log(`[Sync Position Debug] bit=${bit}, bitOffset=${bitOffset}, absolutePosition=${this.sampleReadIndex + bitOffset}`);
+        // this.log(`[Sync Position Debug] bit=${bit}, bitOffset=${bitOffset}, absolutePosition=${this.sampleReadIndex + bitOffset}`);
         const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset);
         softBits[bit] = llr; // 常に有効なLLR値が返される
       }
