@@ -481,8 +481,9 @@ export class DsssDpskDemodulator {
         this.targetCount = 0;
         this.log(`[False Peak Cleanup] Reset internal state after failed sync validation`);
         
-        // 偽ピーク処理: 0.5〜1bit分進める（次の候補探索のため）
-        const advance = Math.min(Math.floor(this.samplesPerBit * 8), this._getAvailableSampleCount());
+        // 偽ピーク処理: 0.5ビット分進める（次の候補探索のため）
+        // 修正: 8ビット分の進み過ぎを防ぎ、実際の信号を飛び越えないようにする
+        const advance = Math.min(Math.floor(this.samplesPerBit * 0.5), this._getAvailableSampleCount());
         if (advance > 0) {
           this._consumeSamples(advance);
           const afterAdvance = {
