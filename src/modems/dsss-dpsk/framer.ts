@@ -170,8 +170,8 @@ export class DataFrame {
  * 各フレームごとに新しいインスタンスを作成
  * 状態遷移：WAITING_HEADER → WAITING_DATA → COMPLETED
  */
+const ldpcInstances: Map<number, LDPC> = new Map();
 export class DsssDpskFramer {
-  private ldpcInstances: Map<number, LDPC> = new Map();
   private state: FramerState = FramerState.WAITING_HEADER;
   
   // フレーム情報
@@ -194,7 +194,9 @@ export class DsssDpskFramer {
         puncturedBitIndices.push(i);
       }
       
-      this.ldpcInstances.set(type, new LDPC(params.matrix as HMatrixData, DEFAULT_LDPC_ITERATIONS, new Set(puncturedBitIndices)));
+      if (!ldpcInstances.has(type)) {
+        ldpcInstances.set(type, new LDPC(params.matrix as HMatrixData, DEFAULT_LDPC_ITERATIONS, new Set(puncturedBitIndices)));
+      }
     }
   }
 
@@ -285,10 +287,6 @@ export class DsssDpskFramer {
     
     // 状態遷移
     this.state = FramerState.COMPLETED;
-    
-    if (!decodedPayload) {
-      return null; // 復号失敗
-    }
 
     return {
       header: this.header,
@@ -421,7 +419,7 @@ export class DsssDpskFramer {
 
   private _encodePayload(userData: Uint8Array, ldpcNType: number): Uint8Array {
     const params = FEC_PARAMS[ldpcNType as keyof typeof FEC_PARAMS];
-    const ldpc = this.ldpcInstances.get(ldpcNType);
+    const ldpc = ldpcInstances.get(ldpcNType);
     if (!params || !ldpc) {
       throw new Error(`Invalid ldpcNType: ${ldpcNType}`);
     }
@@ -452,23 +450,26 @@ export class DsssDpskFramer {
     return ldpcBits;
   }
 
-  private _decodePayload(payloadSoftBits: Int8Array, ldpcNType: number): { userData: Uint8Array; status: 'success' | 'bch_corrected' } | null {
+  private _decodePayload(payloadSoftBits: Int8Array, ldpcNType: number): { userData: Uint8Array; status: 'success' | 'bch_corrected' } {
     const params = FEC_PARAMS[ldpcNType as keyof typeof FEC_PARAMS];
-    const ldpc = this.ldpcInstances.get(ldpcNType);
-    if (!params || !ldpc) {
-      return null;
+    const ldpc = ldpcInstances.get(ldpcNType);
+    if (!params) {
+      throw new Error(`Invalid ldpcNType: ${ldpcNType}`);
+    }
+    if (!ldpc) {
+      throw new Error(`Invalid ldpcNType: ${ldpcNType} (LDPC instance not found)`);
     }
 
     // LDPC復号
     const ldpcDecodeResult = ldpc.decode(payloadSoftBits, DEFAULT_LDPC_ITERATIONS);
     if (!ldpcDecodeResult.converged) {
-      return null;
+      throw new Error(`LDPC decode failed (not converged) for type ${params.ldpcN}`);
     }
 
     // BCH復号
     const bchDecodeResult = bchDecode(ldpcDecodeResult.decodedMessage, params.bchType);
     if (bchDecodeResult.status === 'failed') {
-      return null;
+      throw new Error(`BCH decode failed for type ${params.bchType}`);
     }
 
     const status: 'success' | 'bch_corrected' = 

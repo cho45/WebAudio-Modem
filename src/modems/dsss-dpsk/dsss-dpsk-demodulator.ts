@@ -10,7 +10,6 @@ import {
   decimatedMatchedFilter,
   detectSynchronizationPeak,
   generateModulatedReference,
-  estimateNoiseFromCorrelations
 } from './dsss-dpsk';
 import { DsssDpskFramer, type DecodedFrame, BIT_MANIPULATION } from './framer';
 
@@ -224,10 +223,10 @@ export class DsssDpskDemodulator {
       }
       
       // 状態2: フレーマー存在 → フレーム構築継続（isLocked無関係）
-      this.log(`[Framer Check] currentFramer=${this.currentFramer ? 'exists' : 'null'}`);
+      // this.log(`[Framer Check] currentFramer=${this.currentFramer ? 'exists' : 'null'}`);
       if (this.currentFramer) {
         const framerState = this.currentFramer.getState();
-        this.log(`[Framer State] currentFramer exists, state=${framerState.state}, remainingBits=${framerState.remainingBits}`);
+        // this.log(`[Framer State] currentFramer exists, state=${framerState.state}, remainingBits=${framerState.remainingBits}`);
         
         if (framerState.state === 'WAITING_HEADER') {
           // ストリーム処理：利用可能ビットを段階的に蓄積
@@ -243,23 +242,9 @@ export class DsssDpskDemodulator {
             this.log(`Header: 0x${headerByte.toString(16)}`);
             this.log(`[Header Debug] Calling framer.initialize() with headerByte=0x${headerByte.toString(16)}`);
             if (!this.currentFramer.initialize(headerByte)) {
-              // ヘッダエラー（偽ピーク検出）→ フレーマー破棄・1ビット進んで次候補探索
-              this.log(`Header failed (likely false peak), repositioning to next sync candidate`);
+              this.log(`Header failed (likely false peak)`);
               this.currentFramer = null;
-              
-              // 偽ピーク処理: 同期状態は保持、安全に進んで次候補探索
-              const availableCount = this._getAvailableSampleCount();
-              const moveDistance = Math.min(this.samplesPerBit, availableCount);
-              if (moveDistance > 0) {
-                this._consumeSamples(moveDistance); // 利用可能な範囲で進む
-                this.log(`False peak handled: moved ${moveDistance} samples forward (requested ${this.samplesPerBit})`);
-              } else {
-                this.log(`False peak handled: no samples available to move, will retry next iteration`);
-              }
-              this.isLocked = false; // 次の同期検索のため一時的に無効化
-              
-              // 同期失敗後も処理継続して次の同期候補を探索
-              frameProcessingProgress = true; // 次のループで再同期試行
+              this.isLocked = false;
             } else {
               this.log(`[Header Debug] Framer initialization successful!`);
             }
@@ -272,13 +257,10 @@ export class DsssDpskDemodulator {
           const needed = this.currentFramer.remainingBits;
           const dataBits = this._getAvailableBits(needed);
           
-          this.log(`[Data Debug] Need ${needed} bits, got ${dataBits.length} bits, remaining=${this.currentFramer.remainingBits}`);
-          
-          // 偽ピーク検出を一時的に無効化してテスト
-          this.log(`[DEBUG] Data progress tracking disabled for offset calculation testing`);
           
           // ストリーム処理：利用可能ビットを段階的に蓄積
           if (dataBits.length > 0) {
+            this.log(`[Data Debug] Need ${needed} bits, got ${dataBits.length} bits, remaining=${this.currentFramer.remainingBits}`);
             frameProcessingProgress = true; // ビット進捗があれば継続
             this.currentFramer.addDataBits(dataBits);
             this.log(`[Data Debug] Added ${dataBits.length} bits, new remaining=${this.currentFramer.remainingBits}`);
@@ -286,8 +268,8 @@ export class DsssDpskDemodulator {
           
           // 全データ完成時にフレーム完了
           if (this.currentFramer && this.currentFramer.remainingBits === 0) {
-            this.log(`[Data Debug] All data received! Finalizing frame...`);
             const frame = this.currentFramer.finalize();
+            this.log(`[Data Debug] All data received! Finalizing frame... ${frame}`);
             if (frame) {
               this.log(`Frame received! seq=${frame.header.sequenceNumber}`);
               result.push(frame);
@@ -303,7 +285,6 @@ export class DsssDpskDemodulator {
             this.log(`Reset sync state for next frame detection: isLocked=${this.isLocked}`);
             
             this.currentFramer = null; // フレーム完成・次のフレーム処理準備
-            this.dataProgressTracker = null; // 進捗トラッカーもリセット
           }
         }
       }
@@ -354,11 +335,10 @@ export class DsssDpskDemodulator {
     // 要求された分があれば返す  
     if (this.bitBufferIndex >= targetBits) {
       const result = this.bitBuffer.slice(0, targetBits);
+      console.log(`[Bit Buffer Debug] Available bits: ${this.bitBufferIndex}/${targetBits}, processedCount=${this.processedCount}, iterations=${iterationCount} ${result}`);
       
       // バッファを詰める
-      for (let i = targetBits; i < this.bitBufferIndex; i++) {
-        this.bitBuffer[i - targetBits] = this.bitBuffer[i];
-      }
+      this.bitBuffer.set(this.bitBuffer.subarray(targetBits, this.bitBufferIndex), 0);
       this.bitBufferIndex -= targetBits;
       this.processedCount += targetBits;
       
@@ -529,6 +509,9 @@ export class DsssDpskDemodulator {
   
   private _processBit(): void {
     // 呼び出し側で十分なサンプル数は確認済み
+    if (!(this._getAvailableSampleCount() >= this.samplesPerBit)) {
+      this.log(`Cannot consume ${this.samplesPerBit} samples in _processBit - insufficient data`);
+    }
     
     // デモジュレーションとデスプレッドをゼロコピーで実行（常に有効なLLR値を返す）
     const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, 0);
@@ -546,12 +529,7 @@ export class DsssDpskDemodulator {
     // 品質評価（同期失敗判定は上位層で実行）
     this._updateSyncQuality(llr);
     
-    // 1ビット分のサンプルを消費（事前チェック）
-    if (this._getAvailableSampleCount() >= this.samplesPerBit) {
-      this._consumeSamples(this.samplesPerBit);
-    } else {
-      this.log(`Cannot consume ${this.samplesPerBit} samples in _processBit - insufficient data`);
-    }
+    this._consumeSamples(this.samplesPerBit);
   }
   
   /**
@@ -702,6 +680,7 @@ export class DsssDpskDemodulator {
   }
   
   private _consumeSamples(count: number): void {
+    this.log(`[Sample Consumption] Consuming ${count} samples from circular buffer`);
     const availableCount = this._getAvailableSampleCount();
     if (availableCount < count) {
       throw new Error(`INTERNAL ERROR: Insufficient samples for consumption - need ${count}, available ${availableCount}`);
