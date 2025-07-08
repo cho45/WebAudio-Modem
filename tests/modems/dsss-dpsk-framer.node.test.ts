@@ -3,8 +3,6 @@ import { DsssDpskFramer, type FrameOptions } from '../../src/modems/dsss-dpsk/fr
 
 describe('DsssDpskFramer', () => {
   describe('build method', () => {
-    const framer = new DsssDpskFramer();
-
     test('should build a valid data frame with minimum options', () => {
       const userData = new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34, 0x56]); // 7 bytes for BCH_63_57_1
       const options: FrameOptions = {
@@ -13,7 +11,7 @@ describe('DsssDpskFramer', () => {
         ldpcNType: 0, // n=128
       };
 
-      const frame = framer.build(userData, options);
+      const frame = DsssDpskFramer.build(userData, options);
 
       // 1. Check header byte generation
       // S=0, T=0, N=0 -> 000 00 00 -> Parity = 0
@@ -36,7 +34,7 @@ describe('DsssDpskFramer', () => {
         ldpcNType: 2,      // 10
       };
 
-      const frame = framer.build(userData, options);
+      const frame = DsssDpskFramer.build(userData, options);
 
       // S=011, T=01, N=10 -> 011 01 10 -> 4つの1があるので偶数パリティ
       // Header: 01101100
@@ -50,11 +48,14 @@ describe('DsssDpskFramer', () => {
             ldpcNType: 1, // n=256
         };
         const userData = new Uint8Array(15).fill(0xFF); // Max data for BCH(127,120,1) is 15 bytes
-        const frame = framer.build(userData, options);
+        const frame = DsssDpskFramer.build(userData, options);
 
         // Preamble(4) + SW(8) + HB(8) + Payload(256) = 276 bits
         expect(frame.bits.length).toBe(4 + 8 + 8 + 256);
-        expect(frame.payload.length).toBe(256); // payload は bit array として返される
+        
+        // Check payload bits separately - payload is encoded part of the frame
+        const payloadBits = frame.bits.slice(4 + 8 + 8); // Skip preamble, sync word, and header
+        expect(payloadBits.length).toBe(256); // payload is bit array
     });
 
     test('should throw an error if user data is too large for BCH encoding', () => {
@@ -65,169 +66,250 @@ describe('DsssDpskFramer', () => {
         };
         const largeUserData = new Uint8Array(8).fill(0xFF); // 8 bytes > 7 bytes max
 
-        expect(() => framer.build(largeUserData, options)).toThrow('exceeds max length');
+        expect(() => DsssDpskFramer.build(largeUserData, options)).toThrow('exceeds max length');
     });
   });
 
-  describe('process method', () => {
-    let framer: DsssDpskFramer;
-
-    beforeEach(() => {
-      framer = new DsssDpskFramer();
-    });
-
+  describe('new API methods', () => {
     // Helper to create soft bits from hard bits (perfect signal)
     // LLR convention: LLR >= 0 means bit 0, LLR < 0 means bit 1
     const createPerfectSoftBits = (hardBits: number[]): Int8Array => {
       return new Int8Array(hardBits.map(bit => bit === 0 ? 127 : -127));
     };
 
-    test('should decode a perfect frame successfully', () => {
+    // Helper to extract header byte from frame bits
+    const extractHeaderByte = (frameBits: Uint8Array): number => {
+      const headerBits = frameBits.slice(4 + 8, 4 + 8 + 8); // Skip preamble + sync word
+      let headerByte = 0;
+      for (let i = 0; i < 8; i++) {
+        headerByte |= (headerBits[i] << (7 - i));
+      }
+      return headerByte;
+    };
+
+    test('should decode a perfect frame successfully with new API', () => {
       const userData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]); // 7 bytes for BCH_63_57_1
       const options: FrameOptions = {
         sequenceNumber: 1,
         frameType: 0,
         ldpcNType: 0, // n=128
       };
-      const encodedFrame = framer.build(userData, options);
+      const encodedFrame = DsssDpskFramer.build(userData, options);
       const perfectSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits));
 
-      const decodedFrames = framer.process(perfectSoftBits);
+      // Extract header byte and payload bits
+      const headerByte = extractHeaderByte(encodedFrame.bits);
+      const payloadSoftBits = perfectSoftBits.slice(4 + 8 + 8); // Skip preamble + sync word + header
 
-      expect(decodedFrames.length).toBe(1);
-      expect(decodedFrames[0].header.sequenceNumber).toBe(options.sequenceNumber);
-      expect(decodedFrames[0].header.frameType).toBe(options.frameType);
-      expect(decodedFrames[0].header.ldpcNType).toBe(options.ldpcNType);
-      expect(decodedFrames[0].userData).toEqual(userData);
-      expect(decodedFrames[0].status).toBe('success');
+      // Test new API pattern
+      const framer = new DsssDpskFramer();
+      
+      // Step 1: Initialize with header byte
+      const initSuccess = framer.initialize(headerByte);
+      expect(initSuccess).toBe(true);
+      
+      // Step 2: Add data bits
+      framer.addDataBits(payloadSoftBits);
+      
+      // Step 3: Finalize and decode
+      const decodedFrame = framer.finalize();
+      
+      expect(decodedFrame).not.toBeNull();
+      expect(decodedFrame!.header.sequenceNumber).toBe(options.sequenceNumber);
+      expect(decodedFrame!.header.frameType).toBe(options.frameType);
+      expect(decodedFrame!.header.ldpcNType).toBe(options.ldpcNType);
+      expect(decodedFrame!.userData).toEqual(userData);
+      expect(decodedFrame!.status).toBe('success');
     });
 
-    test('should not decode if not enough bits for preamble', () => {
-      const partialPreamble = createPerfectSoftBits([0, 0, 0]); // 3 bits
-      const decodedFrames = framer.process(partialPreamble);
-      expect(decodedFrames.length).toBe(0);
+    test('should handle initialization failure with corrupted header', () => {
+      const framer = new DsssDpskFramer();
+      // Create header with wrong parity: 0xFE = 11111110
+      // This has 7 ones (odd), so parity bit should be 1, but it's 0
+      const corruptedHeaderByte = 0xFE; // Invalid header with wrong parity
+      
+      const initSuccess = framer.initialize(corruptedHeaderByte);
+      expect(initSuccess).toBe(false);
     });
 
-    test('should not decode if preamble is corrupted', () => {
-      const corruptedPreamble = createPerfectSoftBits([0, 0, 1, 0]); // Corrupted
-      const decodedFrames = framer.process(corruptedPreamble);
-      expect(decodedFrames.length).toBe(0);
+    test('should throw error when calling methods in wrong state', () => {
+      const framer = new DsssDpskFramer();
+      
+      // Should throw when calling addDataBits before initialize
+      expect(() => framer.addDataBits(new Int8Array(10))).toThrow('can only be called in WAITING_DATA state');
+      
+      // Should throw when calling finalize before initialize
+      expect(() => framer.finalize()).toThrow('can only be called in WAITING_DATA state');
+      
+      // After successful initialization, should throw when calling initialize again
+      const validHeader = 0b00000000; // Valid header with correct parity
+      framer.initialize(validHeader);
+      expect(() => framer.initialize(validHeader)).toThrow('can only be called in WAITING_HEADER state');
     });
 
-    test('should not decode if sync word is heavily corrupted', () => {
+    test('should handle incremental data addition', () => {
       const userData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
       const options: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
-      const encodedFrame = framer.build(userData, options);
+      const encodedFrame = DsssDpskFramer.build(userData, options);
       
-      // Test with multiple bit corruption to ensure detection failure
-      // Original sync word: [1, 0, 1, 1, 0, 1, 0, 0]
-      const heavilyCorruptedBits = Array.from(encodedFrame.bits);
-      heavilyCorruptedBits[4] = 0; // First bit: 1 → 0
-      heavilyCorruptedBits[5] = 1; // Second bit: 0 → 1  
-      heavilyCorruptedBits[6] = 0; // Third bit: 1 → 0
-      // Result: [0, 1, 0, 1, 0, 1, 0, 0] - 3 bits corrupted
+      const headerByte = extractHeaderByte(encodedFrame.bits);
+      const payloadSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits.slice(4 + 8 + 8)));
       
-      const corruptedSoftBits = createPerfectSoftBits(heavilyCorruptedBits);
-      const decodedFrames = framer.process(corruptedSoftBits);
+      const framer = new DsssDpskFramer();
+      framer.initialize(headerByte);
       
-      // Heavy corruption should prevent successful decoding
-      expect(decodedFrames.length).toBe(0);
+      // Add data bits in chunks
+      const chunkSize = 32;
+      for (let i = 0; i < payloadSoftBits.length; i += chunkSize) {
+        const chunk = payloadSoftBits.slice(i, i + chunkSize);
+        framer.addDataBits(chunk);
+        
+        // Check remaining bits
+        const remaining = framer.remainingBits;
+        expect(remaining).toBe(Math.max(0, payloadSoftBits.length - i - chunk.length));
+      }
+      
+      // Should be able to finalize after all data is added
+      const decodedFrame = framer.finalize();
+      expect(decodedFrame).not.toBeNull();
+      expect(decodedFrame!.userData).toEqual(userData);
     });
 
-    test('should tolerate minor sync word corruption (1-bit error)', () => {
-      // This test documents the actual behavior: framer is tolerant to minor corruption
+    test('should handle incomplete data and throw error on finalize', () => {
       const userData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
       const options: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
-      const encodedFrame = framer.build(userData, options);
+      const encodedFrame = DsssDpskFramer.build(userData, options);
       
-      // Original sync word: [1, 0, 1, 1, 0, 1, 0, 0]
-      const minorCorruptedBits = Array.from(encodedFrame.bits);
-      minorCorruptedBits[4] = 0; // Single bit corruption: 1 → 0
-      // Result: [0, 0, 1, 1, 0, 1, 0, 0] - 1 bit corrupted
+      const headerByte = extractHeaderByte(encodedFrame.bits);
+      const payloadSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits.slice(4 + 8 + 8)));
       
-      const corruptedSoftBits = createPerfectSoftBits(minorCorruptedBits);
-      const decodedFrames = framer.process(corruptedSoftBits);
+      const framer = new DsssDpskFramer();
+      framer.initialize(headerByte);
       
-      // Minor corruption should still allow decoding due to correlation tolerance
-      expect(decodedFrames.length).toBe(1);
-      expect(decodedFrames[0].userData).toEqual(userData);
+      // Add only partial data
+      const partialData = payloadSoftBits.slice(0, 64); // Only half the data
+      framer.addDataBits(partialData);
+      
+      // Should throw error when trying to finalize incomplete data
+      expect(() => framer.finalize()).toThrow('Incomplete data');
+      
+      // Should still report remaining bits correctly
+      expect(framer.remainingBits).toBe(payloadSoftBits.length - 64);
     });
 
-    test('should not decode if header parity is incorrect', () => {
+    test('should handle different LDPC N types', () => {
+      const testCases = [
+        { ldpcNType: 0, userData: new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]) }, // 7 bytes max
+        { ldpcNType: 1, userData: new Uint8Array(15).fill(0xAA) }, // 15 bytes max
+      ];
+      
+      testCases.forEach(({ ldpcNType, userData }) => {
+        const options: FrameOptions = { sequenceNumber: 2, frameType: 1, ldpcNType };
+        const encodedFrame = DsssDpskFramer.build(userData, options);
+        
+        const headerByte = extractHeaderByte(encodedFrame.bits);
+        const payloadSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits.slice(4 + 8 + 8)));
+        
+        const framer = new DsssDpskFramer();
+        framer.initialize(headerByte);
+        framer.addDataBits(payloadSoftBits);
+        
+        const decodedFrame = framer.finalize();
+        
+        expect(decodedFrame).not.toBeNull();
+        expect(decodedFrame!.header.ldpcNType).toBe(ldpcNType);
+        expect(decodedFrame!.userData).toEqual(userData);
+      });
+    });
+
+    test('should report correct state and status', () => {
+      const framer = new DsssDpskFramer();
+      
+      // Initial state
+      let status = framer.getState();
+      expect(status.state).toBe('WAITING_HEADER');
+      expect(status.isHealthy).toBe(true);
+      expect(status.remainingBits).toBe(0);
+      
+      // After initialization
+      const validHeader = 0b00000000; // Valid header with correct parity
+      framer.initialize(validHeader);
+      
+      status = framer.getState();
+      expect(status.state).toBe('WAITING_DATA');
+      expect(status.isHealthy).toBe(true);
+      expect(status.remainingBits).toBe(128); // For ldpcNType 0
+      
+      // After adding some data
+      const someData = new Int8Array(64).fill(127);
+      framer.addDataBits(someData);
+      
+      status = framer.getState();
+      expect(status.state).toBe('WAITING_DATA');
+      expect(status.remainingBits).toBe(64);
+      
+      // After adding all data and finalizing
+      const remainingData = new Int8Array(64).fill(127);
+      framer.addDataBits(remainingData);
+      framer.finalize();
+      
+      status = framer.getState();
+      expect(status.state).toBe('COMPLETED');
+      expect(status.isHealthy).toBe(false); // Completed means not healthy for further operations
+    });
+
+    test('should handle data length property correctly', () => {
+      const framer = new DsssDpskFramer();
+      
+      // Should throw before initialization
+      expect(() => framer.dataLength).toThrow('can only be accessed after successful initialize');
+      
+      // After successful initialization should return correct length
+      const validHeader = 0b00000000; // ldpcNType = 0, which means 128 bits
+      framer.initialize(validHeader);
+      expect(framer.dataLength).toBe(128);
+      
+      // Test with different ldpcNType
+      const framer2 = new DsssDpskFramer();
+      const headerWithType1 = 0b00000011; // ldpcNType = 1, seqNum = 0, frameType = 0, parity = 1 (odd parity)
+      const initSuccess = framer2.initialize(headerWithType1);
+      expect(initSuccess).toBe(true);
+      expect(framer2.dataLength).toBe(256);
+    });
+
+    test('should handle LDPC/BCH decoding errors', () => {
+      // Test with heavily corrupted payload that would cause LDPC decode failure
       const userData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
       const options: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
-      const encodedFrame = framer.build(userData, options);
+      const encodedFrame = DsssDpskFramer.build(userData, options);
       
-      const corruptedBits = Array.from(encodedFrame.bits);
-      // Corrupt header byte (bit 0, parity bit) to make parity incorrect
-      corruptedBits[19] = corruptedBits[19] === 0 ? 1 : 0; 
-      const perfectSoftBits = createPerfectSoftBits(corruptedBits);
-
-      const decodedFrames = framer.process(perfectSoftBits);
-      expect(decodedFrames.length).toBe(0);
-    });
-
-    test('should decode a frame split across multiple process calls', () => {
-      const userData = new Uint8Array([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11]);
-      const options: FrameOptions = { sequenceNumber: 2, frameType: 1, ldpcNType: 0 };
-      const encodedFrame = framer.build(userData, options);
-      const perfectSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits));
-
-      // Split the frame into two chunks
-      const chunk1 = perfectSoftBits.slice(0, 20); // Preamble + SW + part of Header
-      const chunk2 = perfectSoftBits.slice(20);   // Rest of Header + Payload
-
-      let decodedFrames = framer.process(chunk1);
-      expect(decodedFrames.length).toBe(0); // Should not decode yet
-
-      decodedFrames = framer.process(chunk2);
-      expect(decodedFrames.length).toBe(1);
-      expect(decodedFrames[0].userData).toEqual(userData);
-    });
-
-    test('should decode multiple consecutive frames', () => {
-      const userData1 = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
-      const options1: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
-      const encodedFrame1 = framer.build(userData1, options1);
-
-      const userData2 = new Uint8Array([0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
-      const options2: FrameOptions = { sequenceNumber: 1, frameType: 0, ldpcNType: 0 };
-      const encodedFrame2 = framer.build(userData2, options2);
-
-      const combinedSoftBits = createPerfectSoftBits(
-        Array.from(encodedFrame1.bits).concat(Array.from(encodedFrame2.bits))
-      );
-
-      const decodedFrames = framer.process(combinedSoftBits);
-
-      expect(decodedFrames.length).toBe(2);
-      expect(decodedFrames[0].userData).toEqual(userData1);
-      expect(decodedFrames[1].userData).toEqual(userData2);
-    });
-
-    test('should handle noise in preamble and sync word (threshold test)', () => {
-      const userData = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
-      const options: FrameOptions = { sequenceNumber: 0, frameType: 0, ldpcNType: 0 };
-      const encodedFrame = framer.build(userData, options);
+      const headerByte = extractHeaderByte(encodedFrame.bits);
+      const payloadSoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits.slice(4 + 8 + 8)));
       
-      // Introduce actual noise (flip bits correctly)
-      const noisySoftBits = createPerfectSoftBits(Array.from(encodedFrame.bits));
-      // Corrupt 2 bits in preamble (flip 0 -> 1)
-      noisySoftBits[0] = -127; // Preamble bit 0: 0 -> 1 (should be +127 but now -127)
-      noisySoftBits[1] = -127; // Preamble bit 1: 0 -> 1 (should be +127 but now -127)
-      // Corrupt 2 bits in sync word (flip pattern)
-      noisySoftBits[4] = 127;  // Sync word bit 0: 1 -> 0 (should be -127 but now +127)
-      noisySoftBits[5] = -127; // Sync word bit 1: 0 -> 1 (should be +127 but now -127)
-
-      const decodedFrames = framer.process(noisySoftBits);
-      // With multiple bit flips, correlation should fall below thresholds
-      expect(decodedFrames.length).toBe(0);
+      // Heavily corrupt the payload - flip many bits
+      for (let i = 0; i < payloadSoftBits.length; i += 4) {
+        payloadSoftBits[i] = -payloadSoftBits[i]; // Flip every 4th bit
+      }
+      
+      const framer = new DsssDpskFramer();
+      framer.initialize(headerByte);
+      framer.addDataBits(payloadSoftBits);
+      
+      // Should throw error due to decoding failure
+      expect(() => framer.finalize()).toThrow();
     });
 
-    test('should return empty array if no frames are decoded', () => {
-      const randomSoftBits = new Int8Array(100).fill(0);
-      const decodedFrames = framer.process(randomSoftBits);
-      expect(decodedFrames.length).toBe(0);
+    test('should handle invalid ldpcNType during initialization', () => {
+      const framer = new DsssDpskFramer();
+      
+      // Create header with invalid ldpcNType (should be 0-3, but higher values are invalid)
+      // This would require manually crafting a header byte, but since we validate in build(),
+      // let's test the edge case where ldpcNType is out of bounds
+      const invalidHeader = 0b00001110; // ldpcNType = 3, frameType = 3, seqNum = 0, parity = 0
+      
+      // This should fail during initialization
+      const initSuccess = framer.initialize(invalidHeader);
+      expect(initSuccess).toBe(false);
     });
   });
 });
