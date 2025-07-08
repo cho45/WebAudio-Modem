@@ -376,7 +376,7 @@ const modulatedReferenceCache = new Map<string, Float32Array>();
  * @param modulationParams Modulation parameters
  * @returns Fully modulated reference samples
  */
-function generateModulatedReference(
+export function generateModulatedReference(
   referenceSequence: Int8Array,
   modulationParams: {
     samplesPerPhase: number;
@@ -435,7 +435,7 @@ function decimateSignal(signal: Float32Array, factor: number): Float32Array {
  * @param decimationFactor Downsampling factor (2-8, higher = faster but less precise)
  * @returns Matched filter output with reduced sample rate
  */
-function decimatedMatchedFilter(
+export function decimatedMatchedFilter(
   receivedSamples: Float32Array,
   referenceSamples: Float32Array,
   maxSampleOffset: number,
@@ -510,7 +510,7 @@ function decimatedMatchedFilter(
  * @param thresholds Detection parameters (must be externally provided - no magic numbers)
  * @returns Peak detection results
  */
-function detectSynchronizationPeak(
+export function detectSynchronizationPeak(
   correlations: Float32Array,
   sampleOffsets: number[],
   samplesPerPhase: number,
@@ -563,10 +563,8 @@ function detectSynchronizationPeak(
   if (thresholds.externalNoiseFloor !== undefined) {
     noiseFloor = Math.max(thresholds.externalNoiseFloor, 1e-6);
   } else {
-    // Fallback to median-based estimation
-    const sortedCorrelations = Array.from(correlations).map(Math.abs).sort((a, b) => a - b);
-    const medianCorrelation = sortedCorrelations[Math.floor(sortedCorrelations.length / 2)];
-    noiseFloor = Math.max(medianCorrelation, 1e-6);
+    // Use improved RMS-based estimation with peak exclusion
+    noiseFloor = estimateNoiseFromCorrelations(correlations);
   }
   
   const peakToNoiseRatio = peakValue / noiseFloor;
@@ -686,6 +684,35 @@ export function applySyncOffset(receivedData: Float32Array, offset: number): Flo
 }
 
 
+
+/**
+ * Estimate noise floor from correlation values using RMS with peak exclusion
+ * @param correlations Correlation values from matched filter
+ * @returns Estimated noise floor
+ */
+export function estimateNoiseFromCorrelations(correlations: Float32Array): number {
+  if (correlations.length === 0) {
+    return 1e-6; // Fallback for empty input
+  }
+  
+  // Sort correlations by absolute value in descending order
+  const absSorted = Array.from(correlations).map(Math.abs).sort((a, b) => b - a);
+  
+  // Exclude top 10% of peaks (signal components)
+  const excludeCount = Math.max(1, Math.floor(correlations.length * 0.1));
+  const noiseSamples = absSorted.slice(excludeCount);
+  
+  if (noiseSamples.length === 0) {
+    return 1e-6; // Fallback for insufficient samples
+  }
+  
+  // Calculate RMS of noise-only samples
+  const rms = Math.sqrt(
+    noiseSamples.reduce((sum, val) => sum + val * val, 0) / noiseSamples.length
+  );
+  
+  return Math.max(rms, 1e-6); // Prevent division by zero
+}
 
 /**
  * Generate M-sequence reference for synchronization (helper function)
