@@ -11,7 +11,9 @@ import {
   findSyncOffset,
   applySyncOffset,
   generateSyncReference,
-  estimateNoiseFromCorrelations
+  estimateNoiseFromCorrelations,
+  generateModulatedReference,
+  decimatedMatchedFilter
 } from '../../src/modems/dsss-dpsk';
 
 import { calculateBER, addAWGN } from '../../src/utils';
@@ -2025,5 +2027,163 @@ describe('estimateNoiseFromCorrelations', () => {
     // Should estimate noise floor close to backgroundNoise level
     expect(result).toBeGreaterThan(backgroundNoise * 0.3);
     expect(result).toBeLessThan(backgroundNoise * 3.0);
+  });
+
+  describe('Realistic matched filter scenarios', () => {
+    test('should estimate near-zero noise floor from silence vs reference signal', () => {
+      // Generate a reference signal
+      const referenceSequence = generateSyncReference(31, 21);
+      const modulationParams = {
+        samplesPerPhase: 23,
+        sampleRate: 44100,
+        carrierFreq: 10000
+      };
+      const referenceSamples = generateModulatedReference(referenceSequence, modulationParams);
+      
+      // Create silent (zero-filled) received signal
+      const silentSamples = new Float32Array(referenceSamples.length * 2); // All zeros
+      
+      // Apply matched filter
+      const maxSampleOffset = modulationParams.samplesPerPhase * 3; // Small search range
+      const { correlations } = decimatedMatchedFilter(
+        silentSamples,
+        referenceSamples,
+        maxSampleOffset,
+        2 // decimation factor
+      );
+      
+      // Estimate noise floor
+      const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+      
+      console.log(`Silent signal correlations length: ${correlations.length}`);
+      console.log(`Silent signal estimated noise: ${estimatedNoise}`);
+      console.log(`Max correlation: ${Math.max(...correlations)}`);
+      
+      // With silent input, correlations should be very small
+      // Note: May not be exactly zero due to floating-point precision
+      expect(estimatedNoise).toBeLessThan(1e-3); // Very small noise floor
+      expect(Math.max(...correlations.map(Math.abs))).toBeLessThan(1e-2); // Very small correlations
+    });
+
+    test('should estimate increasing noise floor with different AWGN levels', () => {
+      // Generate a reference signal
+      const sampleRate = 44100;
+      const referenceSequence = generateSyncReference(31, 21);
+      const modulationParams = {
+        sampleRate,
+        samplesPerPhase: 23,
+        carrierFreq: 10000
+      };
+      const referenceSamples = generateModulatedReference(referenceSequence, modulationParams);
+      
+      // Test different noise levels
+      const noiseSnrLevels = [-10, 0, 10, 20]; // dB (ascending order)
+      const results: Array<{snr: number, estimatedNoise: number, maxCorrelation: number, inputRms: number}> = [];
+      
+      for (const snr of noiseSnrLevels) {
+        // Create noise-only signal with some baseline amplitude
+        const baselineSignal = new Float32Array(referenceSamples.length * 2);
+        // Add small baseline to avoid pure zero (which addAWGN might handle differently)
+        for (let i = 0; i < baselineSignal.length; i++) {
+          baselineSignal[i] = 0.1 * Math.sin(2 * Math.PI * 1000 * i / sampleRate);
+        }
+        
+        const noisySamples = addAWGN(baselineSignal, snr);
+        
+        // Calculate input RMS for debugging
+        const inputRms = Math.sqrt(
+          noisySamples.reduce((sum, val) => sum + val * val, 0) / noisySamples.length
+        );
+        
+        // Apply matched filter
+        const maxSampleOffset = modulationParams.samplesPerPhase * 3;
+        const { correlations } = decimatedMatchedFilter(
+          noisySamples,
+          referenceSamples,
+          maxSampleOffset,
+          2
+        );
+        
+        // Estimate noise floor
+        const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+        const maxCorrelation = Math.max(...correlations.map(Math.abs));
+        
+        results.push({ snr, estimatedNoise, maxCorrelation, inputRms });
+        
+        console.log(`SNR: ${snr}dB, Input RMS: ${inputRms.toFixed(4)}, Estimated noise: ${estimatedNoise.toFixed(4)}, Max correlation: ${maxCorrelation.toFixed(4)}`);
+      }
+      
+      // Verify that estimated noise decreases with higher SNR
+      // (Note: Higher SNR = less noise, so estimated noise should decrease)
+      for (let i = 0; i < results.length - 1; i++) {
+        const current = results[i];   // Lower SNR (more noise)
+        const next = results[i + 1];  // Higher SNR (less noise)
+        
+        // Lower SNR should result in higher estimated noise
+        // But we need to ensure there's actually a measurable difference
+        if (current.estimatedNoise > 1e-5 && next.estimatedNoise > 1e-5) {
+          expect(current.estimatedNoise).toBeGreaterThanOrEqual(next.estimatedNoise * 0.8);
+        }
+      }
+      
+      // All estimates should be reasonable (not extreme values)
+      for (const result of results) {
+        expect(result.estimatedNoise).toBeGreaterThan(1e-6);
+        expect(result.estimatedNoise).toBeLessThan(10.0);
+        
+        // Input should have measurable noise
+        expect(result.inputRms).toBeGreaterThan(1e-6);
+      }
+      
+      // At least some tests should show non-minimal noise estimates
+      const nonMinimalResults = results.filter(r => r.estimatedNoise > 1e-5);
+      expect(nonMinimalResults.length).toBeGreaterThan(0);
+    });
+
+    test('should distinguish signal peak from noise floor in matched filter output', () => {
+      // Generate a reference signal
+      const referenceSequence = generateSyncReference(31, 21);
+      const modulationParams = {
+        samplesPerPhase: 23,
+        sampleRate: 44100,
+        carrierFreq: 10000
+      };
+      const referenceSamples = generateModulatedReference(referenceSequence, modulationParams);
+      
+      // Create received signal with the same reference (perfect match scenario)
+      const receivedSamples = new Float32Array(referenceSamples.length + 1000);
+      
+      // Insert reference signal at offset 500
+      const signalOffset = 500;
+      for (let i = 0; i < referenceSamples.length; i++) {
+        receivedSamples[signalOffset + i] = referenceSamples[i];
+      }
+      
+      // Add moderate noise
+      const noisySamples = addAWGN(receivedSamples, 10); // 10dB SNR
+      
+      // Apply matched filter
+      const maxSampleOffset = 800; // Search range
+      const { correlations } = decimatedMatchedFilter(
+        noisySamples,
+        referenceSamples,
+        maxSampleOffset,
+        2
+      );
+      
+      // Estimate noise floor and find peak
+      const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+      const maxCorrelation = Math.max(...correlations);
+      const peakToNoiseRatio = maxCorrelation / estimatedNoise;
+      
+      console.log(`Signal present - Estimated noise: ${estimatedNoise.toFixed(4)}`);
+      console.log(`Max correlation: ${maxCorrelation.toFixed(4)}`);
+      console.log(`Peak-to-noise ratio: ${peakToNoiseRatio.toFixed(2)}`);
+      
+      // Should detect a clear signal peak above noise floor
+      expect(peakToNoiseRatio).toBeGreaterThan(5.0); // Strong signal detection
+      expect(maxCorrelation).toBeGreaterThan(0.1); // Significant correlation
+      expect(estimatedNoise).toBeLessThan(maxCorrelation * 0.5); // Noise much lower than peak
+    });
   });
 });
