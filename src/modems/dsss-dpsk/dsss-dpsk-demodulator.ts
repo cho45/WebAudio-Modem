@@ -54,7 +54,7 @@ const CONSTANTS = {
   },
   
   // Debug  
-  DEBUG: true, // デバッグ再開: データビット処理確認
+  DEBUG: false, // デバッグ再開: データビット処理確認
 } as const;
 
 /**
@@ -483,7 +483,6 @@ export class DsssDpskDemodulator {
         this.log(`[False Peak Cleanup] Reset internal state after failed sync validation`);
         
         // 偽ピーク処理: 0.5ビット分進める（次の候補探索のため）
-        // 修正: 8ビット分の進み過ぎを防ぎ、実際の信号を飛び越えないようにする
         const advance = Math.min(Math.floor(this.samplesPerBit * 0.5), this._getAvailableSampleCount());
         if (advance > 0) {
           this._consumeSamples(advance);
