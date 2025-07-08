@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { RingBuffer } from '../src/utils'
+import { RingBuffer, quickSelect } from '../src/utils'
 
 describe('RingBuffer', () => {
   let buffer: RingBuffer<Float32Array>;
@@ -207,4 +207,121 @@ describe('RingBuffer', () => {
     expect(output[4]).toBe(0)
     expect(buffer.length).toBe(0)
   })
+})
+
+describe('quickSelect', () => {
+  it('should return k-th element with default compare function (descending)', () => {
+    const arr = [3, 1, 4, 1, 5, 9, 2, 6];
+    
+    // デフォルトの降順ソート: [9, 6, 5, 4, 3, 2, 1, 1]
+    expect(quickSelect(arr, 0)).toBe(9);  // 最大値
+    expect(quickSelect(arr.slice(), 1)).toBe(6);  // 2番目に大きい値
+    expect(quickSelect(arr.slice(), 2)).toBe(5);  // 3番目に大きい値
+    expect(quickSelect(arr.slice(), 7)).toBe(1);  // 最小値
+  });
+
+  it('should return k-th element with ascending compare function', () => {
+    const arr = [3, 1, 4, 1, 5, 9, 2, 6];
+    const ascendingCompare = (a: number, b: number) => a - b;
+    
+    // 昇順ソート: [1, 1, 2, 3, 4, 5, 6, 9]
+    expect(quickSelect(arr, 0, ascendingCompare)).toBe(1);  // 最小値
+    expect(quickSelect(arr.slice(), 1, ascendingCompare)).toBe(1);  // 2番目に小さい値
+    expect(quickSelect(arr.slice(), 2, ascendingCompare)).toBe(2);  // 3番目に小さい値
+    expect(quickSelect(arr.slice(), 7, ascendingCompare)).toBe(9);  // 最大値
+  });
+
+  it('should handle boundary values (k=0 and k=length-1)', () => {
+    const arr = [10, 20, 30, 40, 50];
+    
+    // k=0: 最大値 (降順)
+    expect(quickSelect(arr, 0)).toBe(50);
+    
+    // k=length-1: 最小値 (降順)
+    expect(quickSelect(arr.slice(), arr.length - 1)).toBe(10);
+    
+    // 昇順でも確認
+    const ascendingCompare = (a: number, b: number) => a - b;
+    expect(quickSelect(arr.slice(), 0, ascendingCompare)).toBe(10);
+    expect(quickSelect(arr.slice(), arr.length - 1, ascendingCompare)).toBe(50);
+  });
+
+  it('should handle arrays with duplicate values', () => {
+    const arr = [5, 5, 5, 5, 5];
+    
+    // 全て同じ値
+    expect(quickSelect(arr, 0)).toBe(5);
+    expect(quickSelect(arr.slice(), 2)).toBe(5);
+    expect(quickSelect(arr.slice(), 4)).toBe(5);
+    
+    // 重複を含む配列
+    const arr2 = [1, 3, 3, 3, 5];
+    expect(quickSelect(arr2, 0)).toBe(5);  // 最大値
+    expect(quickSelect(arr2.slice(), 1)).toBe(3);  // 2番目に大きい値
+    expect(quickSelect(arr2.slice(), 4)).toBe(1);  // 最小値
+  });
+
+  it('should work with custom comparison function for strings', () => {
+    const arr = ['apple', 'banana', 'cherry', 'date'];
+    const stringCompare = (a: string, b: string) => a.localeCompare(b);
+    
+    // 辞書順昇順
+    expect(quickSelect(arr, 0, stringCompare)).toBe('apple');
+    expect(quickSelect(arr.slice(), 1, stringCompare)).toBe('banana');
+    expect(quickSelect(arr.slice(), 2, stringCompare)).toBe('cherry');
+    expect(quickSelect(arr.slice(), 3, stringCompare)).toBe('date');
+  });
+
+  it('should modify array in-place', () => {
+    const arr = [3, 1, 4, 1, 5, 9, 2, 6];
+    const originalArr = arr.slice();
+    
+    const result = quickSelect(arr, 2);
+    
+    // 結果の検証
+    expect(result).toBe(5);
+    
+    // 配列が変更されていることを確認
+    expect(arr).not.toEqual(originalArr);
+    
+    // k番目の位置に正しい値があることを確認
+    expect(arr[2]).toBe(5);
+  });
+
+  it('should handle single element array', () => {
+    const arr = [42];
+    
+    expect(quickSelect(arr, 0)).toBe(42);
+  });
+
+  it('should handle two element array', () => {
+    const arr = [10, 20];
+    
+    // 降順デフォルト
+    expect(quickSelect(arr, 0)).toBe(20);
+    expect(quickSelect(arr.slice(), 1)).toBe(10);
+    
+    // 昇順
+    const ascendingCompare = (a: number, b: number) => a - b;
+    expect(quickSelect(arr.slice(), 0, ascendingCompare)).toBe(10);
+    expect(quickSelect(arr.slice(), 1, ascendingCompare)).toBe(20);
+  });
+
+  it('should work with typed arrays', () => {
+    const arr = new Int32Array([7, 2, 9, 1, 5]);
+    
+    // デフォルト降順
+    expect(quickSelect(arr, 0)).toBe(9);
+    expect(quickSelect(arr.slice(), 1)).toBe(7);
+    expect(quickSelect(arr.slice(), 4)).toBe(1);
+  });
+
+  it('should handle negative numbers', () => {
+    const arr = [-5, -1, -10, 0, 3];
+    
+    // デフォルト降順
+    expect(quickSelect(arr, 0)).toBe(3);    // 最大値
+    expect(quickSelect(arr.slice(), 1)).toBe(0);     // 2番目に大きい値
+    expect(quickSelect(arr.slice(), 4)).toBe(-10);   // 最小値
+  });
 })

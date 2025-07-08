@@ -172,3 +172,38 @@ export function generateGaussianNoise(): number {
   
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
+
+/**
+ * クイックセレクト実装（k番目の値を返す、in-place、比較関数指定可）
+ * @param arr 配列（in-placeで書き換えます）
+ * @param k 0-basedでk番目
+ * @param compare 比較関数（a, b）=> number（b-aで降順, a-bで昇順）
+ * @returns k番目の値
+ */
+export function quickSelect<T>(
+  arr: ArrayLike<T> & { [n: number]: T; length: number },
+  k: number,
+  compare: (_a: T, _b: T) => number = (a, b) => (b as any) - (a as any) // デフォルト降順
+): T {
+  let left = 0, right = arr.length - 1;
+  while (left < right) {
+    const pivot = arr[right];
+    let i = left;
+    for (let j = left; j < right; j++) {
+      if (compare(arr[j], pivot) < 0) {
+        const tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
+        i++;
+      }
+    }
+    const tmp = arr[i];
+    arr[i] = arr[right];
+    arr[right] = tmp;
+
+    if (i === k) return arr[i];
+    if (i < k) left = i + 1;
+    else right = i - 1;
+  }
+  return arr[left];
+}
