@@ -1122,7 +1122,7 @@ describe('DSSS-DPSK Frame API', () => {
       // フレーム受信処理
       const frames = processMultipleSignals(demodulator, signals, {
         maxFrames: 1,
-        silencePrefix: 1000
+        silenceSuffix: 1000
       });
       
       // 正常なフレーム受信確認（サイレンス期間の誤検出なし）
@@ -1467,7 +1467,8 @@ describe('DSSS-DPSK Frame API', () => {
       // フレーム受信テスト
       const frames = processMultipleSignals(demodulator, signals, {
         maxFrames: 1,
-        chunkSize: 128
+        chunkSize: 128,
+        silenceSuffix: 1000
       });
       
       // 弱パターンではなく強フレームが受信されることを確認

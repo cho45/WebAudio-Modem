@@ -604,7 +604,7 @@ export class DsssDpskDemodulator {
    * @param repositionToNextCandidate Whether to reposition to next sync candidate
    * @param consumeHeaderSize If true, consume header-sized samples for false peak avoidance
    */
-  private _loseSyncDueToError(repositionToNextCandidate: boolean = false, consumeHeaderSize: boolean = false): void {
+  private _loseSyncDueToError(repositionToNextCandidate: boolean = false): void {
     this.log(`Losing sync due to error - performing complete demodulator reset`);
     
     // 完全な状態リセット
@@ -614,7 +614,6 @@ export class DsssDpskDemodulator {
     
     // フレーマーインスタンス破棄
     this.currentFramer = null;
-    this.dataProgressTracker = null;
     
     // ビットバッファ完全クリア
     this.bitBuffer.fill(0);
@@ -1124,40 +1123,6 @@ export class DsssDpskDemodulator {
     this.log(`Updated noise floor from ${this.correlationBuffer.length} correlation buffers: ${estimatedNoiseFloor.toFixed(6)}`);
   }
 
-  /**
-   * Convert correlation-based noise floor to chip noise variance using signal theory
-   * @param peakCorrelation Peak correlation value from synchronization
-   * @param correlationNoiseFloor RMS noise floor from correlations
-   * @returns Theoretical chip noise variance for dsssDespread
-   */
-  private _convertCorrelationToChipNoiseVariance(
-    peakCorrelation: number, 
-    correlationNoiseFloor: number
-  ): number {
-    // Step 1: Correlation domain SNR
-    const correlationSNR = peakCorrelation / Math.max(correlationNoiseFloor, 1e-6);
-    
-    // Step 2: DSSS processing gain (spreading sequence length)
-    const processingGain = this.config.sequenceLength;
-    
-    // Step 3: Decimation factor compensation  
-    const decimationLoss = 2; // decimationFactor = 2 in decimatedMatchedFilter
-    
-    // Step 4: Chip domain SNR
-    // Processing gain improves SNR, decimation reduces it
-    const chipSNR = correlationSNR * processingGain / decimationLoss;
-    
-    // Step 5: Noise variance (assuming unit signal power)
-    // variance = signal_power / SNR, with signal_power ≈ 1 for normalized chips
-    const chipNoiseVariance = 1.0 / Math.max(chipSNR, 1.0);
-    
-    // Debug logging for verification
-    if (CONSTANTS.DEBUG && this.bitBufferIndex < 5) {
-      this.log(`[Theoretical Conversion] corr=${peakCorrelation.toFixed(4)}, noiseFloor=${correlationNoiseFloor.toFixed(6)}, SNR=${correlationSNR.toFixed(2)}, chipVar=${chipNoiseVariance.toFixed(4)}`);
-    }
-    
-    return chipNoiseVariance;
-  }
 
   /**
    * Estimate chip noise variance directly from chip LLRs using statistical analysis
