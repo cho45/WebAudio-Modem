@@ -452,6 +452,7 @@ export class DsssDpskDemodulator {
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
       this.log(`SYNC FOUND: offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation.toFixed(4)} ${externalNoiseFloor}`);
+      this.log(`Sync: Available samples: ${availableCount}, searchWindowSize: ${searchWindowSize}, maxChipOffset: ${maxChipOffset}, externalNoiseFloor: ${externalNoiseFloor}`);
       
       // 同期確認に必要なサンプル数を正確に計算
       const consumeCount = result.bestSampleOffset; // 検出位置までの相対距離
@@ -501,7 +502,7 @@ export class DsssDpskDemodulator {
         this.log(`[False Peak Cleanup] Reset internal state after failed sync validation`);
         
         // 偽ピーク処理: 0.5〜1bit分進める（次の候補探索のため）
-        const advance = Math.min(Math.floor(this.samplesPerBit * 0.75), this._getAvailableSampleCount());
+        const advance = Math.min(Math.floor(this.samplesPerBit * 8), this._getAvailableSampleCount());
         if (advance > 0) {
           this._consumeSamples(advance);
           const afterAdvance = {
@@ -570,11 +571,13 @@ export class DsssDpskDemodulator {
     const chipLlrs = dpskDemodulate(phases);
     
     // デバッグ: チップLLR値の確認
+    /*
     if (CONSTANTS.DEBUG && this.bitBufferIndex < 10) {
       const chipStr = Array.from(chipLlrs.slice(0, Math.min(5, chipLlrs.length)))
         .map(c => c.toFixed(2)).join(',');
       this.log(`[LLR Debug] ChipLLRs[${chipLlrs.length}]: [${chipStr}]`);
     }
+      */
     
     // ノイズ分散を理論的変換で推定
     let estimatedNoiseVariance: number;
@@ -977,7 +980,7 @@ export class DsssDpskDemodulator {
     this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
     // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
-    const llrThreshold = 0.5; // LLR相関の閾値
+    const llrThreshold = 0.7; // LLR相関の閾値
     const minHardThreshold = 0.625; // 5/8 = 62.5% (少し緩める)
     
     const llrValid = normalizedLLRScore >= llrThreshold;
