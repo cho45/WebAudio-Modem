@@ -10,6 +10,7 @@ import {
   decimatedMatchedFilter,
   detectSynchronizationPeak,
   generateModulatedReference,
+  estimateNoiseFromCorrelations,
 } from './dsss-dpsk';
 import { DsssDpskFramer, type DecodedFrame, BIT_MANIPULATION } from './framer';
 
@@ -1097,27 +1098,14 @@ export class DsssDpskDemodulator {
 
     // Flatten all accumulated correlations
     const totalLength = this.correlationBuffer.reduce((sum, arr) => sum + arr.length, 0);
-    const allCorrelations = new Array(totalLength);
-    
+    const allCorrelations = new Float32Array(totalLength);
+    let offset = 0;
     for (const correlations of this.correlationBuffer) {
-      for (let i = 0; i < correlations.length; i++) {
-        allCorrelations.push(Math.abs(correlations[i]));
-      }
+      allCorrelations.set(correlations, offset);
+      offset += correlations.length;
     }
 
-    // Sort correlations by absolute value in descending order
-    const absSorted = allCorrelations.sort((a, b) => b - a);
-
-    // Exclude top 10% of peaks (signal components)
-    const excludeCount = Math.max(1, Math.floor(allCorrelations.length * 0.1));
-    const noiseSamples = absSorted.slice(excludeCount);
-
-    // Calculate RMS of noise-only samples
-    const rms = Math.sqrt(
-      noiseSamples.reduce((sum, val) => sum + val * val, 0) / noiseSamples.length
-    );
-
-    const estimatedNoiseFloor = Math.max(rms, 1e-6); // Prevent division by zero
+    const estimatedNoiseFloor = estimateNoiseFromCorrelations(allCorrelations);
     this.cachedNoiseFloor = estimatedNoiseFloor;
     
     this.log(`Updated noise floor from ${this.correlationBuffer.length} correlation buffers: ${estimatedNoiseFloor.toFixed(6)}`);
