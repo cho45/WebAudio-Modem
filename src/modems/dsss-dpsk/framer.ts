@@ -211,13 +211,16 @@ export class DsssDpskFramer {
 
     // ヘッダ解析
     const parsedHeader = this._decodeHeader(headerByte);
+    console.log(`[Framer Debug] headerByte=0x${headerByte.toString(16)}, parsedHeader=${JSON.stringify(parsedHeader)}`);
     if (!parsedHeader) {
+      console.log(`[Framer Debug] Header decode failed for 0x${headerByte.toString(16)}`);
       return false; // パリティエラーなど
     }
 
     // FECパラメータ取得
     const fecParams = FEC_PARAMS[parsedHeader.ldpcNType as keyof typeof FEC_PARAMS];
     if (!fecParams) {
+      console.log(`[Framer Debug] Invalid LDPC N type: ${parsedHeader.ldpcNType}`);
       return false; // 無効なLDPC Nタイプ
     }
 
