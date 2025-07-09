@@ -90,7 +90,6 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
 
     test('should have proper internal components initialized', () => {
       expect(processor.demodulator).toBeDefined();
-      expect(processor.framer).toBeDefined();
       expect(processor.decodedDataBuffer).toEqual([]);
       expect(processor.pendingModulation).toBe(null);
     });
@@ -405,9 +404,8 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
       const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
       
-      const framer = new DsssDpskFramer();
       const originalData = new Uint8Array([0x42, 0x43]); // "BC"
-      const dataFrame = framer.build(originalData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(originalData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
@@ -446,19 +444,6 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
         throw error;
       }
     }, 10000);
-
-    test('should track framer state correctly', () => {
-      const framerState = processor.framer.getState();
-      expect(framerState.state).toBe('SEARCHING_PREAMBLE');
-      expect(framerState.bufferLength).toBe(0);
-      
-      // Feed preamble bits (LLR for 0 is positive)
-      const frames = processor.framer.process(new Int8Array([120, 120, 120, 120]));
-      
-      const newState = processor.framer.getState();
-      expect(newState.state).toBe('SEARCHING_SYNC_WORD');
-      expect(frames.length).toBe(0); // No complete frames yet
-    });
   });
 
   describe('6. Buffer and Memory Management', () => {
@@ -521,9 +506,8 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
       const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
       
-      const framer = new DsssDpskFramer();
       const testData = new Uint8Array([0xAA]);
-      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
@@ -659,7 +643,6 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       
       // Should remain stable
       expect(processor.demodulator).toBeDefined();
-      expect(processor.framer).toBeDefined();
     });
   });
 
@@ -695,16 +678,14 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       
       // Processor should remain stable after sustained load
       expect(processor.demodulator).toBeDefined();
-      expect(processor.framer).toBeDefined();
     });
 
     test('should handle varying signal conditions', async () => {
       const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
       const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
       
-      const framer = new DsssDpskFramer();
       const testData = new Uint8Array([0x55, 0xAA]); // Alternating pattern
-      const dataFrame = framer.build(testData, { sequenceLength: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
@@ -809,9 +790,8 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
       const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
       
-      const framer = new DsssDpskFramer();
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
-      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
@@ -929,7 +909,7 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
           name: 'Full Load (demod + framing)',
           setup: async () => {
             // Add some data to framer to trigger full processing
-            processor.framer.process(new Int8Array([100, 100, 100, 100])); // Strong bits
+            processor.process(new Int8Array([100, 100, 100, 100])); // Strong bits
             
             const inputs = [[new Float32Array(128)]];
             const outputs = [[new Float32Array(128)]];
@@ -999,9 +979,8 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       const { DsssDpskFramer } = await import('../../src/modems/dsss-dpsk/framer.js');
       const modem = await import('../../src/modems/dsss-dpsk/dsss-dpsk.js');
       
-      const framer = new DsssDpskFramer();
       const testData = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]); // "Hello"
-      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
@@ -1046,7 +1025,7 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
             sampleIndex++;
           }
           
-          const stateBefore = processor.framer.getState();
+          const decodedDataBefore = processor.decodedDataBuffer.length;
           
           const startTime = performance.now();
           processor.process(inputs, outputs);
@@ -1054,24 +1033,20 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
           
           processingTimes.push(endTime - startTime);
           
-          const stateAfter = processor.framer.getState();
+          const decodedDataAfter = processor.decodedDataBuffer.length;
           const demodSyncAfter = processor.demodulator.getSyncState();
           
-          // Track progress
-          const bitsDelta = stateAfter.processedBits - stateBefore.processedBits;
-          totalBitsReceived += bitsDelta;
+          // Track progress based on decoded data
+          const framesDelta = decodedDataAfter - decodedDataBefore;
+          totalBitsReceived += framesDelta * 8; // Rough estimate
           
           // Count successful frame transitions (indicating proper processing)
-          if (stateBefore.state !== stateAfter.state && (
-              stateAfter.state === 'SEARCHING_SYNC_WORD' ||
-              stateAfter.state === 'READING_HEADER' ||
-              stateAfter.state === 'READING_PAYLOAD'
-            )) {
+          if (framesDelta > 0 && demodSyncAfter.locked) {
             successfulFrameDecodes++;
           }
           
           if (iterationCount % 200 === 0) {
-            console.log(`Iteration ${iterationCount}: State=${stateAfter.state}, Bits=${totalBitsReceived}, Sync=${demodSyncAfter.locked}, Cycles=${Math.floor(sampleIndex / fullSignal.length)}`);
+            console.log(`Iteration ${iterationCount}: Data=${processor.decodedDataBuffer.length}, Bits=${totalBitsReceived}, Sync=${demodSyncAfter.locked}, Cycles=${Math.floor(sampleIndex / fullSignal.length)}`);
           }
           
           iterationCount++;
@@ -1080,7 +1055,6 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
         console.warn = originalWarn; // Restore original console.warn
       }
       
-      const finalState = processor.framer.getState();
       const finalDemodSync = processor.demodulator.getSyncState();
       const totalCycles = Math.floor(sampleIndex / fullSignal.length);
       const avgProcessingTime = processingTimes.reduce((a, b) => a + b, 0) / processingTimes.length;
@@ -1092,7 +1066,7 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       console.log(`Successful frame transitions: ${successfulFrameDecodes}`);
       console.log(`Infinite loop warnings: ${warningCount}`);
       console.log(`Average processing time: ${avgProcessingTime.toFixed(3)}ms`);
-      console.log(`Final state: ${finalState.state}`);
+      console.log(`Final decoded data buffers: ${processor.decodedDataBuffer.length}`);
       console.log(`Final demod sync: ${finalDemodSync.locked} (correlation: ${finalDemodSync.correlation.toFixed(3)})`);
       
       // Regression test assertions: Verify no infinite loops and proper operation
@@ -1162,9 +1136,8 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
       ];
       
       // Generate reference signal
-      const framer = new DsssDpskFramer();
       const testData = new Uint8Array([0x42]); // Simple test data
-      const dataFrame = framer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
+      const dataFrame = DsssDpskFramer.build(testData, { sequenceNumber: 0, frameType: 0, ldpcNType: 0 });
       const chips = modem.dsssSpread(dataFrame.bits, 31, 21);
       const phases = modem.dpskModulate(chips);
       const baseSignal = modem.modulateCarrier(phases, 23, 44100, 10000);
@@ -1191,20 +1164,20 @@ describe('DsssDpskProcessor - Unified Test Suite', () => {
             inputs[0][0][j] = testSignal[sampleIndex++];
           }
           
-          const stateBefore = processor.framer.getState();
+          const dataBefore = processor.decodedDataBuffer.length;
           processor.process(inputs, outputs);
-          const stateAfter = processor.framer.getState();
+          const dataAfter = processor.decodedDataBuffer.length;
           
           const syncState = processor.demodulator.getSyncState();
           if (syncState.locked) syncAchieved = true;
           maxCorrelation = Math.max(maxCorrelation, syncState.correlation);
-          bitsReceived += (stateAfter.processedBits - stateBefore.processedBits);
+          bitsReceived += (dataAfter - dataBefore) * 8; // Rough estimate
         }
         
         console.log(`  Sync achieved: ${syncAchieved} (expected: ${condition.expectedSync})`);
         console.log(`  Max correlation: ${maxCorrelation.toFixed(3)}`);
         console.log(`  Bits received: ${bitsReceived}`);
-        console.log(`  Final framer state: ${processor.framer.getState().state}`);
+        console.log(`  Final decoded data buffers: ${processor.decodedDataBuffer.length}`);
         
         // This helps us understand which signal conditions cause the issue
         if (!syncAchieved && bitsReceived === 0) {

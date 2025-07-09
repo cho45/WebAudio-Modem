@@ -99,3 +99,6 @@ coverage/
 pyldpc
 ProtographLDPC
 
+test-runner-profile/
+.mcp.json
+

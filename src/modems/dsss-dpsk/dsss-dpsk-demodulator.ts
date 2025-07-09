@@ -256,24 +256,32 @@ export class DsssDpskDemodulator {
         
         if (this.currentFramer?.getState().state === 'WAITING_DATA') {
           const needed = this.currentFramer.remainingBits;
-          const dataBits = this._getAvailableBits(needed);
           
-          
-          // ストリーム処理：利用可能ビットを段階的に蓄積
-          if (dataBits.length > 0) {
-            this.log(`[Data Debug] Need ${needed} bits, got ${dataBits.length} bits, remaining=${this.currentFramer.remainingBits}`);
-            frameProcessingProgress = true; // ビット進捗があれば継続
-            this.currentFramer.addDataBits(dataBits);
-            this.log(`[Data Debug] Added ${dataBits.length} bits, new remaining=${this.currentFramer.remainingBits}`);
+          // remainingBitsが0以下の場合は処理をスキップ
+          if (needed <= 0) {
+            this.log(`[Data Debug] No more bits needed (remaining=${needed}), skipping data processing`);
+          } else {
+            const dataBits = this._getAvailableBits(needed);
+            
+            // ストリーム処理：利用可能ビットを段階的に蓄積
+            if (dataBits.length > 0) {
+              this.log(`[Data Debug] Need ${needed} bits, got ${dataBits.length} bits, remaining=${this.currentFramer.remainingBits}`);
+              frameProcessingProgress = true; // ビット進捗があれば継続
+              this.currentFramer.addDataBits(dataBits);
+              this.log(`[Data Debug] Added ${dataBits.length} bits, new remaining=${this.currentFramer.remainingBits}`);
+            }
           }
           
           // 全データ完成時にフレーム完了
           if (this.currentFramer && this.currentFramer.remainingBits === 0) {
-            const frame = this.currentFramer.finalize();
-            this.log(`[Data Debug] All data received! Finalizing frame... ${frame}`);
-            if (frame) {
+            try {
+              const frame = this.currentFramer.finalize();
+              this.log(`[Data Debug] All data received! Finalizing frame...`);
               this.log(`Frame received! seq=${frame.header.sequenceNumber}`);
               result.push(frame);
+            } catch (error) {
+              this.log(`Frame finalization error: ${error}`);
+              // 復号失敗はログを出して処理継続（フレームを破棄）
             }
             
             this.log(`Frame processing completed, destroying framer for next frame`);

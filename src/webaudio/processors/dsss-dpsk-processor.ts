@@ -153,26 +153,45 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
    * @param input - Audio samples to demodulate
    */
   private processDemodulation(input: Float32Array): void {
-    // Add samples to demodulator
-    this.demodulator.addSamples(input);
-    
-    // Process frames using new unified API
-    const frames = this.demodulator.getAvailableFrames();
-    
-    // Store decoded data efficiently
-    if (frames.length > 0) {
-      this.log(`Demodulator produced ${frames.length} frames`);
-      for (const frame of frames) {
-        this.log(`Frame data: ${frame.userData.length} bytes, status: ${frame.status}`);
-        this.decodedDataBuffer.push(frame.userData);
-      }
+    try {
+      // Add samples to demodulator
+      this.demodulator.addSamples(input);
       
-      // Resolve demodulation promise if waiting
-      if (this.demodulationPromise) {
-        const data = this.collectDecodedData();
-        this.log(`Demodulation complete: ${data.length} bytes total`);
-        this.demodulationPromise.resolve(data);
-        this.demodulationPromise = null;
+      // Process frames using new unified API
+      const frames = this.demodulator.getAvailableFrames();
+      
+      // Store decoded data efficiently
+      if (frames.length > 0) {
+        this.log(`Demodulator produced ${frames.length} frames`);
+        for (const frame of frames) {
+          this.log(`Frame data: ${frame.userData.length} bytes, status: ${frame.status}`);
+          this.decodedDataBuffer.push(frame.userData);
+        }
+        
+        // Resolve demodulation promise if waiting
+        if (this.demodulationPromise) {
+          const data = this.collectDecodedData();
+          this.log(`Demodulation complete: ${data.length} bytes total`);
+          this.demodulationPromise.resolve(data);
+          this.demodulationPromise = null;
+        }
+      }
+    } catch (error) {
+      this.error(`Error in processDemodulation: ${error}`);
+      
+      // エラー情報をログ出力して処理継続（AudioWorkletの安定性のため）
+      // フレーム復号失敗、同期失敗などは日常的に発生する可能性がある
+      
+      // 復調プロミスの処理は慣重に行う
+      // フレーム復号失敗等の一時的エラーの場合、復調を中断しない
+      // 致命的エラーの場合のみプロミスをリジェクト
+      const errorMessage = (error as Error).message;
+      if (errorMessage.includes('Internal error') || errorMessage.includes('not properly initialized')) {
+        // 致命的エラーの場合のみプロミスをリジェクト
+        if (this.demodulationPromise) {
+          this.demodulationPromise.reject(error as Error);
+          this.demodulationPromise = null;
+        }
       }
     }
   }

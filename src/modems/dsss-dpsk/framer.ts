@@ -266,10 +266,10 @@ export class DsssDpskFramer {
 
   /**
    * フレーム完成・FEC復号実行
-   * @returns 復号されたフレーム（失敗時null）
-   * @throws WAITING_DATA状態以外で呼び出した場合、またはデータが不完全な場合
+   * @returns 復号されたフレーム
+   * @throws WAITING_DATA状態以外で呼び出した場合、データが不完全な場合、またはFEC復号失敗時
    */
-  public finalize(): DecodedFrame | null {
+  public finalize(): DecodedFrame {
     if (this.state !== FramerState.WAITING_DATA) {
       throw new Error('finalize() can only be called in WAITING_DATA state');
     }
@@ -282,7 +282,7 @@ export class DsssDpskFramer {
       throw new Error(`Incomplete data: ${this.currentBitIndex}/${this.payloadSoftBits.length} bits received`);
     }
 
-    // FEC復号実行
+    // FEC復号実行（エラーは呼び出し元でハンドリング）
     const decodedPayload = this._decodePayload(this.payloadSoftBits, this.header.ldpcNType);
     
     // 状態遷移
@@ -315,7 +315,8 @@ export class DsssDpskFramer {
     if (!this.fecParams) {
       return 0;
     }
-    return this.fecParams.ldpcN - this.currentBitIndex;
+    // 負の値を防ぐため、最低0を返す
+    return Math.max(0, this.fecParams.ldpcN - this.currentBitIndex);
   }
 
   /**
