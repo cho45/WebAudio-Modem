@@ -133,6 +133,7 @@ describe('False Peak Problem - Isolated Test', () => {
       // フレーム受信処理
       const frames = processMultipleSignals(demodulator, signals, {
         maxFrames: 1,
+        silenceSuffix: 10000
       });
       
       // 正常なフレーム受信確認（サイレンス期間の誤検出なし）

@@ -103,6 +103,11 @@ export class DsssDpskDemodulator {
   private correlationBuffer: Float32Array[] = [];
   private readonly CORRELATION_BUFFER_MAX_SIZE = 10;
   
+  // 学習ベースのノイズ分散推定（同期フェーズで既知パターンから学習）
+  private learnedNoiseVariance: number | null = null;
+  private noiseEstimationBuffer: { ideal: number; actual: number }[] = [];
+  private readonly NOISE_ESTIMATION_BUFFER_SIZE = 100;
+  
   
   // フレーム処理
   private currentFramer: DsssDpskFramer | null = null;
@@ -389,6 +394,9 @@ export class DsssDpskDemodulator {
     this.processedCount = 0;
     this.targetCount = 0;
     
+    // 重要: Echo-back防止のための追加バッファクリア
+    this.bitBuffer.fill(0);
+    this.correlationBuffer = [];
     
     // フレーマーインスタンス破棄
     this.currentFramer = null;
@@ -545,7 +553,7 @@ export class DsssDpskDemodulator {
    * Demodulate and despread bit samples with zero-copy optimization
    * Directly processes samples from circular buffer without memory allocation
    */
-  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number): number {
+  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number, expectedBit?: number): number {
     const numPhases = Math.floor(sampleCount / this.config.samplesPerPhase);
     const phases = new Float32Array(numPhases+1)
     
@@ -566,9 +574,17 @@ export class DsssDpskDemodulator {
     }
       */
     
-    // ノイズ分散を理論的変換で推定
+    // 既知ビットでノイズ学習（同期検証時のみ）
+    if (expectedBit !== undefined) {
+      this._learnNoiseFromKnownBit(chipLlrs, expectedBit);
+    }
+    
+    // ノイズ分散推定: 学習値を優先使用
     let estimatedNoiseVariance: number;
-    if (this.correlation > 0 && this.cachedNoiseFloor > 1e-6) {
+    if (this.learnedNoiseVariance !== null) {
+      // 学習済みノイズ分散を使用（最も正確）
+      estimatedNoiseVariance = this.learnedNoiseVariance;
+    } else if (this.correlation > 0 && this.cachedNoiseFloor > 1e-6) {
       // 同期確立済み: correlation値から理論的に変換
       estimatedNoiseVariance = this._estimateChipNoiseVariance(chipLlrs);
     } else {
@@ -878,9 +894,13 @@ export class DsssDpskDemodulator {
   /**
    * 指定オフセットで同期ワード検証
    * 指定位置で実際に復調して同期ワードの存在を確認
+   * 既知パターンを利用してノイズ特性を学習
    */
   private _validateSyncAtOffset(syncOffset: number): 'SUCCESS' | 'FAILED' {
     const offsetFromReadIndex = syncOffset - this.sampleReadIndex;
+    
+    // 既知パターン: プリアンブル[0,0,0,0] + 同期ワード[1,0,1,1,0,1,0,0]
+    const knownPattern = [0,0,0,0, ...CONSTANTS.FRAME.SYNC_WORD];
     
     // デバッグ：同期検出位置の詳細ログ
     // this.log(`[Sync Position Debug] syncOffset=${syncOffset}, readIndex=${this.sampleReadIndex}, offsetFromReadIndex=${offsetFromReadIndex}`);
@@ -888,12 +908,23 @@ export class DsssDpskDemodulator {
     
     try {
       const softBits = new Int8Array(CONSTANTS.FRAME.SYNC_VALIDATION_BITS);
+      
+      // ノイズ学習リセット（新しい同期位置での学習開始）
+      this._resetNoiseLearning();
+      
       for (let bit = 0; bit < CONSTANTS.FRAME.SYNC_VALIDATION_BITS; bit++) {
         const bitOffset = offsetFromReadIndex + bit * this.samplesPerBit;
         // this.log(`[Sync Position Debug] bit=${bit}, bitOffset=${bitOffset}, absolutePosition=${this.sampleReadIndex + bitOffset}`);
-        const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset);
+        
+        // 既知ビットパターンを使ってノイズ学習も実行
+        const expectedBit = knownPattern[bit];
+        const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset, expectedBit);
         softBits[bit] = llr; // 常に有効なLLR値が返される
       }
+      
+      // 学習完了後にノイズ分散を更新
+      this._updateLearnedNoiseVariance();
+      
       return this._validateSyncWordLLR(softBits, syncOffset);
     } catch (error) {
       this.log(`Sync validation failed: ${error}`);
@@ -1135,6 +1166,86 @@ export class DsssDpskDemodulator {
     const mean = sum / chipLlrs.length;
     const variance = (sumSquares / chipLlrs.length) - (mean * mean);
     return Math.max(variance, 0.1);
+  }
+
+  /**
+   * 既知ビットパターンから理論的に正しいノイズ分散を学習
+   * @param chipLlrs DPSK復調後の実際のチップ値
+   * @param expectedBit 期待されるビット値 (0 or 1)
+   */
+  private _learnNoiseFromKnownBit(chipLlrs: Float32Array, expectedBit: number): void {
+    if (chipLlrs.length !== this.config.sequenceLength) {
+      this.log(`[Noise Learning] Warning: chipLlrs length ${chipLlrs.length} != sequenceLength ${this.config.sequenceLength}`);
+      return;
+    }
+    
+    // 期待されるビットからM-sequence拡散後の理想チップ値を生成
+    const mSequence = generateSyncReference(this.config.sequenceLength, this.config.seed);
+    const idealChips = new Float32Array(this.config.sequenceLength);
+    
+    for (let i = 0; i < this.config.sequenceLength; i++) {
+      // bit=0: チップ = +mSequence[i], bit=1: チップ = -mSequence[i]
+      idealChips[i] = expectedBit === 0 ? mSequence[i] : -mSequence[i];
+    }
+    
+    // 実際のチップと理想チップの差からノイズ成分を抽出
+    for (let i = 0; i < this.config.sequenceLength; i++) {
+      const _noiseComponent = chipLlrs[i] - idealChips[i];
+      
+      // バッファサイズ管理
+      if (this.noiseEstimationBuffer.length >= this.NOISE_ESTIMATION_BUFFER_SIZE) {
+        this.noiseEstimationBuffer.shift(); // 古いデータを削除
+      }
+      
+      // ノイズサンプルを蓄積
+      this.noiseEstimationBuffer.push({
+        ideal: idealChips[i],
+        actual: chipLlrs[i]
+      });
+    }
+    
+    this.log(`[Noise Learning] Added ${this.config.sequenceLength} noise samples. Buffer: ${this.noiseEstimationBuffer.length}/${this.NOISE_ESTIMATION_BUFFER_SIZE}`);
+  }
+  
+  /**
+   * ノイズ学習をリセット（新しい同期位置での学習開始時）
+   */
+  private _resetNoiseLearning(): void {
+    this.noiseEstimationBuffer = [];
+    this.log(`[Noise Learning] Reset learning buffer for new sync position`);
+  }
+  
+  /**
+   * 蓄積されたノイズサンプルから最終的なノイズ分散を計算・更新
+   */
+  private _updateLearnedNoiseVariance(): void {
+    if (this.noiseEstimationBuffer.length < 10) {
+      this.log(`[Noise Learning] Insufficient samples for learning: ${this.noiseEstimationBuffer.length} < 10`);
+      return;
+    }
+    
+    // ノイズ成分の分散を計算
+    let noiseSumSquares = 0;
+    let validSamples = 0;
+    
+    for (const sample of this.noiseEstimationBuffer) {
+      const noiseComponent = sample.actual - sample.ideal;
+      noiseSumSquares += noiseComponent * noiseComponent;
+      validSamples++;
+    }
+    
+    const learnedVariance = validSamples > 0 ? noiseSumSquares / validSamples : 1.0;
+    const clampedVariance = Math.max(learnedVariance, 0.01); // 数値安定性
+    
+    // 前回の学習値との平滑化（重み付き移動平均）
+    if (this.learnedNoiseVariance !== null) {
+      const alpha = 0.3; // 新しい値の重み
+      this.learnedNoiseVariance = alpha * clampedVariance + (1 - alpha) * this.learnedNoiseVariance;
+    } else {
+      this.learnedNoiseVariance = clampedVariance;
+    }
+    
+    this.log(`[Noise Learning] Updated learned noise variance: ${this.learnedNoiseVariance.toFixed(6)} (from ${validSamples} samples, raw=${learnedVariance.toFixed(6)})`);
   }
 
 }
