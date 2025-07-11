@@ -7,6 +7,18 @@ import { DsssDpskDemodulator } from '../../src/modems/dsss-dpsk/dsss-dpsk-demodu
 import { DsssDpskFramer } from '../../src/modems/dsss-dpsk/framer';
 import * as modem from '../../src/modems/dsss-dpsk/dsss-dpsk';
 
+// 固定シードの乱数生成器でMath.randomを置き換え
+let randomSeed = 12345;
+
+Math.random = () => {
+  randomSeed = (randomSeed * 1664525 + 1013904223) % (2 ** 32);
+  return randomSeed / (2 ** 32);
+};
+
+(Math.random as any).resetSeed = (seed: number) => {
+  randomSeed = seed;
+};
+
 describe('False Peak Problem - Isolated Test', () => {
   const defaultConfig = {
     sequenceLength: 31,
@@ -17,6 +29,7 @@ describe('False Peak Problem - Isolated Test', () => {
     correlationThreshold: 0.3,
     peakToNoiseRatio: 4
   };
+
 
   const generateFrameWithAmplitude = (userData: Uint8Array, amplitude: number, frameOptions: any = {}) => {
     const frame = DsssDpskFramer.build(userData, {
@@ -68,12 +81,10 @@ describe('False Peak Problem - Isolated Test', () => {
     
     // 128サンプルずつ処理（AudioWorklet環境シミュレーション）
     const receivedFrames: any[] = [];
-    let totalFramesReceived = 0;
     for (let i = 0; i < totalSignal.length && receivedFrames.length < maxFrames; i += chunkSize) {
       const chunk = totalSignal.slice(i, i + chunkSize);
       demodulator.addSamples(chunk);
       const frames = demodulator.getAvailableFrames();
-      totalFramesReceived += frames.length;
       receivedFrames.push(...frames);
       
       // 目標フレーム数達成で早期終了
@@ -144,5 +155,158 @@ describe('False Peak Problem - Isolated Test', () => {
       const syncState = demodulator.getSyncState();
       expect(syncState.locked).toBe(false); // Frame API設計: フレーム完了後は同期リセット
       expect(syncState.correlation).toBe(0); // Frame API設計: フレーム完了後はcorrelation=0
+    });
+
+    for (let i = 0; i < 5; i++) {
+      test(`should recover from multiple false peaks and find valid frame (try:${i})`, () => {
+        // 複数の偽ピークからの復帰テスト
+        const demodulator = new DsssDpskDemodulator({
+          ...defaultConfig,
+          correlationThreshold: 0.4,
+          peakToNoiseRatio: 2
+        });
+        
+        // 複数の偽パターンを作成
+        const falsePatterns: Float32Array[] = [];
+        const fakePatternBits: Uint8Array[] = [];
+        
+        for (let patternIndex = 0; patternIndex < 3; patternIndex++) {
+          const fakePattern = new Uint8Array(12);
+          // 異なる偽パターンを生成
+          fakePattern.set([0, 0, 0, 1], 0); // プリアンブルに似たパターン
+          for (let j = 4; j < fakePattern.length; j++) {
+            fakePattern[j] = Math.random() > 0.5 ? 1 : 0;
+          }
+          
+          fakePatternBits.push(new Uint8Array(fakePattern));
+          
+          const fakeChips = modem.dsssSpread(fakePattern, defaultConfig.sequenceLength, defaultConfig.seed);
+          const fakePhases = modem.dpskModulate(fakeChips);
+          const fakeSignal = modem.modulateCarrier(
+            fakePhases,
+            defaultConfig.samplesPerPhase,
+            defaultConfig.sampleRate,
+            defaultConfig.carrierFreq
+          );
+          
+          falsePatterns.push(fakeSignal);
+        }
+        
+        // 生成された偽パターンをログ出力
+        console.log(`[False Peak Test 2] Test case ${i}: Generated fake patterns:`);
+        for (let patternIndex = 0; patternIndex < fakePatternBits.length; patternIndex++) {
+          console.log(`[False Peak Test 2] Fake pattern ${patternIndex}: [${Array.from(fakePatternBits[patternIndex]).join(',')}]`);
+        }
+        
+        // 真のフレーム
+        const validData = new Uint8Array([0xAB, 0xCD]);
+        const validSignal = generateFrameWithAmplitude(validData, 0.6, {
+          sequenceNumber: 5,
+          frameType: 1,
+          ldpcNType: 0
+        });
+        
+        // すべての信号を結合（偽パターン×3 + 真のフレーム）
+        const allSignals = [...falsePatterns, validSignal];
+        
+        // フレーム受信テスト
+        console.log(`[False Peak Test 2] Test case ${i}: Signal layout: 3 fake patterns + 1 valid frame, gap=${200}`);
+        const frames = processMultipleSignals(demodulator, allSignals, {
+          maxFrames: 1,
+          gapBetweenSignals: 200,
+          chunkSize: 128
+        });
+        
+        console.log(`[False Peak Test 2] Test case ${i}: Result: ${frames.length} frames received`);
+        if (frames.length > 0) {
+          const userData = frames[0].userData.slice(0, 2);
+          console.log(`[False Peak Test 2] Frame data: [${Array.from(userData).map((x: number) => x.toString(16)).join(',')}], seq=${frames[0].header.sequenceNumber}`);
+        } else {
+          console.log(`[False Peak Test 2] FAILURE: No frames received. Expected valid frame with data [ab,cd]`);
+          console.log(`[False Peak Test 2] Final sync state: locked=${demodulator.getSyncState().locked}, correlation=${demodulator.getSyncState().correlation.toFixed(3)}`);
+          
+          // 失敗ケースの詳細分析
+          console.log(`[False Peak Test 2] Test case ${i}: Analyzing fake patterns`);
+          for (let patternIndex = 0; patternIndex < fakePatternBits.length; patternIndex++) {
+            console.log(`[False Peak Test 2] Fake pattern ${patternIndex}: [${Array.from(fakePatternBits[patternIndex]).join(',')}]`);
+          }
+        }
+        
+        // 複数の偽ピークを乗り越えて真のフレームが受信されることを確認
+        expect(frames.length).toBeGreaterThan(0);
+        expect(frames[0].userData.slice(0, validData.length)).toEqual(validData);
+        expect(frames[0].header.sequenceNumber).toBe(5);
+        expect(frames[0].header.frameType).toBe(1);
+        
+        console.log(`[Multiple False Peaks Test] Valid frame received: seq=${frames[0].header.sequenceNumber}, type=${frames[0].header.frameType}`);
+      });
+    }
+
+    // 失敗するケースのみを個別テスト
+    test('should analyze failing case try:0', () => {
+      (Math.random as any).resetSeed(12345);
+      
+      const demodulator = new DsssDpskDemodulator({
+        ...defaultConfig,
+        correlationThreshold: 0.4,
+        peakToNoiseRatio: 2
+      });
+      
+      // 偽パターンを生成（try:0と同じ）
+      const fakePatternBits: Uint8Array[] = [];
+      for (let patternIndex = 0; patternIndex < 3; patternIndex++) {
+        const fakePattern = new Uint8Array(12);
+        fakePattern.set([0, 0, 0, 1], 0);
+        for (let j = 4; j < fakePattern.length; j++) {
+          fakePattern[j] = Math.random() > 0.5 ? 1 : 0;
+        }
+        fakePatternBits.push(new Uint8Array(fakePattern));
+      }
+      
+      console.log(`[ANALYSIS] try:0 fake patterns:`);
+      for (let i = 0; i < fakePatternBits.length; i++) {
+        console.log(`[ANALYSIS] Pattern ${i}: [${Array.from(fakePatternBits[i]).join(',')}]`);
+      }
+      
+      // テストは期待値チェックなしで終了
+      expect(fakePatternBits.length).toBe(3);
+    });
+
+    test('should analyze failing case try:3', () => {
+      (Math.random as any).resetSeed(12345);
+      
+      // try:3までの乱数状態を再現
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+          for (let k = 4; k < 12; k++) {
+            Math.random(); // 同じ乱数を消費
+          }
+        }
+      }
+      
+      const demodulator = new DsssDpskDemodulator({
+        ...defaultConfig,
+        correlationThreshold: 0.4,
+        peakToNoiseRatio: 2
+      });
+      
+      // 偽パターンを生成（try:3と同じ）
+      const fakePatternBits: Uint8Array[] = [];
+      for (let patternIndex = 0; patternIndex < 3; patternIndex++) {
+        const fakePattern = new Uint8Array(12);
+        fakePattern.set([0, 0, 0, 1], 0);
+        for (let j = 4; j < fakePattern.length; j++) {
+          fakePattern[j] = Math.random() > 0.5 ? 1 : 0;
+        }
+        fakePatternBits.push(new Uint8Array(fakePattern));
+      }
+      
+      console.log(`[ANALYSIS] try:3 fake patterns:`);
+      for (let i = 0; i < fakePatternBits.length; i++) {
+        console.log(`[ANALYSIS] Pattern ${i}: [${Array.from(fakePatternBits[i]).join(',')}]`);
+      }
+      
+      // テストは期待値チェックなしで終了
+      expect(fakePatternBits.length).toBe(3);
     });
 });

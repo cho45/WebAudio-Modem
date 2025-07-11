@@ -994,14 +994,18 @@ export class DsssDpskDemodulator {
     this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
     // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
-    const llrThreshold = 0.7; // LLR相関の閾値
-    const minHardThreshold = 0.625; // 5/8 = 62.5% (少し緩める)
+    const llrThreshold = 0.8; // LLR相関の閾値（厳格化：0.7 → 0.8）
+    const minHardThreshold = 0.875; // 7/8 = 87.5% (厳格化：0.625 → 0.875)
+    
+    // プリアンブル検証を強化（4ビット全てが0であることを厳密に検証）
+    const expectedPreamble = [0, 0, 0, 0];
+    const preambleValid = preambleHard.every((bit, i) => bit === expectedPreamble[i]);
     
     const llrValid = normalizedLLRScore >= llrThreshold;
     const hardValid = hardMatchRatio >= minHardThreshold;
-    const isValid = llrValid && hardValid;
+    const isValid = llrValid && hardValid && preambleValid;
     
-    this.log(`LR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}) → ${isValid ? 'PASSED' : 'FAILED'}`);
+    this.log(`LR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}), Preamble_valid=${preambleValid} → ${isValid ? 'PASSED' : 'FAILED'}`);
     
     if (isValid) {
       this.log(`LLR sync validation: PASSED (sync word detected with high confidence)`);
