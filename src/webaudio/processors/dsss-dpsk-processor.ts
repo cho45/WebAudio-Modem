@@ -98,8 +98,12 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     this.port.onmessage = this.handleMessage.bind(this);
   }
 
-  private log(message: string): void {
-    console.log(`[DsssDpskProcessor:${this.instanceName}] ${message}`);
+  private log(message: string, style: string = ""): void {
+    console.log(`%c[DsssDpskProcessor:${this.instanceName}]%c %c${message}`, 
+      this.instanceName === 'sender' ? 'color: #007bff; font-weight: bold;' : 'color: #ff00ff; font-weight: bold;',
+      '',
+      style || 'color: #333; font-weight: normal;'
+    );
   }
   
   private createDemodulator(): DsssDpskDemodulator {
@@ -153,6 +157,10 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
    * @param input - Audio samples to demodulate
    */
   private processDemodulation(input: Float32Array): void {
+    if (this.pendingModulation) {
+      return; // Skip demodulation if modulation is in progress
+    }
+
     try {
       // Add samples to demodulator
       this.demodulator.addSamples(input);
@@ -177,7 +185,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
         }
       }
     } catch (error) {
-      this.error(`Error in processDemodulation: ${error}`);
+      this.log(`Error in processDemodulation: ${error}`);
       
       // エラー情報をログ出力して処理継続（AudioWorkletの安定性のため）
       // フレーム復号失敗、同期失敗などは日常的に発生する可能性がある
@@ -202,10 +210,6 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
    * @param output - Output audio buffer to fill with modulated samples
    */
   private processModulation(output: Float32Array): void {
-    // Clear output first for safety
-    output.fill(0);
-    
-    
     if (!this.pendingModulation) {
       return; // No modulation in progress
     }
@@ -548,6 +552,7 @@ class DsssDpskProcessor extends AudioWorkletProcessor implements IAudioProcessor
     if (this.demodulationPromise) {
       throw new Error('Demodulation already in progress');
     }
+    this.log(`[DsssDpskProcessor] Demodulation requested`);
     
     // Return immediately if data is available
     if (this.decodedDataBuffer.length > 0) {

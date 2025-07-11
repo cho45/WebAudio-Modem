@@ -60,12 +60,12 @@ const app = createApp({
       samplesPerPhase: 23,
       carrierFreq: 10000,
       correlationThreshold: 0.5,
-      peakToNoiseRatio: 4
+      peakToNoiseRatio: 2
     });
     
     const xmodemConfig = reactive({
       timeoutMs: 15000, // 理論8.6秒+マージンで15秒
-      maxRetries: 3,
+      maxRetries: 100,
       maxPayloadSize: 255
     });
     

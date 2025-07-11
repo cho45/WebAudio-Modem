@@ -531,11 +531,8 @@ export class XModemTransport extends BaseTransport {
       timestamp: Date.now()
     } as StateChangeEvent);
     
-    // Unified logging format - only log important state changes
-    if (newState === State.IDLE || oldState === State.IDLE) {
-      const contextStr = context ? ` (${context})` : '';
-      console.log(`[XModemTransport:${this.config.name}] State: ${State[oldState]} -> ${State[newState]}${contextStr}`);
-    }
+    const contextStr = context ? ` (${context})` : '';
+    console.log(`[XModemTransport:${this.config.name}] State: ${State[oldState]} -> ${State[newState]}${contextStr}`);
 
     // Emit state change event for debugging and testing
     this.emit('statechange', stateEvent);

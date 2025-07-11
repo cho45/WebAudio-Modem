@@ -54,7 +54,7 @@ const CONSTANTS = {
   },
   
   // Debug  
-  DEBUG: false, // デバッグ再開: データビット処理確認
+  DEBUG: true, // デバッグ再開: データビット処理確認
 } as const;
 
 /**
@@ -157,7 +157,7 @@ export class DsssDpskDemodulator {
     // バッファサイズ確認ログ
     const maxMoveDistance = this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS;
     const minRequiredSamples = this.samplesPerValidation + maxMoveDistance;
-    console.log(`[Buffer Debug] bufferSize=${bufferSize}, minRequiredSamples=${minRequiredSamples}, sufficient=${bufferSize >= minRequiredSamples}`);
+    this.log(`[Buffer Debug] bufferSize=${bufferSize}, minRequiredSamples=${minRequiredSamples}, sufficient=${bufferSize >= minRequiredSamples}`);
     
     // ビットバッファ
     this.bitBuffer = new Int8Array(CONSTANTS.BUFFER.BIT_BUFFER_SIZE);
@@ -166,10 +166,12 @@ export class DsssDpskDemodulator {
   /**
    * Instance-specific logging with identification
    */
-  private log(message: string): void {
-    if (CONSTANTS.DEBUG ) {
-      console.log(`[DsssDpskDemodulator:${this.instanceName}] ${message}`);
-    }
+  private log(message: string, style: string = ""): void {
+    console.log(`%c[DsssDpskDemodulator:${this.instanceName}]%c %c${message}`, 
+      this.instanceName === 'sender' ? 'color: #007bff; font-weight: bold;' : 'color: #ff00ff; font-weight: bold;',
+      '',
+      style || 'color: #333; font-weight: normal;'
+    );
   }
   
   /**
@@ -349,7 +351,7 @@ export class DsssDpskDemodulator {
     // 要求された分があれば返す  
     if (this.bitBufferIndex >= targetBits) {
       const result = this.bitBuffer.slice(0, targetBits);
-      console.log(`[Bit Buffer Debug] Available bits: ${this.bitBufferIndex}/${targetBits}, processedCount=${this.processedCount}, iterations=${iterationCount} ${result}`);
+      this.log(`[Bit Buffer Debug] Available bits: ${this.bitBufferIndex}/${targetBits}, processedCount=${this.processedCount}, iterations=${iterationCount} ${result}`);
       
       // バッファを詰める
       this.bitBuffer.set(this.bitBuffer.subarray(targetBits, this.bitBufferIndex), 0);
@@ -442,6 +444,9 @@ export class DsssDpskDemodulator {
         externalNoiseFloor
       }
     );
+    if (result.peakCorrelation > 0.5) {
+      this.log(`[Sync Debug] Search result: ${JSON.stringify(result)} isFound=${result.isFound}, peakCorrelation=${result.peakCorrelation.toFixed(4)} externalNoiseFloor=${externalNoiseFloor || 'N/A'}`);
+    }
 
     if (result.isFound) {
       const syncOffset = (this.sampleReadIndex + result.bestSampleOffset) % this.sampleBuffer.length;
