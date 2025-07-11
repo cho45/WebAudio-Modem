@@ -54,7 +54,7 @@ const CONSTANTS = {
   },
   
   // Debug  
-  DEBUG: true, // デバッグ再開: データビット処理確認
+  DEBUG: false, // デバッグ再開: データビット処理確認
 } as const;
 
 /**
@@ -993,9 +993,9 @@ export class DsssDpskDemodulator {
     this.log(`期待される同期ワード: [${expectedSyncWord.join(',')}]`);
     this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
-    // LLRベースの判定：正規化スコアが閾値を超える、かつhard decisionも最低限の基準を満たす
-    const llrThreshold = 0.8; // LLR相関の閾値（厳格化：0.7 → 0.8）
-    const minHardThreshold = 0.875; // 7/8 = 87.5% (厳格化：0.625 → 0.875)
+    // LLRベースの判定：低レベルAPIと同等の感度に調整してDSSS理論期待値を満たす
+    const llrThreshold = 0.3; // LLR相関の閾値（低レベルAPI同等の感度）
+    const minHardThreshold = 0.625; // 62.5% (5/8, より現実的な閾値)
     
     // プリアンブル検証を強化（4ビット全てが0であることを厳密に検証）
     const expectedPreamble = [0, 0, 0, 0];
