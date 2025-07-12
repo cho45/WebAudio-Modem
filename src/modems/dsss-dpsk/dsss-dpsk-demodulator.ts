@@ -98,13 +98,15 @@ export class DsssDpskDemodulator {
   private processedCount: number = 0;
   private targetCount: number = 0;
   
-  // ノイズフロア推定用（correlationベース）
-  private cachedNoiseFloor: number = 0.01;
+  // 相関レベルノイズ分散推定（DSSSシーケンスのcorrelationベース）
+  // findSyncOffset 内で isFound=true の場合に更新 1シーケンス分の相関値から推定
+  private correlationNoiseVarianceFromCorrelations: number = 0.01 * 0.01; // 0.01² = 0.0001
   private correlationBuffer: Float32Array[] = [];
   private readonly CORRELATION_BUFFER_MAX_SIZE = 10;
   
-  // 学習ベースのノイズ分散推定（同期フェーズで既知パターンから学習）
-  private learnedNoiseVariance: number | null = null;
+  // 相関レベルノイズ分散推定（PREAMBLE + SYNC_WORD の既知パターンから学習）
+  // findSyncOffset 後、_validateSyncAtOffset で期待
+  private correlationNoiseVarianceFromLearning: number = 0.01 * 0.01; // 0.01² = 0.0001
   private noiseEstimationBuffer: { ideal: number; actual: number }[] = [];
   private readonly NOISE_ESTIMATION_BUFFER_SIZE = 100;
   
@@ -428,11 +430,11 @@ export class DsssDpskDemodulator {
     // Max chip offset for search should be based on the search window size
     const maxChipOffset = Math.floor(searchSamples.length / this.config.samplesPerPhase);
 
-    // Use cached noise floor if available (for consistent detection across sync/resync)
+    // Use correlation-based noise estimate if available (for consistent detection across sync/resync)
     let externalNoiseFloor: number | undefined;
-    if (this.cachedNoiseFloor > 1e-6) {
-      // Valid noise floor estimate available
-      externalNoiseFloor = this.cachedNoiseFloor;
+    if (this.correlationNoiseVarianceFromCorrelations > 1e-12) {
+      // Valid noise variance estimate available - convert to standard deviation
+      externalNoiseFloor = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
     }
 
     const result = this.findSyncOffset(
@@ -458,7 +460,7 @@ export class DsssDpskDemodulator {
       
       // 同期確認に必要なサンプル数を正確に計算
       const consumeCount = result.bestSampleOffset; // 検出位置までの相対距離
-      const syncValidationSamples = CONSTANTS.FRAME.SYNC_VALIDATION_BITS * this.samplesPerBit;
+      const syncValidationSamples = CONSTANTS.FRAME.SYNC_VALIDATION_BITS * this.samplesPerBit + this.config.samplesPerPhase;
       const totalRequiredSamples = consumeCount + syncValidationSamples;
       
       if (availableCount < totalRequiredSamples) {
@@ -531,12 +533,14 @@ export class DsssDpskDemodulator {
   
   private _processBit(): void {
     // 呼び出し側で十分なサンプル数は確認済み
-    if (!(this._getAvailableSampleCount() >= this.samplesPerBit)) {
+    if (!(this._getAvailableSampleCount() >= this.samplesPerBit + this.config.samplesPerPhase)) {
       this.log(`Cannot consume ${this.samplesPerBit} samples in _processBit - insufficient data`);
     }
     
     // デモジュレーションとデスプレッドをゼロコピーで実行（常に有効なLLR値を返す）
-    const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, 0);
+    // 位相連続性のための絶対位置計算
+    const absoluteStartSample = this.processedCount * this.samplesPerBit;
+    const llr = this._demodulateAndDespreadZeroCopy(0, undefined, absoluteStartSample);
     
     // LLRをバッファに格納
     this.log(`[LLR Debug] Generated LLR: ${llr}, buffer: ${this.bitBufferIndex}/${this.bitBuffer.length}`);
@@ -558,48 +562,48 @@ export class DsssDpskDemodulator {
    * Demodulate and despread bit samples with zero-copy optimization
    * Directly processes samples from circular buffer without memory allocation
    */
-  private _demodulateAndDespreadZeroCopy(sampleCount: number, offset: number, expectedBit?: number): number {
-    const numPhases = Math.floor(sampleCount / this.config.samplesPerPhase);
-    const phases = new Float32Array(numPhases+1)
-    
+  private _demodulateAndDespreadZeroCopy(offset: number, expectedBit?: number, startSample: number = 0): number {
+    const numPhases = this.config.sequenceLength + 1; // +1 for the last phase (DSSS sequence length)
+    const sampleCount = this.config.samplesPerPhase * numPhases;
+    const phases = new Float32Array(numPhases);
+
     // キャリア復調（ゼロコピー）
-//     this._demodulateCarrierZeroCopy(sampleCount, offset, phases.subarray(1));
-//     phases[0] = Math.cos(phases[1]); // 最初の位相はキャリアの初期位相（0度）
-    this._demodulateCarrierZeroCopy(sampleCount, offset, phases);
+    this._demodulateCarrierZeroCopy(sampleCount, offset, phases, startSample);
     
     // DPSK復調
     const chipLlrs = dpskDemodulate(phases);
     
     // デバッグ: チップLLR値の確認
     /*
-    if (CONSTANTS.DEBUG && this.bitBufferIndex < 10) {
+    if (this.bitBufferIndex < 5) {
       const chipStr = Array.from(chipLlrs.slice(0, Math.min(5, chipLlrs.length)))
         .map(c => c.toFixed(2)).join(',');
-      this.log(`[LLR Debug] ChipLLRs[${chipLlrs.length}]: [${chipStr}]`);
+      this.log(`[LLR Debug] numPhases=${numPhases}, phases.length=${phases.length}, chipLlrs.length=${chipLlrs.length}, ChipLLRs: [${chipStr}]`);
     }
-      */
+    */
     
     // 既知ビットでノイズ学習（同期検証時のみ）
     if (expectedBit !== undefined) {
       this._learnNoiseFromKnownBit(chipLlrs, expectedBit);
     }
     
-    // ノイズ分散推定: 学習値を優先使用
+    // ノイズ分散推定: 学習値を優先、相関推定をフォールバック
     let estimatedNoiseVariance: number;
-    if (this.learnedNoiseVariance !== null) {
-      // 学習済みノイズ分散を使用（最も正確）
-      estimatedNoiseVariance = this.learnedNoiseVariance;
-    } else if (this.correlation > 0 && this.cachedNoiseFloor > 1e-6) {
-      // 同期確立済み: correlation値から理論的に変換
-      estimatedNoiseVariance = this._estimateChipNoiseVariance(chipLlrs);
+    
+    if (this.noiseEstimationBuffer.length >= 10 && this.correlationNoiseVarianceFromLearning > 0) {
+      // 十分な学習データがある場合：学習推定を使用
+      estimatedNoiseVariance = this.correlationNoiseVarianceFromLearning;
     } else {
-      // 同期未確立: フォールバック値
-      estimatedNoiseVariance = 1.0;
+      // 学習データ不足：相関推定をフォールバック
+      estimatedNoiseVariance = this.correlationNoiseVarianceFromCorrelations;
     }
+    
+    // 最小値制約（数値安定性のみ）
+    estimatedNoiseVariance = Math.max(estimatedNoiseVariance, 1e-6);
     
     // デバッグ: ノイズ分散の確認
     if (CONSTANTS.DEBUG && this.bitBufferIndex < 10) {
-      // this.log(`[LLR Debug] NoiseVariance: ${estimatedNoiseVariance.toFixed(3)} (theoretical from corr=${this.correlation.toFixed(4)}, floor=${this.cachedNoiseFloor.toFixed(6)})`);
+      // this.log(`[LLR Debug] NoiseVariance: ${estimatedNoiseVariance.toFixed(3)} (from learning=${this.correlationNoiseVarianceFromLearning.toFixed(6)}, from correlations=${this.correlationNoiseVarianceFromCorrelations.toFixed(6)})`);
     }
     
     // DSSS逆拡散
@@ -654,8 +658,8 @@ export class DsssDpskDemodulator {
     this.processedCount = 0;
     this.targetCount = 0;
     
-    // ノイズフロアリセット
-    this.cachedNoiseFloor = 0.01;
+    // ノイズ分散推定リセット
+    this.correlationNoiseVarianceFromCorrelations = 0.01 * 0.01; // 0.01² = 0.0001
     this.correlationBuffer = [];
     
     this.log(`Complete demodulator reset: buffers cleared, counters reset, ready for new sync`);
@@ -847,8 +851,8 @@ export class DsssDpskDemodulator {
     // Search in limited range (±0.5 chip = 1 chip total)
     const maxChipOffset = Math.ceil(totalSearchRangeSamples / this.config.samplesPerPhase);
     
-    // Use cached noise floor directly (no conversion needed)
-    const externalNoiseFloor = this.cachedNoiseFloor;
+    // Use correlation-based noise estimate (convert variance to standard deviation)
+    const externalNoiseFloor = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
     
     const result = this.findSyncOffset(
       searchSamples,
@@ -923,7 +927,10 @@ export class DsssDpskDemodulator {
         
         // 既知ビットパターンを使ってノイズ学習も実行
         const expectedBit = knownPattern[bit];
-        const llr = this._demodulateAndDespreadZeroCopy(this.samplesPerBit, bitOffset, expectedBit);
+        
+        // 位相連続性のための絶対位置計算
+        const absoluteStartSample = syncOffset + bit * this.samplesPerBit;
+        const llr = this._demodulateAndDespreadZeroCopy(bitOffset, expectedBit, absoluteStartSample);
         softBits[bit] = llr; // 常に有効なLLR値が返される
       }
       
@@ -1152,10 +1159,10 @@ export class DsssDpskDemodulator {
       offset += correlations.length;
     }
 
-    const estimatedNoiseFloor = estimateNoiseFromCorrelations(allCorrelations);
-    this.cachedNoiseFloor = estimatedNoiseFloor;
+    const estimatedNoiseStdDev = estimateNoiseFromCorrelations(allCorrelations);
+    this.correlationNoiseVarianceFromCorrelations = estimatedNoiseStdDev * estimatedNoiseStdDev;
     
-    this.log(`Updated noise floor from ${this.correlationBuffer.length} correlation buffers: ${estimatedNoiseFloor.toFixed(6)}`);
+    this.log(`Updated correlation noise variance from ${this.correlationBuffer.length} correlation buffers: σ=${estimatedNoiseStdDev.toFixed(6)}, σ²=${this.correlationNoiseVarianceFromCorrelations.toFixed(6)}`);
   }
 
 
@@ -1199,8 +1206,6 @@ export class DsssDpskDemodulator {
     
     // 実際のチップと理想チップの差からノイズ成分を抽出
     for (let i = 0; i < this.config.sequenceLength; i++) {
-      const _noiseComponent = chipLlrs[i] - idealChips[i];
-      
       // バッファサイズ管理
       if (this.noiseEstimationBuffer.length >= this.NOISE_ESTIMATION_BUFFER_SIZE) {
         this.noiseEstimationBuffer.shift(); // 古いデータを削除
@@ -1233,7 +1238,7 @@ export class DsssDpskDemodulator {
       return;
     }
     
-    // ノイズ成分の分散を計算
+    // チップレベルのノイズ分散を計算
     let noiseSumSquares = 0;
     let validSamples = 0;
     
@@ -1243,18 +1248,23 @@ export class DsssDpskDemodulator {
       validSamples++;
     }
     
-    const learnedVariance = validSamples > 0 ? noiseSumSquares / validSamples : 1.0;
-    const clampedVariance = Math.max(learnedVariance, 0.01); // 数値安定性
+    const chipNoiseVariance = validSamples > 0 ? noiseSumSquares / validSamples : 1.0;
+    // 最小値制約を緩和：理論的に正しいノイズ分散を受け入れる
+    const clampedChipVariance = Math.max(chipNoiseVariance, 1e-6); // 数値安定性のみ
+    
+    // 理論的変換: 相関ノイズ分散 = チップノイズ分散 × 拡散符号長
+    // 理論根拠: Var(Σ(noise_i × mSequence_i)) = Σ(Var(noise_i)) = L × σ²_chip
+    const correlationNoiseVariance = clampedChipVariance * this.config.sequenceLength;
     
     // 前回の学習値との平滑化（重み付き移動平均）
-    if (this.learnedNoiseVariance !== null) {
+    if (this.correlationNoiseVarianceFromLearning !== null) {
       const alpha = 0.3; // 新しい値の重み
-      this.learnedNoiseVariance = alpha * clampedVariance + (1 - alpha) * this.learnedNoiseVariance;
+      this.correlationNoiseVarianceFromLearning = alpha * correlationNoiseVariance + (1 - alpha) * this.correlationNoiseVarianceFromLearning;
     } else {
-      this.learnedNoiseVariance = clampedVariance;
+      this.correlationNoiseVarianceFromLearning = correlationNoiseVariance;
     }
     
-    this.log(`[Noise Learning] Updated learned noise variance: ${this.learnedNoiseVariance.toFixed(6)} (from ${validSamples} samples, raw=${learnedVariance.toFixed(6)})`);
+    this.log(`[Noise Learning] Updated noise variance: chip=${clampedChipVariance.toFixed(6)} → correlation=${this.correlationNoiseVarianceFromLearning.toFixed(6)} (×${this.config.sequenceLength}) from ${validSamples} samples`);
   }
 
 }

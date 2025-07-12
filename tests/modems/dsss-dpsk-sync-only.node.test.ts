@@ -173,13 +173,20 @@ describe('DSSS-DPSK Synchronization-Only Tests', () => {
   });
   
   describe('SNR耐性テスト（同期検出のみ）', () => {
-    // SNR条件の定義（実測結果に基づく）
+    // SNR条件の定義（実測低レベルAPI性能ベース - 理論的期待値）
+    // 理論的に正しい期待値: 上位レイヤーは下位レイヤー以上の性能を持つべき
+    // 実測値結果:
+    // - 0dB SNR: 低レベル100%, 高レベル100% -> 理論的要求: 100%
+    // - -3dB SNR: 低レベル100%, 高レベル100% -> 理論的要求: 100%
+    // - -8dB SNR: 低レベル100%, 高レベル95% -> 理論的要求: 100%
+    // - -12dB SNR: 低レベル100%, 高レベル15% -> 理論的要求: 100%
+    // - -18dB SNR: 低レベル5%, 高レベル0% -> 理論的要求: 5%
     const snrConditions = [
-      { snr: 0, minSyncRate: 0.95, trials: 20, name: '0dB SNR (良好条件)' },
-      { snr: -3, minSyncRate: 0.85, trials: 25, name: '-3dB SNR (DSSS利得活用)' },
-      { snr: -8, minSyncRate: 0.35, trials: 30, name: '-8dB SNR (実用的低SNR)' },
-      { snr: -12, minSyncRate: 0.00, trials: 40, name: '-12dB SNR (性能限界)' },
-      { snr: -18, minSyncRate: 0.00, trials: 50, name: '-18dB SNR (極限条件)' },
+      { snr: 0, minSyncRate: 1.00, trials: 20, name: '0dB SNR (低レベル実測: 100%)' },
+      { snr: -3, minSyncRate: 1.00, trials: 25, name: '-3dB SNR (低レベル実測: 100%)' },
+      { snr: -8, minSyncRate: 1.00, trials: 30, name: '-8dB SNR (低レベル実測: 100%)' },
+      { snr: -12, minSyncRate: 1.00, trials: 40, name: '-12dB SNR (低レベル実測: 100%)' },
+      { snr: -18, minSyncRate: 0.05, trials: 50, name: '-18dB SNR (低レベル実測: 5%)' },
     ];
 
     /**
@@ -252,54 +259,73 @@ describe('DSSS-DPSK Synchronization-Only Tests', () => {
       expect(lowLevelResult.peakCorrelation).toBeGreaterThan(0.8);
     });
 
-    test('should compare SNR performance with low-level API at -12dB', () => {
-      console.log('=== -12dB SNR比較テスト ===');
+    /**
+     * 理論的に正しい期待値設定のためのベンチマークテスト
+     * 複数SNR条件で低レベルAPIと高レベルAPIの性能を測定
+     */
+    test('should establish theoretical baseline for all SNR conditions', () => {
+      console.log('=== 理論的ベースライン測定 ===');
+      console.log('SNR(dB) | 低レベルAPI | 高レベルAPI | 理論的要求');
+      console.log('--------|------------|------------|----------');
+      
+      const snrLevels = [0, -3, -8, -12, -18];
       const trials = 20;
-      let lowLevelSyncCount = 0;
-      let highLevelSyncCount = 0;
-      
       const reference = modem.generateSyncReference(syncTestConfig.sequenceLength, syncTestConfig.seed);
+      const results: Array<{snr: number, lowLevel: number, highLevel: number}> = [];
       
-      for (let trial = 0; trial < trials; trial++) {
-        const cleanSignal = generateSyncSignal(0x42, 0.8);
-        const noisySignal = addAWGN(cleanSignal, -12);
+      for (const snr of snrLevels) {
+        let lowLevelSyncCount = 0;
+        let highLevelSyncCount = 0;
         
-        // 低レベルAPIテスト
-        const lowLevelResult = modem.findSyncOffset(
-          noisySignal,
-          reference,
-          syncTestConfig,
-          20,
-          {
-            correlationThreshold: syncTestConfig.correlationThreshold,
-            peakToNoiseRatio: syncTestConfig.peakToNoiseRatio,
+        for (let trial = 0; trial < trials; trial++) {
+          const cleanSignal = generateSyncSignal(0x42, 0.8);
+          const noisySignal = addAWGN(cleanSignal, snr);
+          
+          // 低レベルAPIテスト
+          const lowLevelResult = modem.findSyncOffset(
+            noisySignal,
+            reference,
+            syncTestConfig,
+            20,
+            {
+              correlationThreshold: syncTestConfig.correlationThreshold,
+              peakToNoiseRatio: syncTestConfig.peakToNoiseRatio,
+            }
+          );
+          
+          if (lowLevelResult.isFound) {
+            lowLevelSyncCount++;
           }
-        );
-        
-        if (lowLevelResult.isFound) {
-          lowLevelSyncCount++;
+          
+          // 高レベルAPIテスト
+          const demodulator = new DsssDpskDemodulator(syncTestConfig);
+          addSamples(demodulator, noisySignal);
+          demodulator.getAvailableFrames();
+          const syncState = demodulator.getSyncState();
+          
+          if (syncState.correlation > 0.3) {
+            highLevelSyncCount++;
+          }
         }
         
-        // 高レベルAPIテスト
-        const demodulator = new DsssDpskDemodulator(syncTestConfig);
-        addSamples(demodulator, noisySignal);
-        demodulator.getAvailableFrames();
-        const syncState = demodulator.getSyncState();
+        const lowLevelRate = lowLevelSyncCount / trials;
+        const highLevelRate = highLevelSyncCount / trials;
         
-        if (syncState.correlation > 0.3) {
-          highLevelSyncCount++;
-        }
+        results.push({snr, lowLevel: lowLevelRate, highLevel: highLevelRate});
+        
+        const theoreticalRequirement = highLevelRate >= lowLevelRate ? 'OK' : 'FAIL';
+        console.log(`${snr.toString().padStart(7)} | ${lowLevelRate.toFixed(2).padStart(10)} | ${highLevelRate.toFixed(2).padStart(10)} | ${theoreticalRequirement.padStart(10)}`);
       }
       
-      const lowLevelRate = lowLevelSyncCount / trials;
-      const highLevelRate = highLevelSyncCount / trials;
-      
-      console.log(`-12dB SNR比較:`);
-      console.log(`  低レベルAPI: ${lowLevelSyncCount}/${trials} (${(lowLevelRate * 100).toFixed(1)}%)`);
-      console.log(`  高レベルAPI: ${highLevelSyncCount}/${trials} (${(highLevelRate * 100).toFixed(1)}%)`);
-      
-      // 低レベルAPIとの性能差が大きすぎないことを確認
-      expect(Math.abs(lowLevelRate - highLevelRate)).toBeLessThan(0.3);
+      console.log('\n=== 実測値に基づく期待値設定 ===');
+      console.log('理論的に正しい期待値: 高レベルAPI >= 低レベルAPI');
+      console.log('以下は実測値に基づく推奨期待値:');
+      for (const result of results) {
+        console.log(`${result.snr}dB SNR: minSyncRate: ${Math.max(0, result.lowLevel).toFixed(2)} (低レベルAPI実測: ${result.lowLevel.toFixed(2)})`);
+        
+        // **理論的に正しい期待値**: 上位レイヤーは下位レイヤー以上の性能を持つべき
+        expect(result.highLevel).toBeGreaterThanOrEqual(result.lowLevel);
+      }
     });
   });
   
