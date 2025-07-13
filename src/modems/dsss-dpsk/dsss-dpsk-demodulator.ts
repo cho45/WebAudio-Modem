@@ -10,7 +10,7 @@ import {
   decimatedMatchedFilter,
   detectSynchronizationPeak,
   generateModulatedReference,
-  estimateNoiseFromCorrelations,
+  estimateCorrelationBaseline,
 } from './dsss-dpsk';
 import { DsssDpskFramer, type DecodedFrame, BIT_MANIPULATION } from './framer';
 
@@ -22,6 +22,8 @@ const CONSTANTS = {
     SYNC_WORD_BITS: 8,           // 同期ワードのビット数
     SYNC_VALIDATION_BITS: 12,    // 同期検証に必要なビット数 (preamble + sync word)
     SYNC_WORD: [1, 0, 1, 1, 0, 1, 0, 0], // 期待する同期ワード (0xB4)
+    SYNC_VALIDATION_LLR_THRESHOLD: 0.5, // 同期検証のLLR閾値
+    SYNC_VALIDATION_MIN_BITS: 5 / 8, // 同期検証に必要な最小ビット数
   },
   
   // LLR thresholds for bit quality detection
@@ -212,15 +214,7 @@ export class DsssDpskDemodulator {
       if (!this.currentFramer) {
         // 同期処理（新しいフレーム開始時のみ）
         if (!this.isLocked) {
-          const availableCount = this._getAvailableSampleCount();
-          
-          // 最大可能な移動分を考慮した要求量でチェック（保守的だが延期を最小化）
-          const maxMoveDistance = this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS;
-          const minRequiredSamples = this.samplesPerValidation + maxMoveDistance;
-          
-          if (availableCount >= minRequiredSamples) {
-            this._trySync();
-          }
+          this._trySync();
           if (!this.isLocked) {
             break; // 同期未確立なら終了
           }
@@ -420,8 +414,15 @@ export class DsssDpskDemodulator {
   }
   
   private _trySync(): boolean {
-    // 呼び出し側で十分なサンプル数は確認済み
-    const availableCount = this._getAvailableSampleCount();
+      const availableCount = this._getAvailableSampleCount();
+      
+      // 最大可能な移動分を考慮した要求量でチェック（保守的だが延期を最小化）
+      const maxMoveDistance = this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS;
+      const minRequiredSamples = this.samplesPerValidation + maxMoveDistance;
+
+      if (availableCount < minRequiredSamples) {
+        return false;
+      }
 
     // Create a linear view of the circular buffer for sync search
     const searchWindowSize = Math.min(availableCount, this.samplesPerBit * CONSTANTS.SYNC.SEARCH_WINDOW_BITS);
@@ -430,11 +431,11 @@ export class DsssDpskDemodulator {
     // Max chip offset for search should be based on the search window size
     const maxChipOffset = Math.floor(searchSamples.length / this.config.samplesPerPhase);
 
-    // Use correlation-based noise estimate if available (for consistent detection across sync/resync)
-    let externalNoiseFloor: number | undefined;
+    // Use correlation-based baseline estimate if available (for consistent detection across sync/resync)
+    let externalBaseline: number | undefined;
     if (this.correlationNoiseVarianceFromCorrelations > 1e-12) {
-      // Valid noise variance estimate available - convert to standard deviation
-      externalNoiseFloor = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
+      // Valid baseline variance estimate available - convert to standard deviation
+      externalBaseline = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
     }
 
     const result = this.findSyncOffset(
@@ -443,11 +444,11 @@ export class DsssDpskDemodulator {
       {
         correlationThreshold: this.config.correlationThreshold,
         peakToNoiseRatio: this.config.peakToNoiseRatio,
-        externalNoiseFloor
+        externalBaseline
       }
     );
     if (result.peakCorrelation > 0.5) {
-      this.log(`[Sync Debug] Search result: ${JSON.stringify(result)} isFound=${result.isFound}, peakCorrelation=${result.peakCorrelation.toFixed(4)} externalNoiseFloor=${externalNoiseFloor || 'N/A'}`);
+      this.log(`[Sync Debug] Search result: ${JSON.stringify(result)} isFound=${result.isFound}, peakCorrelation=${result.peakCorrelation.toFixed(4)} externalBaseline=${externalBaseline || 'N/A'}`);
     }
 
     if (result.isFound) {
@@ -455,8 +456,8 @@ export class DsssDpskDemodulator {
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
-      this.log(`SYNC FOUND: offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation.toFixed(4)} ${externalNoiseFloor}`);
-      this.log(`Sync: Available samples: ${availableCount}, searchWindowSize: ${searchWindowSize}, maxChipOffset: ${maxChipOffset}, externalNoiseFloor: ${externalNoiseFloor}`);
+      this.log(`SYNC FOUND: offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation.toFixed(4)} ${externalBaseline}`);
+      this.log(`Sync: Available samples: ${availableCount}, searchWindowSize: ${searchWindowSize}, maxChipOffset: ${maxChipOffset}, externalBaseline: ${externalBaseline}`);
       
       // 同期確認に必要なサンプル数を正確に計算
       const consumeCount = result.bestSampleOffset; // 検出位置までの相対距離
@@ -806,8 +807,8 @@ export class DsssDpskDemodulator {
           const sampleIndex = startSample + symbolStart + index;
           const carrierPhase = omega * sampleIndex;
           
-          iSum += sample * Math.sin(carrierPhase);
-          qSum += sample * Math.cos(carrierPhase);
+          iSum += sample * Math.cos(carrierPhase);
+          qSum += sample * Math.sin(carrierPhase);
         }
       );
       
@@ -851,8 +852,8 @@ export class DsssDpskDemodulator {
     // Search in limited range (±0.5 chip = 1 chip total)
     const maxChipOffset = Math.ceil(totalSearchRangeSamples / this.config.samplesPerPhase);
     
-    // Use correlation-based noise estimate (convert variance to standard deviation)
-    const externalNoiseFloor = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
+    // Use correlation-based baseline estimate (convert variance to standard deviation)
+    const externalBaseline = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
     
     const result = this.findSyncOffset(
       searchSamples,
@@ -860,7 +861,7 @@ export class DsssDpskDemodulator {
       {
         correlationThreshold: this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
         peakToNoiseRatio: this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
-        externalNoiseFloor
+        externalBaseline
       }
     );
     
@@ -987,38 +988,36 @@ export class DsssDpskDemodulator {
     const hardMatchRatio = hardMatches / expectedSyncWord.length;
     
     // Debug logging - 詳細分析
-    this.log(`=== 同期検証詳細分析 ===`);
-    this.log(`LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
+    this.log(`[validateSync] LLR bits (${softBits.length}): [${Array.from(softBits).join(',')}]`);
     
     // プリアンブル部分の確認
     const preambleLLR = softBits.slice(0, CONSTANTS.FRAME.PREAMBLE_BITS);
     const preambleHard = Array.from(preambleLLR).map(llr => llr >= 0 ? 0 : 1);
-    this.log(`プリアンブル[0-3] LLR: [${Array.from(preambleLLR).join(',')}] → Hard: [${preambleHard.join(',')}] (期待: [0,0,0,0])`);
+    this.log(`[validateSync] プリアンブル[0-3] LLR: [${Array.from(preambleLLR).join(',')}] → Hard: [${preambleHard.join(',')}] (期待: [0,0,0,0])`);
     
     // 同期ワード部分の確認
-    this.log(`同期ワード[4-11] LLR: [${Array.from(receivedSyncWordLLR).join(',')}] → Hard: [${hardBits.join(',')}]`);
-    this.log(`期待される同期ワード: [${expectedSyncWord.join(',')}]`);
-    this.log(`LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
+    this.log(`[validateSync] 同期ワード[4-11] LLR: [${Array.from(receivedSyncWordLLR).join(',')}] → Hard: [${hardBits.join(',')}]`);
+    this.log(`[validateSync] 期待される同期ワード: [${expectedSyncWord.join(',')}]`);
+    this.log(`[validateSync] LLR correlation score: ${normalizedLLRScore.toFixed(4)}, Hard match: ${hardMatches}/${expectedSyncWord.length} (${(hardMatchRatio*100).toFixed(1)}%)`);
     
     // LLRベースの判定：低レベルAPIと同等の感度に調整してDSSS理論期待値を満たす
-    const llrThreshold = 0.3; // LLR相関の閾値（低レベルAPI同等の感度）
-    const minHardThreshold = 0.625; // 62.5% (5/8, より現実的な閾値)
+    const llrThreshold = CONSTANTS.FRAME.SYNC_VALIDATION_LLR_THRESHOLD;
+    const minHardThreshold = CONSTANTS.FRAME.SYNC_VALIDATION_MIN_BITS;
     
-    // プリアンブル検証を強化（4ビット全てが0であることを厳密に検証）
-    const expectedPreamble = [0, 0, 0, 0];
-    const preambleValid = preambleHard.every((bit, i) => bit === expectedPreamble[i]);
+    // プリアンブル検証 最後の1bitは常に0
+    const preambleValid = preambleHard[3] === 0;
     
     const llrValid = normalizedLLRScore >= llrThreshold;
     const hardValid = hardMatchRatio >= minHardThreshold;
     const isValid = llrValid && hardValid && preambleValid;
-    
-    this.log(`LR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}), Preamble_valid=${preambleValid} → ${isValid ? 'PASSED' : 'FAILED'}`);
-    
+
+    this.log(`[validateSync] LLR validation: LLR_score=${normalizedLLRScore.toFixed(4)}>=${llrThreshold} (${llrValid}), Hard_ratio=${hardMatchRatio.toFixed(3)}>=${minHardThreshold} (${hardValid}), Preamble_valid=${preambleValid} → ${isValid ? 'PASSED' : 'FAILED'}`);
+
     if (isValid) {
-      this.log(`LLR sync validation: PASSED (sync word detected with high confidence)`);
+      this.log(`[validateSync] LLR sync validation: PASSED (sync word detected with high confidence)`);
       return 'SUCCESS';
     } else {
-      this.log(`LLR sync validation: FAILED (insufficient LLR correlation or hard match)`);
+      this.log(`[validateSync] LLR sync validation: FAILED (insufficient LLR correlation or hard match)`);
       return 'FAILED';
     }
   }
@@ -1081,7 +1080,7 @@ export class DsssDpskDemodulator {
     detectionThresholds: {
       correlationThreshold: number;
       peakToNoiseRatio: number;
-      externalNoiseFloor?: number;
+      externalBaseline?: number;
     }
   ): {
     bestSampleOffset: number;
@@ -1159,10 +1158,10 @@ export class DsssDpskDemodulator {
       offset += correlations.length;
     }
 
-    const estimatedNoiseStdDev = estimateNoiseFromCorrelations(allCorrelations);
+    const estimatedNoiseStdDev = estimateCorrelationBaseline(allCorrelations);
     this.correlationNoiseVarianceFromCorrelations = estimatedNoiseStdDev * estimatedNoiseStdDev;
     
-    this.log(`Updated correlation noise variance from ${this.correlationBuffer.length} correlation buffers: σ=${estimatedNoiseStdDev.toFixed(6)}, σ²=${this.correlationNoiseVarianceFromCorrelations.toFixed(6)}`);
+    this.log(`[Noise Learning] Updated correlation noise variance from ${this.correlationBuffer.length} correlation buffers: σ=${estimatedNoiseStdDev.toFixed(6)}, σ²=${this.correlationNoiseVarianceFromCorrelations.toFixed(6)}`);
   }
 
 
@@ -1217,8 +1216,6 @@ export class DsssDpskDemodulator {
         actual: chipLlrs[i]
       });
     }
-    
-    this.log(`[Noise Learning] Added ${this.config.sequenceLength} noise samples. Buffer: ${this.noiseEstimationBuffer.length}/${this.NOISE_ESTIMATION_BUFFER_SIZE}`);
   }
   
   /**

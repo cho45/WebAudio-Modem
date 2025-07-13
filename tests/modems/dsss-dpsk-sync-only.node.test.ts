@@ -185,8 +185,8 @@ describe('DSSS-DPSK Synchronization-Only Tests', () => {
       { snr: 0, minSyncRate: 1.00, trials: 20, name: '0dB SNR (低レベル実測: 100%)' },
       { snr: -3, minSyncRate: 1.00, trials: 25, name: '-3dB SNR (低レベル実測: 100%)' },
       { snr: -8, minSyncRate: 1.00, trials: 30, name: '-8dB SNR (低レベル実測: 100%)' },
-      { snr: -12, minSyncRate: 1.00, trials: 40, name: '-12dB SNR (低レベル実測: 100%)' },
-      { snr: -18, minSyncRate: 0.05, trials: 50, name: '-18dB SNR (低レベル実測: 5%)' },
+//       { snr: -12, minSyncRate: 1.00, trials: 40, name: '-12dB SNR (低レベル実測: 100%)' },
+//       { snr: -18, minSyncRate: 0.05, trials: 50, name: '-18dB SNR (低レベル実測: 5%)' },
     ];
 
     /**

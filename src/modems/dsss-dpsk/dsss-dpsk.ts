@@ -518,7 +518,7 @@ export function detectSynchronizationPeak(
   thresholds: {
     correlationThreshold: number;    // Minimum correlation for detection (externally specified)
     peakToNoiseRatio: number;       // Minimum peak-to-noise ratio (externally specified)
-    externalNoiseFloor?: number;    // Optional: use external noise floor estimation
+    externalBaseline?: number;      // Optional: use external correlation baseline estimation
   }
 ): {
   bestSampleOffset: number;
@@ -559,28 +559,28 @@ export function detectSynchronizationPeak(
   const bestSampleOffset = sampleOffsets[peakIndex];
   const peakCorrelation = correlations[peakIndex];
 
-  // Use external noise floor if provided, otherwise estimate from correlations
-  let noiseFloor;
-  if (thresholds.externalNoiseFloor !== undefined) {
-    noiseFloor = Math.max(thresholds.externalNoiseFloor, 1e-6);
+  // Use external baseline if provided, otherwise estimate from correlations
+  let baseline;
+  if (thresholds.externalBaseline !== undefined) {
+    baseline = Math.max(thresholds.externalBaseline, 1e-6);
   } else {
     // Use improved RMS-based estimation with peak exclusion
-    noiseFloor = estimateNoiseFromCorrelations(correlations);
+    baseline = estimateCorrelationBaseline(correlations);
   }
   
-  const peakToNoiseRatio = peakValue / noiseFloor;
+  const peakToBaselineRatio = peakValue / baseline;
   
   // Simple two-criteria detection
   const meetsCorrelationThreshold = peakValue >= correlationThreshold;
-  const meetsNoiseRatioThreshold = peakToNoiseRatio >= peakToNoiseRatioThreshold;
-  const isFound = meetsCorrelationThreshold && meetsNoiseRatioThreshold;
+  const meetsBaselineRatioThreshold = peakToBaselineRatio >= peakToNoiseRatioThreshold;
+  const isFound = meetsCorrelationThreshold && meetsBaselineRatioThreshold;
   
   // Only output detailed SYNC DEBUG logs when explicitly debugging sync issues
   const debugSyncDetails = false; // Set to true for detailed sync debugging
-  if (debugSyncDetails && noiseFloor > 0.001) {
-    // DEBUG: Log critical values to understand why peakToNoiseRatio differs between initial sync and resync
-    console.log(`[SYNC DEBUG] ${isFound ? 'FOUND' : 'NOT FOUND'} peakValue=${peakValue.toFixed(4)} >= threshold=${correlationThreshold}, ratio=${peakToNoiseRatio.toFixed(2)} >= ${peakToNoiseRatioThreshold}`);
-    console.log(`[SYNC DEBUG] correlations.length=${correlations.length}, noiseFloor=${noiseFloor.toFixed(4)} (median), peakValue=${peakValue.toFixed(4)}`);
+  if (debugSyncDetails && baseline > 0.001) {
+    // DEBUG: Log critical values to understand why peakToBaselineRatio differs between initial sync and resync
+    console.log(`[SYNC DEBUG] ${isFound ? 'FOUND' : 'NOT FOUND'} peakValue=${peakValue.toFixed(4)} >= threshold=${correlationThreshold}, ratio=${peakToBaselineRatio.toFixed(2)} >= ${peakToNoiseRatioThreshold}`);
+    console.log(`[SYNC DEBUG] correlations.length=${correlations.length}, baseline=${baseline.toFixed(4)} (RMS), peakValue=${peakValue.toFixed(4)}`);
     if (correlations.length <= 15) {
       console.log(`[SYNC DEBUG] All correlations: [${Array.from(correlations).map(x => x.toFixed(3)).join(',')}]`);
       console.log(`[SYNC DEBUG] Sample offsets: [${sampleOffsets.join(',')}]`);
@@ -593,7 +593,7 @@ export function detectSynchronizationPeak(
     bestChipOffset: Math.round(bestSampleOffset / samplesPerPhase),
     peakCorrelation,
     isFound,
-    peakRatio: peakToNoiseRatio
+    peakRatio: peakToBaselineRatio
   };
 }
 
@@ -621,7 +621,7 @@ export function findSyncOffset(
   detectionThresholds: {
     correlationThreshold: number;
     peakToNoiseRatio: number;
-    externalNoiseFloor?: number; // Optional: use external noise floor estimation
+    externalBaseline?: number; // Optional: use external correlation baseline estimation
   }
 ): {
   bestSampleOffset: number;
@@ -687,11 +687,11 @@ export function applySyncOffset(receivedData: Float32Array, offset: number): Flo
 
 
 /**
- * Estimate noise floor from correlation values using RMS with peak exclusion
+ * Estimate correlation baseline from correlation values using RMS with peak exclusion
  * @param correlations Correlation values from matched filter
- * @returns Estimated noise floor
+ * @returns Estimated correlation baseline level
  */
-export function estimateNoiseFromCorrelations(correlations: Float32Array): number {
+export function estimateCorrelationBaseline(correlations: Float32Array): number {
   if (correlations.length <= 1) {
     return 1e-6; // Fallback for empty input
   }

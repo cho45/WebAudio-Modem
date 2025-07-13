@@ -11,7 +11,7 @@ import {
   findSyncOffset,
   applySyncOffset,
   generateSyncReference,
-  estimateNoiseFromCorrelations,
+  estimateCorrelationBaseline,
   generateModulatedReference,
   decimatedMatchedFilter
 } from '../../src/modems/dsss-dpsk';
@@ -1894,10 +1894,10 @@ describe('LLR Distribution Validation', () => {
   });
 });
 
-describe('estimateNoiseFromCorrelations', () => {
+describe('estimateCorrelationBaseline', () => {
   test('should handle empty correlations', () => {
     const correlations = new Float32Array([]);
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     expect(result).toBe(1e-6);
   });
 
@@ -1908,7 +1908,7 @@ describe('estimateNoiseFromCorrelations', () => {
       0.15, 0.03, 0.09, 0.06, 0.11
     ]);
     
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // Peak (0.8) should be excluded, noise estimate from remaining samples
     // Expected: RMS of [0.15, 0.12, 0.11, 0.1, 0.09, 0.08, 0.06, 0.05, 0.03]
@@ -1924,7 +1924,7 @@ describe('estimateNoiseFromCorrelations', () => {
       -0.04, 0.07, 0.11, -0.08, 0.05
     ]);
     
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // Should estimate reasonable noise floor from 90% of samples
     expect(result).toBeGreaterThan(1e-6);
@@ -1933,7 +1933,7 @@ describe('estimateNoiseFromCorrelations', () => {
 
   test('should handle single sample', () => {
     const correlations = new Float32Array([0.5]);
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // With only one sample, 10% exclusion means exclude 1 sample = all excluded
     // Should fallback to 1e-6
@@ -1942,7 +1942,7 @@ describe('estimateNoiseFromCorrelations', () => {
 
   test('should handle two samples', () => {
     const correlations = new Float32Array([0.3, 0.7]);
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // Exclude top 10% (1 sample), estimate from remaining 1 sample
     // Should return RMS of the lower value
@@ -1956,7 +1956,7 @@ describe('estimateNoiseFromCorrelations', () => {
       0.6, 0.7, 0.8, 0.9, 1.0   // higher 5, exclude 1.0
     ]);
     
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // Should estimate from [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     // Expected RMS ≈ sqrt(sum(x^2)/9) ≈ 0.539
@@ -1975,7 +1975,7 @@ describe('estimateNoiseFromCorrelations', () => {
       0.15, 0.12
     ]);
     
-    const rmsEstimate = estimateNoiseFromCorrelations(correlations);
+    const rmsEstimate = estimateCorrelationBaseline(correlations);
     
     // Our RMS estimate should be reasonable (not too extreme)
     expect(rmsEstimate).toBeGreaterThan(0.04);
@@ -1990,7 +1990,7 @@ describe('estimateNoiseFromCorrelations', () => {
       0.9, 0.85, 0.92              // Multiple peaks that should be excluded
     ]);
     
-    const rmsWithOutliers = estimateNoiseFromCorrelations(correlationsWithOutliers);
+    const rmsWithOutliers = estimateCorrelationBaseline(correlationsWithOutliers);
     const medianWithOutliers = Array.from(correlationsWithOutliers)
       .map(Math.abs)
       .sort((a, b) => a - b)[Math.floor(correlationsWithOutliers.length / 2)];
@@ -2022,7 +2022,7 @@ describe('estimateNoiseFromCorrelations', () => {
     correlations[25] = signalPeak * 0.8;
     correlations[40] = signalPeak * 0.6;
     
-    const result = estimateNoiseFromCorrelations(correlations);
+    const result = estimateCorrelationBaseline(correlations);
     
     // Should estimate noise floor close to backgroundNoise level
     expect(result).toBeGreaterThan(backgroundNoise * 0.3);
@@ -2053,7 +2053,7 @@ describe('estimateNoiseFromCorrelations', () => {
       );
       
       // Estimate noise floor
-      const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+      const estimatedNoise = estimateCorrelationBaseline(correlations);
       
       console.log(`Silent signal correlations length: ${correlations.length}`);
       console.log(`Silent signal estimated noise: ${estimatedNoise}`);
@@ -2105,7 +2105,7 @@ describe('estimateNoiseFromCorrelations', () => {
         );
         
         // Estimate noise floor
-        const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+        const estimatedNoise = estimateCorrelationBaseline(correlations);
         const maxCorrelation = Math.max(...correlations.map(Math.abs));
         
         results.push({ snr, estimatedNoise, maxCorrelation, inputRms });
@@ -2172,7 +2172,7 @@ describe('estimateNoiseFromCorrelations', () => {
       );
       
       // Estimate noise floor and find peak
-      const estimatedNoise = estimateNoiseFromCorrelations(correlations);
+      const estimatedNoise = estimateCorrelationBaseline(correlations);
       const maxCorrelation = Math.max(...correlations);
       const peakToNoiseRatio = maxCorrelation / estimatedNoise;
       
