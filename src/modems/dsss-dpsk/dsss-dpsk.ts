@@ -10,7 +10,6 @@
  */
 
 import { mseq15Step, mseq31Step, mseq63Step, mseq127Step, mseq255Step, mseqOutput } from '../../utils/msequence';
-import { quickSelect } from '../../utils';
 
 /**
  * Normalize phase to [-π, π] range
@@ -687,8 +686,9 @@ export function applySyncOffset(receivedData: Float32Array, offset: number): Flo
 
 
 /**
- * Estimate correlation baseline from correlation values using RMS with peak exclusion
- * @param correlations Correlation values from matched filter
+ * Estimate correlation baseline from normalized correlation values
+ * DSSSにおけるピーク検出用の基準値を効率的に推定
+ * @param correlations Normalized correlation values from matched filter
  * @returns Estimated correlation baseline level
  */
 export function estimateCorrelationBaseline(correlations: Float32Array): number {
@@ -696,26 +696,30 @@ export function estimateCorrelationBaseline(correlations: Float32Array): number 
     return 1e-6; // Fallback for empty input
   }
 
+  // DSSSでは正の相関のみが意味を持つため、負の値は0として扱う
+  // 単一パスで統計量を計算
+  let sum = 0;
+  let sumSq = 0;
+  let count = 0;
+  let max = -Infinity;
+
   for (let i = 0; i < correlations.length; i++) {
-    correlations[i] = correlations[i] < 0 ? -correlations[i] : correlations[i];
+    const val = Math.max(0, correlations[i]); // 負の値を0にクリップ
+    sum += val;
+    sumSq += val * val;
+    count++;
+    max = Math.max(max, val);
   }
 
+  const mean = sum / count;
+  const variance = (sumSq / count) - (mean * mean);
+  const stdDev = Math.sqrt(Math.max(0, variance));
 
-  // Exclude top 10% of peaks (signal components)
-  const excludeCount = Math.max(1, Math.floor(correlations.length * 0.1));
-  const threshold = quickSelect(correlations, excludeCount, (a, b) => b - a);
-
-  // 閾値未満のみでRMS計算
-  let sumSq = 0, count = 0;
-  for (let i = 0; i < correlations.length; i++) {
-    if (correlations[i] <= threshold) {
-      sumSq += correlations[i] * correlations[i];
-      count++;
-    }
-  }
-
-  const rms = Math.sqrt(sumSq / count);
-  return Math.max(rms, 1e-6); // Prevent division by zero
+  // 正規化された相関値に対する適応的ベースライン推定
+  // 真のピークは平均値より大幅に高いため、mean + 0.5*stdDev を基準とする
+  const baseline = mean + 0.5 * stdDev;
+  
+  return Math.max(baseline, 1e-6); // Prevent division by zero
 }
 
 /**

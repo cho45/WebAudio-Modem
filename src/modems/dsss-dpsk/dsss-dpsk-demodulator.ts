@@ -99,12 +99,9 @@ export class DsssDpskDemodulator {
   // 処理管理
   private processedCount: number = 0;
   private targetCount: number = 0;
-  
-  // 相関レベルノイズ分散推定（DSSSシーケンスのcorrelationベース）
-  // findSyncOffset 内で isFound=true の場合に更新 1シーケンス分の相関値から推定
-  private correlationNoiseVarianceFromCorrelations: number = 0.01 * 0.01; // 0.01² = 0.0001
-  private correlationBuffer: Float32Array[] = [];
-  private readonly CORRELATION_BUFFER_MAX_SIZE = 10;
+
+  private readonly CORRELATION_BUFFER_MAX_SIZE = 3000;
+  private correlationBuffer: Float32Array = new Float32Array(this.CORRELATION_BUFFER_MAX_SIZE);
   
   // 相関レベルノイズ分散推定（PREAMBLE + SYNC_WORD の既知パターンから学習）
   // findSyncOffset 後、_validateSyncAtOffset で期待
@@ -394,7 +391,7 @@ export class DsssDpskDemodulator {
     
     // 重要: Echo-back防止のための追加バッファクリア
     this.bitBuffer.fill(0);
-    this.correlationBuffer = [];
+    this.correlationBuffer.fill(0);
     
     // フレーマーインスタンス破棄
     this.currentFramer = null;
@@ -431,24 +428,16 @@ export class DsssDpskDemodulator {
     // Max chip offset for search should be based on the search window size
     const maxChipOffset = Math.floor(searchSamples.length / this.config.samplesPerPhase);
 
-    // Use correlation-based baseline estimate if available (for consistent detection across sync/resync)
-    let externalBaseline: number | undefined;
-    if (this.correlationNoiseVarianceFromCorrelations > 1e-12) {
-      // Valid baseline variance estimate available - convert to standard deviation
-      externalBaseline = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
-    }
-
     const result = this.findSyncOffset(
       searchSamples,
       maxChipOffset,
       {
         correlationThreshold: this.config.correlationThreshold,
         peakToNoiseRatio: this.config.peakToNoiseRatio,
-        externalBaseline
       }
     );
     if (result.peakCorrelation > 0.5) {
-      this.log(`[Sync Debug] Search result: ${JSON.stringify(result)} isFound=${result.isFound}, peakCorrelation=${result.peakCorrelation.toFixed(4)} externalBaseline=${externalBaseline || 'N/A'}`);
+      this.log(`[Sync Debug] Search result: ${JSON.stringify(result)} isFound=${result.isFound}, peakCorrelation=${result.peakCorrelation.toFixed(4)}`);
     }
 
     if (result.isFound) {
@@ -456,8 +445,8 @@ export class DsssDpskDemodulator {
       this.correlation = result.peakCorrelation;
       this.resyncCounter = 0; // Reset resync counter on successful sync
       
-      this.log(`SYNC FOUND: offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation.toFixed(4)} ${externalBaseline}`);
-      this.log(`Sync: Available samples: ${availableCount}, searchWindowSize: ${searchWindowSize}, maxChipOffset: ${maxChipOffset}, externalBaseline: ${externalBaseline}`);
+      this.log(`SYNC FOUND: offset=${result.bestSampleOffset}, correlation=${result.peakCorrelation.toFixed(4)}`);
+      this.log(`Sync: Available samples: ${availableCount}, searchWindowSize: ${searchWindowSize}, maxChipOffset: ${maxChipOffset}`);
       
       // 同期確認に必要なサンプル数を正確に計算
       const consumeCount = result.bestSampleOffset; // 検出位置までの相対距離
@@ -659,9 +648,7 @@ export class DsssDpskDemodulator {
     this.processedCount = 0;
     this.targetCount = 0;
     
-    // ノイズ分散推定リセット
-    this.correlationNoiseVarianceFromCorrelations = 0.01 * 0.01; // 0.01² = 0.0001
-    this.correlationBuffer = [];
+    this.correlationBuffer.fill(0);
     
     this.log(`Complete demodulator reset: buffers cleared, counters reset, ready for new sync`);
     
@@ -852,16 +839,12 @@ export class DsssDpskDemodulator {
     // Search in limited range (±0.5 chip = 1 chip total)
     const maxChipOffset = Math.ceil(totalSearchRangeSamples / this.config.samplesPerPhase);
     
-    // Use correlation-based baseline estimate (convert variance to standard deviation)
-    const externalBaseline = Math.sqrt(this.correlationNoiseVarianceFromCorrelations);
-    
     const result = this.findSyncOffset(
       searchSamples,
       maxChipOffset,
       {
         correlationThreshold: this.config.correlationThreshold * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
         peakToNoiseRatio: this.config.peakToNoiseRatio * CONSTANTS.SYNC.RESYNC_THRESHOLD_SCALE,
-        externalBaseline
       }
     );
     
@@ -1080,7 +1063,6 @@ export class DsssDpskDemodulator {
     detectionThresholds: {
       correlationThreshold: number;
       peakToNoiseRatio: number;
-      externalBaseline?: number;
     }
   ): {
     bestSampleOffset: number;
@@ -1117,15 +1099,15 @@ export class DsssDpskDemodulator {
     
     // Step 3: Accumulate correlations for noise floor estimation
     this._accumulateCorrelations(correlations);
+
+    const baseline = estimateCorrelationBaseline(this.correlationBuffer);
     
     // Step 4: Detect synchronization peak using externally provided thresholds
-    const result = detectSynchronizationPeak(correlations, sampleOffsets, samplesPerPhase, detectionThresholds);
-    
-    // Step 5: Update noise floor estimation if sync is found
-    if (result.isFound) {
-      this._updateNoiseFloorFromCorrelations();
-    }
-    
+    const result = detectSynchronizationPeak(correlations, sampleOffsets, samplesPerPhase, {
+      ...detectionThresholds,
+      externalBaseline: baseline
+    });
+
     return result;
   }
 
@@ -1134,54 +1116,11 @@ export class DsssDpskDemodulator {
    * @param correlations Correlation values from decimated matched filter
    */
   private _accumulateCorrelations(correlations: Float32Array): void {
-    // Add to buffer (circular buffer with maximum size)
-    if (this.correlationBuffer.length >= this.CORRELATION_BUFFER_MAX_SIZE) {
-      this.correlationBuffer.shift(); // Remove oldest
-    }
-    this.correlationBuffer.push(correlations); // Add new
+    console.log(correlations.length, this.correlationBuffer.length);
+    this.correlationBuffer.set(this.correlationBuffer.subarray(correlations.length), 0);
+    this.correlationBuffer.set(correlations, correlations.length);
   }
 
-  /**
-   * Update noise floor estimation from accumulated correlations
-   */
-  private _updateNoiseFloorFromCorrelations(): void {
-    if (this.correlationBuffer.length === 0) {
-      return;
-    }
-
-    // Flatten all accumulated correlations
-    const totalLength = this.correlationBuffer.reduce((sum, arr) => sum + arr.length, 0);
-    const allCorrelations = new Float32Array(totalLength);
-    let offset = 0;
-    for (const correlations of this.correlationBuffer) {
-      allCorrelations.set(correlations, offset);
-      offset += correlations.length;
-    }
-
-    const estimatedNoiseStdDev = estimateCorrelationBaseline(allCorrelations);
-    this.correlationNoiseVarianceFromCorrelations = estimatedNoiseStdDev * estimatedNoiseStdDev;
-    
-    this.log(`[Noise Learning] Updated correlation noise variance from ${this.correlationBuffer.length} correlation buffers: σ=${estimatedNoiseStdDev.toFixed(6)}, σ²=${this.correlationNoiseVarianceFromCorrelations.toFixed(6)}`);
-  }
-
-
-  /**
-   * Estimate chip noise variance directly from chip LLRs using statistical analysis
-   * Alternative method for comparison and fallback scenarios
-   * @param chipLlrs Chip LLR values from DPSK demodulation
-   * @returns Estimated noise variance based on chip statistics
-   */
-  private _estimateChipNoiseVariance(chipLlrs: Float32Array): number {
-    if (chipLlrs.length === 0) return 1.0;
-    let sum = 0, sumSquares = 0;
-    for (const chip of chipLlrs) {
-      sum += chip;
-      sumSquares += chip * chip;
-    }
-    const mean = sum / chipLlrs.length;
-    const variance = (sumSquares / chipLlrs.length) - (mean * mean);
-    return Math.max(variance, 0.1);
-  }
 
   /**
    * 既知ビットパターンから理論的に正しいノイズ分散を学習
