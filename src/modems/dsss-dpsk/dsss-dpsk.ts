@@ -628,6 +628,7 @@ export function findSyncOffset(
   peakCorrelation: number;
   isFound: boolean;
   peakRatio: number;
+  estimatedNoisePower: number;
 } {
   const { samplesPerPhase } = modulationParams;
   
@@ -648,7 +649,8 @@ export function findSyncOffset(
       bestChipOffset: -1,
       peakCorrelation: 0,
       isFound: false,
-      peakRatio: 0
+      peakRatio: 0,
+      estimatedNoisePower: 0
     };
   }
   
@@ -665,7 +667,45 @@ export function findSyncOffset(
   // Step 4: Detect synchronization peak using externally provided thresholds
   const result = detectSynchronizationPeak(correlations, sampleOffsets, samplesPerPhase, detectionThresholds);
   
-  return result;
+  // Step 5: Estimate noise power from non-matching regions
+  let estimatedNoisePower = 0;
+  
+  if (result.isFound) {
+    // For more accurate noise estimation, use a conservative approach:
+    // Use the last 25% of the received samples as pure noise region
+    // This assumes that the signal occupies roughly the first 75% of the buffer
+    
+    const noiseRegionStart = Math.floor(receivedSamples.length * 0.75);
+    const noiseRegionEnd = receivedSamples.length;
+    
+    // Calculate signal power from pure noise region only
+    let noisePowerSum = 0;
+    let noiseSampleCount = 0;
+    
+    for (let i = noiseRegionStart; i < noiseRegionEnd; i++) {
+      noisePowerSum += receivedSamples[i] * receivedSamples[i];
+      noiseSampleCount++;
+    }
+    
+    estimatedNoisePower = noiseSampleCount > 0 ? noisePowerSum / noiseSampleCount : 0;
+    
+    // Debug output (can be enabled for troubleshooting)
+    // console.log(`[NoiseEstimation DEBUG] noiseRegionStart=${noiseRegionStart}, noiseRegionEnd=${noiseRegionEnd}`);
+    // console.log(`[NoiseEstimation DEBUG] totalSamples=${receivedSamples.length}, noiseSampleCount=${noiseSampleCount}`);
+    // console.log(`[NoiseEstimation DEBUG] noisePowerSum=${noisePowerSum.toExponential(3)}, estimatedNoisePower=${estimatedNoisePower.toExponential(3)}`);
+  } else {
+    // If no peak found, use entire signal as noise estimate
+    let totalPower = 0;
+    for (let i = 0; i < receivedSamples.length; i++) {
+      totalPower += receivedSamples[i] * receivedSamples[i];
+    }
+    estimatedNoisePower = totalPower / receivedSamples.length;
+  }
+  
+  return {
+    ...result,
+    estimatedNoisePower
+  };
 }
 
 

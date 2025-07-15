@@ -578,14 +578,11 @@ export class DsssDpskDemodulator {
     }
     
     // ノイズ分散推定: 学習値を優先、相関推定をフォールバック
-    let estimatedNoiseVariance: number;
+    let estimatedNoiseVariance: number = 0.01 * 0.01; // 初期値は0.01² = 0.0001
     
     if (this.noiseEstimationBuffer.length >= 10 && this.correlationNoiseVarianceFromLearning > 0) {
       // 十分な学習データがある場合：学習推定を使用
       estimatedNoiseVariance = this.correlationNoiseVarianceFromLearning;
-    } else {
-      // 学習データ不足：相関推定をフォールバック
-      estimatedNoiseVariance = this.correlationNoiseVarianceFromCorrelations;
     }
     
     // 最小値制約（数値安定性のみ）

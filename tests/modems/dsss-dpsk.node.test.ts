@@ -893,18 +893,42 @@ describe('Step 4: Synchronization Functions', () => {
       const carrierFreq = 10000;
       const samples = modulateCarrier(phases, samplesPerPhase, sampleRate, carrierFreq);
       
-      const noisySamples = addAWGN(samples, 20);
+      const snrDb = 20;
+      
+      // Add pure noise region after the signal for proper noise power estimation
+      const additionalNoiseLength = 1000; // Add 1000 samples of pure noise
+      const extendedSamples = new Float32Array(samples.length + additionalNoiseLength);
+      extendedSamples.set(samples, 0);
+      // Fill the additional region with zeros (will become noise after AWGN)
+      for (let i = samples.length; i < extendedSamples.length; i++) {
+        extendedSamples[i] = 0;
+      }
+      
+      const noisySamples = addAWGN(extendedSamples, snrDb);
+      
+      // Calculate the signal power that addAWGN actually uses (extended samples)
+      let extendedSignalPower = 0;
+      for (let i = 0; i < extendedSamples.length; i++) {
+        extendedSignalPower += extendedSamples[i] * extendedSamples[i];
+      }
+      extendedSignalPower /= extendedSamples.length;
       
       const result = findSyncOffset(noisySamples, reference, { samplesPerPhase, sampleRate, carrierFreq }, 10, { 
           correlationThreshold: 0.4, // High SNR conditions: demanding threshold for maximum precision
           peakToNoiseRatio: 3.0      // High confidence requirement with strong noise rejection
         });
       
-      console.log(`DEBUG Basic Sync: isFound=${result.isFound}, peakCorr=${result.peakCorrelation.toFixed(3)}, peakRatio=${result.peakRatio.toFixed(3)}, bestChipOffset=${result.bestChipOffset}`);
-      
       expect(result.bestChipOffset).toBe(0);
       expect(result.isFound).toBe(true);
       expect(Math.abs(result.peakCorrelation)).toBeGreaterThan(0.8);
+      
+      // Validate estimated noise power against theoretical expectation
+      // SNR = 20dB → snrLinear = 10^2 = 100 → expectedNoisePower = extendedSignalPower / 100
+      const expectedNoisePower = extendedSignalPower / Math.pow(10, snrDb / 10);
+      
+      // Test with tight tolerance - the noise estimation should be accurate within 50% 
+      expect(result.estimatedNoisePower).toBeGreaterThan(expectedNoisePower * 0.5);
+      expect(result.estimatedNoisePower).toBeLessThan(expectedNoisePower * 1.5);
     });
 
     test('should find synchronization with offset', () => {
