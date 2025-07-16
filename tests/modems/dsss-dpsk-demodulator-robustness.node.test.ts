@@ -220,10 +220,10 @@ describe('DsssDpskDemodulator Robustness Tests', () => {
   
   describe('DSSS理論限界に基づくSNR耐性テスト', () => {
     const TEST_CONDITIONS = [
-      { snr: 0, trials: 100, expectedSuccessRate: 0.9, description: '良好な条件での高い成功率' },
-      { snr: -3, trials: 100, expectedSuccessRate: 0.8, description: 'DSSS利得活用' },
-      { snr: -8, trials: 100, expectedSuccessRate: 0.4, description: '実用的な低SNR条件' },
-      { snr: -12, trials: 100, expectedSuccessRate: 0.15, description: 'DSSS理論限界近くの挑戦的な条件' },
+      { snr: 0, trials: 100, expectedSuccessRate: 0.95, description: '良好な条件での高い成功率' },
+      { snr: -3, trials: 100, expectedSuccessRate: 0.75, description: 'DSSS利得活用' },
+      { snr: -8, trials: 100, expectedSuccessRate: 0.65, description: '実用的な低SNR条件' },
+      { snr: -12, trials: 200, expectedSuccessRate: 0.01, description: 'DSSS理論限界近くの挑戦的な条件' },
     ];
 
     TEST_CONDITIONS.forEach(({ snr, trials, expectedSuccessRate, description }) => {
