@@ -22,8 +22,8 @@ const CONSTANTS = {
     SYNC_WORD_BITS: 8,           // 同期ワードのビット数
     SYNC_VALIDATION_BITS: 12,    // 同期検証に必要なビット数 (preamble + sync word)
     SYNC_WORD: [1, 0, 1, 1, 0, 1, 0, 0], // 期待する同期ワード (0xB4)
-    SYNC_VALIDATION_LLR_THRESHOLD: 0.5, // 同期検証のLLR閾値
-    SYNC_VALIDATION_MIN_BITS: 5 / 8, // 同期検証に必要な最小ビット数
+    SYNC_VALIDATION_LLR_THRESHOLD: 0.3, // 同期検証のLLR閾値
+    SYNC_VALIDATION_MIN_BITS: 4 / 8, // 同期検証に必要な最小ビット数
   },
   
   // LLR thresholds for bit quality detection
@@ -56,7 +56,7 @@ const CONSTANTS = {
   },
   
   // Debug  
-  DEBUG: false, // デバッグ再開: データビット処理確認
+  DEBUG: false,
 } as const;
 
 /**
@@ -164,6 +164,7 @@ export class DsssDpskDemodulator {
    * Instance-specific logging with identification
    */
   private log(message: string, style: string = ""): void {
+    if (!CONSTANTS.DEBUG) return;
     console.log(`%c[DsssDpskDemodulator:${this.instanceName}]%c %c${message}`, 
       this.instanceName === 'sender' ? 'color: #007bff; font-weight: bold;' : 'color: #ff00ff; font-weight: bold;',
       '',
@@ -508,7 +509,7 @@ export class DsssDpskDemodulator {
       }
     } else {
       // If sync not found, consume a small portion to advance and try again
-      const consumeCount = Math.floor(this.samplesPerBit / 2);
+      const consumeCount = Math.floor(this.samplesPerBit / 2); // 0.5ビット
       if (this._getAvailableSampleCount() >= consumeCount) {
         this._consumeSamples(consumeCount);
       } else {
@@ -919,7 +920,7 @@ export class DsssDpskDemodulator {
     const llrThreshold = CONSTANTS.FRAME.SYNC_VALIDATION_LLR_THRESHOLD;
     const minHardThreshold = CONSTANTS.FRAME.SYNC_VALIDATION_MIN_BITS;
     
-    // プリアンブル検証 最後の1bitは常に0
+    // プリアンブル検証：最後の1bitは常に0
     const preambleValid = preambleHard[3] === 0;
     
     const llrValid = normalizedLLRScore >= llrThreshold;
@@ -1083,7 +1084,6 @@ export class DsssDpskDemodulator {
    * @param correlations Correlation values from decimated matched filter
    */
   private _accumulateCorrelations(correlations: Float32Array): void {
-    console.log(correlations.length, this.correlationBuffer.length);
     this.correlationBuffer.set(this.correlationBuffer.subarray(correlations.length), 0);
     this.correlationBuffer.set(correlations, correlations.length);
   }

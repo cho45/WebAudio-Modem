@@ -126,6 +126,10 @@ describe('False Peak Problem - Isolated Test', () => {
       position += signals[i].length + gapBetweenSignals;
     }
     
+    // 真のフレームの位置を計算
+    const validFramePosition = silencePrefix + signals.slice(0, -1).reduce((sum, sig) => sum + sig.length, 0) + (signals.length - 1) * gapBetweenSignals;
+    console.log(`[SIGNAL INFO] Valid frame starts at position ${validFramePosition}, total length ${totalLength}`);
+    
     return processSignalInChunks(demodulator, combinedSignal, { chunkSize, maxFrames });
   };
 
@@ -162,6 +166,7 @@ describe('False Peak Problem - Isolated Test', () => {
         // 複数の偽ピークからの復帰テスト
         const demodulator = new DsssDpskDemodulator({
           ...defaultConfig,
+          seed: 22,
           correlationThreshold: 0.4,
           peakToNoiseRatio: 2
         });
@@ -214,7 +219,8 @@ describe('False Peak Problem - Isolated Test', () => {
         const frames = processMultipleSignals(demodulator, allSignals, {
           maxFrames: 1,
           gapBetweenSignals: 200,
-          chunkSize: 128
+          chunkSize: 128,
+          silenceSuffix: 1000
         });
         
         console.log(`[False Peak Test 2] Test case ${i}: Result: ${frames.length} frames received`);

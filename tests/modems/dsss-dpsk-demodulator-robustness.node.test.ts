@@ -219,150 +219,46 @@ function processMultipleSignals(
 describe('DsssDpskDemodulator Robustness Tests', () => {
   
   describe('DSSS理論限界に基づくSNR耐性テスト', () => {
-    test('should achieve high success rate at -3dB SNR (DSSS利得活用)', () => {
-      const testData = new Uint8Array([0x55, 0xAA]);
-      const cleanSignal = generateFrameWithAmplitude(testData, 0.7);
-      
-      // -3dB SNR: DSSS拡散利得を活用した良好な条件
-      const trials = 15;
-      let successCount = 0;
-      
-      for (let trial = 0; trial < trials; trial++) {
-        const trialDemodulator = new DsssDpskDemodulator(defaultConfig);
-        const trialNoisySignal = addAWGN(cleanSignal, -3);
-        const trialFrames = processSignalInChunks(trialDemodulator, trialNoisySignal, {
-          chunkSize: 128,
-          maxFrames: 1,
-          silencePrefix: 500,
-          silenceSuffix: 500
-        });
+    const TEST_CONDITIONS = [
+      { snr: 0, trials: 100, expectedSuccessRate: 0.9, description: '良好な条件での高い成功率' },
+      { snr: -3, trials: 100, expectedSuccessRate: 0.8, description: 'DSSS利得活用' },
+      { snr: -8, trials: 100, expectedSuccessRate: 0.4, description: '実用的な低SNR条件' },
+      { snr: -12, trials: 100, expectedSuccessRate: 0.15, description: 'DSSS理論限界近くの挑戦的な条件' },
+    ];
+
+    TEST_CONDITIONS.forEach(({ snr, trials, expectedSuccessRate, description }) => {
+      test(`should achieve high success rate at ${snr}dB SNR (${description})`, () => {
+        const testData = new Uint8Array([0x55, 0xAA]);
+        const cleanSignal = generateFrameWithAmplitude(testData, 0.7);
         
-        if (trialFrames.length > 0) {
-          const frame = trialFrames[0];
-          if (frame && frame.userData && frame.userData.length >= testData.length) {
-            const receivedData = frame.userData.slice(0, testData.length);
-            if (receivedData.every((val: number, idx: number) => val === testData[idx])) {
-              successCount++;
+        let successCount = 0;
+        
+        for (let trial = 0; trial < trials; trial++) {
+          const trialDemodulator = new DsssDpskDemodulator(defaultConfig);
+          const trialNoisySignal = addAWGN(cleanSignal, snr);
+          const trialFrames = processSignalInChunks(trialDemodulator, trialNoisySignal, {
+            chunkSize: 128,
+            maxFrames: 1,
+            silencePrefix: 500,
+            silenceSuffix: 500
+          });
+          
+          if (trialFrames.length > 0) {
+            const frame = trialFrames[0];
+            if (frame && frame.userData && frame.userData.length >= testData.length) {
+              const receivedData = frame.userData.slice(0, testData.length);
+              if (receivedData.every((val: number, idx: number) => val === testData[idx])) {
+                successCount++;
+              }
             }
           }
         }
-      }
-      
-      const successRate = successCount / trials;
-      console.log(`-3dB SNR test: ${successCount}/${trials} successful receptions (${(successRate * 100).toFixed(1)}%)`);
-      
-      // -3dB SNR：DSSS拡散利得を活用した良好な条件で高い成功率を期待
-      expect(successRate).toBeGreaterThanOrEqual(0.8);
-    });
-    
-    test('should handle practical low SNR at -8dB', () => {
-      const testData = new Uint8Array([0x12, 0x34, 0x56]);
-      const cleanSignal = generateFrameWithAmplitude(testData, 0.6);
-      
-      // -8dB SNR: 実用的な低SNR条件
-      const trials = 20;
-      let successCount = 0;
-      
-      for (let trial = 0; trial < trials; trial++) {
-        const trialDemodulator = new DsssDpskDemodulator(defaultConfig);
-        const noisySignal = addAWGN(cleanSignal, -8);
-        const frames = processSignalInChunks(trialDemodulator, noisySignal, {
-          chunkSize: 128,
-          maxFrames: 1,
-          silencePrefix: 400,
-          silenceSuffix: 400
-        });
         
-        if (frames.length > 0) {
-          const frame = frames[0];
-          if (frame && frame.userData && frame.userData.length >= testData.length) {
-            const receivedData = frame.userData.slice(0, testData.length);
-            if (receivedData.every((val: number, idx: number) => val === testData[idx])) {
-              successCount++;
-            }
-          }
-        }
-      }
-      
-      const successRate = successCount / trials;
-      console.log(`-8dB SNR test: ${successCount}/${trials} successful receptions (${(successRate * 100).toFixed(1)}%)`);
-      
-      // -8dB SNR：実用的な低SNR条件で適度の成功率を期待
-      expect(successRate).toBeGreaterThanOrEqual(0.4);
-    });
-    
-    test('should demonstrate DSSS limit at -12dB SNR (理論限界)', () => {
-      const testData = new Uint8Array([0xAB, 0xCD]);
-      const cleanSignal = generateFrameWithAmplitude(testData, 0.8);
-      
-      // -12dB SNR: DSSS理論限界近くの挑戦的な条件
-      const trials = 30;
-      let successCount = 0;
-      
-      for (let trial = 0; trial < trials; trial++) {
-        const trialDemodulator = new DsssDpskDemodulator(defaultConfig);
-        const noisySignal = addAWGN(cleanSignal, -12);
-        const frames = processSignalInChunks(trialDemodulator, noisySignal, {
-          chunkSize: 128,
-          maxFrames: 1,
-          silencePrefix: 600,
-          silenceSuffix: 600
-        });
+        const successRate = successCount / trials;
+        console.log(`${snr}dB SNR test: ${successCount}/${trials} successful receptions (${(successRate * 100).toFixed(1)}%)`);
         
-        if (frames.length > 0) {
-          const frame = frames[0];
-          if (frame && frame.userData && frame.userData.length >= testData.length) {
-            const receivedData = frame.userData.slice(0, testData.length);
-            if (receivedData.every((val: number, idx: number) => val === testData[idx])) {
-              successCount++;
-            }
-          }
-        }
-      }
-      
-      const successRate = successCount / trials;
-      console.log(`-12dB SNR test: ${successCount}/${trials} successful receptions (${(successRate * 100).toFixed(1)}%)`);
-      
-      // -12dB SNR：DSSS理論限界近くでも統計的検出が可能
-      expect(successRate).toBeGreaterThanOrEqual(0.15);
-    });
-    
-    test('should achieve high success rate at 0dB SNR', () => {
-      const demodulator = new DsssDpskDemodulator(defaultConfig);
-      const testData = new Uint8Array([0xAB, 0xCD]);
-      
-      const cleanSignal = generateFrameWithAmplitude(testData, 0.5);
-      
-      // 0dB SNR での統計的テスト
-      const trials = 15;
-      let successCount = 0;
-      
-      for (let trial = 0; trial < trials; trial++) {
-        const trialDemodulator = new DsssDpskDemodulator(defaultConfig);
-        const noisySignal = addAWGN(cleanSignal, 0);
-        const frames = processSignalInChunks(trialDemodulator, noisySignal, {
-          chunkSize: 128,
-          maxFrames: 1,
-          silencePrefix: 200,
-          silenceSuffix: 200
-        });
-        
-        if (frames.length > 0) {
-          const frame = frames[0];
-          if (frame && frame.userData && frame.userData.length >= testData.length) {
-            const receivedData = frame.userData.slice(0, testData.length);
-            if (receivedData.every((val: number, idx: number) => val === testData[idx])) {
-              successCount++;
-            }
-          }
-        }
-      }
-      
-      const successRate = successCount / trials;
-      console.log(`0dB SNR test: ${successCount}/${trials} successful receptions (${(successRate * 100).toFixed(1)}%)`);
-      
-      // 0dB SNR：良好な条件で高い成功率を期待
-      expect(successRate).toBeGreaterThanOrEqual(0.90);
+        expect(successRate).toBeGreaterThanOrEqual(expectedSuccessRate);
+      });
     });
   });
   
