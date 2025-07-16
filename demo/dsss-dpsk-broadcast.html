@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSSS-DPSK ブロードキャストデモ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section h2 {
+            color: #666;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .status.idle {
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        .status.active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .received-data {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            min-height: 100px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-y: auto;
+            max-height: 200px;
+        }
+        .data-item {
+            margin-bottom: 5px;
+            padding: 5px;
+            background-color: white;
+            border-radius: 3px;
+            border-left: 3px solid #007bff;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 10px;
+        }
+        .interval-control {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .interval-control label {
+            font-weight: bold;
+        }
+        .interval-control input {
+            width: 80px;
+        }
+    </style>
+</head>
+<body>
+    <h1>DSSS-DPSK ブロードキャストデモ</h1>
+    
+    <div class="container">
+        <div class="section">
+            <h2>送信側</h2>
+            <div class="controls">
+                <input type="text" id="transmitText" placeholder="送信するテキストを入力" value="Hello World">
+                <button id="startTransmit" class="btn-primary">送信開始</button>
+                <button id="stopTransmit" class="btn-danger" disabled>送信停止</button>
+            </div>
+            <div class="interval-control">
+                <label>送信間隔:</label>
+                <input type="number" id="transmitInterval" value="2" min="1" max="10" step="0.5">
+                <span>秒</span>
+            </div>
+            <div id="transmitStatus" class="status idle">待機中</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="section">
+            <h2>受信側</h2>
+            <div class="controls">
+                <button id="startReceive" class="btn-success">受信開始</button>
+                <button id="stopReceive" class="btn-danger" disabled>受信停止</button>
+                <button id="clearReceived" class="btn-secondary">クリア</button>
+            </div>
+            <div id="receiveStatus" class="status idle">待機中</div>
+            <div id="receivedData" class="received-data">
+                <!-- 受信データがここに表示される -->
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { WebAudioDataChannel } from '../src/webaudio/webaudio-data-channel.js';
+
+        const CONFIG = {
+            sequenceLength: 15, 
+            seed: 21,           
+            samplesPerPhase: 12,
+            carrierFreq: 16000,
+            correlationThreshold: 0.5,
+            peakToNoiseRatio: 2
+        };
+
+        let audioContext = null;
+        let transmitChannel = null;
+        let receiveChannel = null;
+        let transmitInterval = null;
+        let isTransmitting = false;
+        let isReceiving = false;
+
+        const transmitStatus = document.getElementById('transmitStatus');
+        const receiveStatus = document.getElementById('receiveStatus');
+        const receivedData = document.getElementById('receivedData');
+        const transmitText = document.getElementById('transmitText');
+        const transmitIntervalInput = document.getElementById('transmitInterval');
+
+        const startTransmitBtn = document.getElementById('startTransmit');
+        const stopTransmitBtn = document.getElementById('stopTransmit');
+        const startReceiveBtn = document.getElementById('startReceive');
+        const stopReceiveBtn = document.getElementById('stopReceive');
+        const clearReceivedBtn = document.getElementById('clearReceived');
+
+        function updateStatus(element, message, type = 'idle') {
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+
+        function addReceivedData(data) {
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString();
+            const dataItem = document.createElement('div');
+            dataItem.className = 'data-item';
+            dataItem.innerHTML = `
+                <div class="timestamp">${timestamp}</div>
+                <div>${data}</div>
+            `;
+            receivedData.appendChild(dataItem);
+            receivedData.scrollTop = receivedData.scrollHeight;
+        }
+
+        async function initializeAudioContext() {
+            if (!audioContext) {
+                audioContext = new AudioContext();
+                
+                // Add AudioWorklet modules
+                try {
+                    await WebAudioDataChannel.addModule(audioContext, '../src/webaudio/processors/dsss-dpsk-processor.js');
+                } catch (error) {
+                    console.error('Failed to load AudioWorklet modules:', error);
+                    throw error;
+                }
+            }
+        }
+
+        async function startTransmitting() {
+            try {
+                await initializeAudioContext();
+                
+                // Create transmit channel
+                transmitChannel = new WebAudioDataChannel(audioContext, 'dsss-dpsk-processor', {
+                    processorOptions: { name: 'sender' }
+                });
+                await transmitChannel.configure(CONFIG);
+                
+                // Connect to audio output
+                transmitChannel.connect(audioContext.destination);
+                
+                isTransmitting = true;
+                startTransmitBtn.disabled = true;
+                stopTransmitBtn.disabled = false;
+                transmitText.disabled = true;
+                transmitIntervalInput.disabled = true;
+                
+                updateStatus(transmitStatus, '送信中...', 'active');
+                
+                // Start periodic transmission
+                const sendData = async () => {
+                    if (!isTransmitting) return;
+                    
+                    try {
+                        const text = transmitText.value.trim();
+                        if (text) {
+                            const data = new TextEncoder().encode(text);
+                            await transmitChannel.modulate(data);
+                            updateStatus(transmitStatus, `送信完了: "${text}"`, 'active');
+                        }
+                    } catch (error) {
+                        console.error('Transmission error:', error);
+                        updateStatus(transmitStatus, `送信エラー: ${error.message}`, 'error');
+                    }
+                    
+                    if (isTransmitting) {
+                        const interval = parseFloat(transmitIntervalInput.value) * 1000;
+                        transmitInterval = setTimeout(sendData, interval);
+                    }
+                };
+                
+                // Start first transmission
+                await sendData();
+                
+            } catch (error) {
+                console.error('Failed to start transmission:', error);
+                updateStatus(transmitStatus, `初期化エラー: ${error.message}`, 'error');
+                stopTransmitting();
+            }
+        }
+
+        function stopTransmitting() {
+            isTransmitting = false;
+            
+            if (transmitInterval) {
+                clearTimeout(transmitInterval);
+                transmitInterval = null;
+            }
+            
+            if (transmitChannel) {
+                transmitChannel.disconnect();
+                transmitChannel = null;
+            }
+            
+            startTransmitBtn.disabled = false;
+            stopTransmitBtn.disabled = true;
+            transmitText.disabled = false;
+            transmitIntervalInput.disabled = false;
+            
+            updateStatus(transmitStatus, '停止', 'idle');
+        }
+
+        async function startReceiving() {
+            try {
+                await initializeAudioContext();
+                
+                // Create receive channel
+                receiveChannel = new WebAudioDataChannel(audioContext, 'dsss-dpsk-processor', {
+                    processorOptions: { name: 'receiver' }
+                });
+                await receiveChannel.configure(CONFIG);
+                
+                // Request microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: audioContext.sampleRate,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+                
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(receiveChannel);
+                
+                isReceiving = true;
+                startReceiveBtn.disabled = true;
+                stopReceiveBtn.disabled = false;
+                
+                updateStatus(receiveStatus, '受信中...', 'active');
+                
+                // Start continuous receiving
+                const receiveLoop = async () => {
+                    while (isReceiving) {
+                        try {
+                            const receivedBytes = await receiveChannel.demodulate();
+                            const text = new TextDecoder().decode(receivedBytes);
+                            addReceivedData(text);
+                            updateStatus(receiveStatus, `受信完了: "${text}"`, 'active');
+                        } catch (error) {
+                            if (error.message !== 'Reset' && error.message !== 'Operation aborted') {
+                                console.error('Reception error:', error);
+                                updateStatus(receiveStatus, `受信エラー: ${error.message}`, 'error');
+                            }
+                        }
+                    }
+                };
+                
+                receiveLoop();
+                
+            } catch (error) {
+                console.error('Failed to start reception:', error);
+                updateStatus(receiveStatus, `初期化エラー: ${error.message}`, 'error');
+                stopReceiving();
+            }
+        }
+
+        function stopReceiving() {
+            isReceiving = false;
+            
+            if (receiveChannel) {
+                receiveChannel.disconnect();
+                receiveChannel = null;
+            }
+            
+            startReceiveBtn.disabled = false;
+            stopReceiveBtn.disabled = true;
+            
+            updateStatus(receiveStatus, '停止', 'idle');
+        }
+
+        function clearReceivedData() {
+            receivedData.innerHTML = '';
+        }
+
+        // Event listeners
+        startTransmitBtn.addEventListener('click', startTransmitting);
+        stopTransmitBtn.addEventListener('click', stopTransmitting);
+        startReceiveBtn.addEventListener('click', startReceiving);
+        stopReceiveBtn.addEventListener('click', stopReceiving);
+        clearReceivedBtn.addEventListener('click', clearReceivedData);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            stopTransmitting();
+            stopReceiving();
+            if (audioContext) {
+                audioContext.close();
+            }
+        });
+    </script>
+</body>
+</html>

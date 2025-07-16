@@ -56,7 +56,7 @@ const CONSTANTS = {
   },
   
   // Debug  
-  DEBUG: false,
+  DEBUG: true,
 } as const;
 
 /**
@@ -229,7 +229,7 @@ export class DsssDpskDemodulator {
         if (framerState.state === 'WAITING_HEADER') {
           // ストリーム処理：利用可能ビットを段階的に蓄積
           const availableBits = this._getAvailableBits(8);
-          this.log(`[Header Debug] Available bits for header: ${availableBits.length}/8, bits=[${Array.from(availableBits).join(',')}]`);
+          // this.log(`[Header Debug] Available bits for header: ${availableBits.length}/8, bits=[${Array.from(availableBits).join(',')}]`);
           if (availableBits.length > 0) {
             frameProcessingProgress = true; // ビット進捗があれば継続
           }
@@ -349,11 +349,6 @@ export class DsssDpskDemodulator {
       this.processedCount += targetBits;
       
       return result;
-    }
-    
-    // デバッグ情報: データ不足の詳細
-    if (CONSTANTS.DEBUG && this.bitBufferIndex > 0) {
-      this.log(`_getAvailableBits: partial data available ${this.bitBufferIndex}/${targetBits}, samples=${this._getAvailableSampleCount()}, iterations=${iterationCount}`);
     }
     
     // 要求されたビット数が揃わない場合は空を返す
